@@ -1,21 +1,34 @@
-"""O gravador registra os passos feitos no Chrome (por uma "pessoa" simulada) sem gravar a senha."""
+"""O gravador registra os passos feitos no Chrome (por uma "pessoa" simulada) sem gravar a senha,
+inclusive dentro dos quadros do ATF, e guarda o arquivo baixado na pasta de gravações."""
 import copy
 import json
 import threading
 import time
+import urllib.request
 
-import config
+import gravador
 from gravador import Gravador
-from test_atf_simulado import ambiente  # noqa: F401  (mesmo ATF simulado e Chrome)
+from test_atf_simulado import ESTADO, _nova_mensagem, _zip, ambiente  # noqa: F401  (mesmo ATF simulado)
+from util import IE_EMPRESA, nfe
 
 
-def test_grava_passos_sem_senha(ambiente):  # noqa: F811
+def _quadro(page, trecho):
+    for _ in range(30):
+        for f in page.frames:
+            if trecho in f.url:
+                return f
+        page.wait_for_timeout(200)
+    raise AssertionError(f"quadro {trecho} não abriu")
+
+
+def test_grava_passos_sem_senha(ambiente, tmp_path, monkeypatch):  # noqa: F811
     cfg, pasta = ambiente
     cfg = copy.deepcopy(cfg)
+    monkeypatch.setattr(gravador, "PASTA", tmp_path)
     resultado = {}
 
     def gravar():
-        resultado["arquivo"] = Gravador(cfg).gravar(segundos=25)
+        resultado["arquivo"] = Gravador(cfg).gravar(segundos=35)
 
     t = threading.Thread(target=gravar)
     t.start()
@@ -27,31 +40,58 @@ def test_grava_passos_sem_senha(ambiente):  # noqa: F811
         page = browser.contexts[0].new_page()
         page.goto(cfg["atf"]["url_login"])
         page.wait_for_timeout(1500)
-        quadro = page.frames[1]
-        quadro.fill('input[name="u_a1"]', "mar00134")
-        quadro.fill('input[name="p_b2"]', "certa")
-        quadro.dispatch_event('input[name="p_b2"]', "change")
-        quadro.click("button")
-        page.wait_for_timeout(1500)
-        page.click("text=NF-e")
+        page.click("#login")
+        page.fill("#login", "mar00134")
+        page.dispatch_event("#login", "change")
+        page.fill("#senha", "certa")
+        page.dispatch_event("#senha", "change")
+        page.click('button[name="btnAvancar"]')
+        page.wait_for_timeout(2000)
+        menu = _quadro(page, "SEGf_Menu.jsp")
+        menu.click("text=NF-e")
         page.wait_for_timeout(1000)
-        page.click("text=Consulta NF-e por Emitentes/Destinatários")
+        _quadro(page, "caminho=nfe").click('a[href*="FISf_ConsultarNFeXml2"]')
+        conteudo = _quadro(page, "FISf_ConsultarNFeXml2")
         page.wait_for_timeout(1500)
-        page.fill("#x1", "160123453")
-        page.dispatch_event("#x1", "change")
-        page.locator("button", has_text="Pesquisar").first.click()
-        page.select_option("#te", label="XML")
+        conteudo.fill('input[name="edtDtInicial"]', "01/09/2026")
+        conteudo.dispatch_event('input[name="edtDtInicial"]', "change")
+        emit = _quadro(page, "_cmpEmit")
+        emit.fill("#hidNrDocumentocmpEmit", IE_EMPRESA)
+        emit.dispatch_event("#hidNrDocumentocmpEmit", "change")
+        emit.click('button[name="btnPesquisar"]')
         page.wait_for_timeout(1500)
-    t.join(40)
+        conteudo.select_option('select[name="cmbTpExibicao"]', label="XML")
+        page.wait_for_timeout(1000)
+    t.join(60)
 
     dados = json.loads(resultado["arquivo"].read_text(encoding="utf-8"))
     texto = json.dumps(dados, ensure_ascii=False)
     assert "certa" not in texto  # a senha nunca vai para o arquivo
     alterou = [e for e in dados["eventos"] if e["acao"] == "alterou"]
-    assert any(e["valor"] == "***" for e in alterou)
-    ie = next(e for e in alterou if e["valor"] == "160123453")
-    assert ie["id"] == "x1" and ie["rotulo"] == "Número" and ie["secao"] == "Emitente", ie
-    assert any(e["acao"] == "clique" and e["texto"] == "Pesquisar" and e["secao"] == "Emitente" for e in dados["eventos"])
+    assert any(e["valor"] == "***" and e["id"] == "senha" for e in alterou)
+    ie = next(e for e in alterou if e["valor"] == IE_EMPRESA)
+    assert ie["id"] == "hidNrDocumentocmpEmit" and "_cmpEmit" in ie["quadro"], ie  # dentro do quadro do bloco
+    assert any(e["acao"] == "clique" and e["texto"] == "Pesquisar" for e in dados["eventos"])
     assert any(e.get("opcao") == "XML" for e in alterou)
-    assert any("fis1322" in t["url"] for t in dados["telas"])
-    resultado["arquivo"].unlink()
+    assert any("FISf_ConsultarNFeXml2" in t["url"] for t in dados["telas"])
+
+
+def test_guarda_o_arquivo_baixado(ambiente, tmp_path, monkeypatch):  # noqa: F811
+    """Só o gravador conectado ao Chrome (como no PC): a mensagem chama mostrarArquivo(0) e o ZIP
+    fica na pasta de gravações (sem o gravador, iria para a pasta temporária da automação)."""
+    cfg, _ = ambiente
+    monkeypatch.setattr(gravador, "PASTA", tmp_path)
+    _nova_mensagem("FIS_1322", "NFe: Consulta Genérica (Ano 2026)", -10,
+                   _zip({"s.xml": nfe("11222333000181", "", 1, ie_emit=IE_EMPRESA)}), "gravação")
+    filha = ESTADO["mensagens"][-1]["filhas"][1]["id"]
+    resultado = {}
+    t = threading.Thread(target=lambda: resultado.update(arquivo=Gravador(copy.deepcopy(cfg)).gravar(segundos=12)))
+    t.start()
+    time.sleep(3)
+    base = cfg["atf"]["url_login"].rstrip("/")
+    urllib.request.urlopen(urllib.request.Request(
+        f"http://127.0.0.1:{cfg['chrome']['porta']}/json/new?{base}/seg/SEGf_LerMensagem.do?hidsqMensagem={filha}"
+        "%26auto=1", method="PUT"))
+    t.join(40)
+    dados = json.loads(resultado["arquivo"].read_text(encoding="utf-8"))
+    assert any((tmp_path / a).read_bytes()[:2] == b"PK" for a in dados["arquivos_baixados"]), dados["arquivos_baixados"]

@@ -8,6 +8,8 @@ O que fica gravado em robo/gravacoes/gravacao_<data>.json:
   (id, name, classe, rótulo, texto, caminho CSS e XPath, título da seção onde está);
 - a lista de campos e botões de cada tela visitada (sem valores digitados).
 A SENHA NUNCA É GRAVADA: campos de senha aparecem como "***".
+Arquivos baixados durante a gravação (o XML) são guardados na mesma pasta: com o Chrome ligado ao
+robô, o download vai para uma pasta temporária e sumiria ao terminar.
 """
 from __future__ import annotations
 
@@ -93,6 +95,9 @@ class Gravador:
         self.eventos: list[dict] = []
         self.telas: list[dict] = []
         self._vistas: set[str] = set()
+        self._downloads: list = []
+        self._paginas_com_escuta: set = set()
+        self.arquivos: list[str] = []
 
     def _receber(self, origem, dados: str):
         try:
@@ -109,6 +114,24 @@ class Gravador:
         extra = f" = {ev['valor']}" if ev["acao"] == "alterou" and ev.get("valor") else ""
         extra += f" ({ev['opcao']})" if ev.get("opcao") else ""
         print(f"  {ev['hora']} {ev['acao']:7} {descricao[:50]}{extra}  [seção: {ev.get('secao', '')[:25]}]")
+
+    def _escutar_downloads(self, pagina):
+        if pagina in self._paginas_com_escuta:
+            return
+        self._paginas_com_escuta.add(pagina)
+        pagina.on("download", lambda d: self._downloads.append(d))
+
+    def _guardar_downloads(self):
+        while self._downloads:
+            d = self._downloads.pop(0)
+            PASTA.mkdir(parents=True, exist_ok=True)
+            destino = PASTA / f"{datetime.now():%Y%m%d_%H%M%S}_{d.suggested_filename or 'download'}"
+            try:
+                d.save_as(str(destino))
+                self.arquivos.append(destino.name)
+                print(f"  arquivo baixado guardado em: {destino}")
+            except Exception as e:
+                print(f"  não consegui guardar o download: {e}")
 
     def _injetar(self, pagina):
         for frame in pagina.frames:
@@ -135,6 +158,7 @@ class Gravador:
         contexto = chrome.abrir()
         contexto.expose_binding("__roboEvento", self._receber)
         contexto.add_init_script(JS_GRAVADOR)
+        contexto.on("page", lambda pagina: self._escutar_downloads(pagina))  # abas novas (o anexo pode abrir uma)
         for pagina in contexto.pages:
             self._injetar(pagina)
         print("\nGRAVANDO. Faça no Chrome o caminho completo no ATF (login, consulta, Pesquisar, Consultar,")
@@ -145,8 +169,10 @@ class Gravador:
             while fim is None or time.time() < fim:
                 paginas = [p for p in contexto.pages if not p.is_closed()]
                 for pagina in paginas:
+                    self._escutar_downloads(pagina)
                     self._injetar(pagina)  # páginas e quadros novos
                     self._fotografar(pagina)
+                self._guardar_downloads()
                 if paginas:
                     paginas[0].wait_for_timeout(700)
                 else:
@@ -154,6 +180,7 @@ class Gravador:
         except KeyboardInterrupt:
             pass
         finally:
+            self._guardar_downloads()
             arquivo = self.salvar()
             chrome.fechar()
         return arquivo
@@ -161,7 +188,7 @@ class Gravador:
     def salvar(self) -> Path:
         PASTA.mkdir(parents=True, exist_ok=True)
         arquivo = PASTA / f"gravacao_{datetime.now():%Y%m%d_%H%M%S}.json"
-        arquivo.write_text(json.dumps({"eventos": self.eventos, "telas": self.telas}, ensure_ascii=False, indent=1),
+        arquivo.write_text(json.dumps({"eventos": self.eventos, "telas": self.telas, "arquivos_baixados": self.arquivos}, ensure_ascii=False, indent=1),
                            encoding="utf-8")
         print(f"\n{len(self.eventos)} ação(ões) gravada(s) em: {arquivo}")
         print("Mande esse arquivo para ajustarmos o robô.")

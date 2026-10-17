@@ -35,18 +35,21 @@ PADRAO = {
             "nfe": {
                 "menu": ["NF-e", "Consulta NF-e por Emitentes/Destinatários"],
                 "funcao": "FIS_1322",
+                "pagina": "FISf_ConsultarNFeXml2.do",
                 "titulo": "Consulta NF-e por Emitentes/Destinat",
                 "rotulos_data": ["Data de Emissão"],
             },
             "nfce": {
                 "menu": ["NFC-e", "Consulta por Emitente"],
                 "funcao": "FIS_1484",
+                "pagina": "",
                 "titulo": "Consulta Genérica da NFC-e",
                 "rotulos_data": ["Data Emissão Inicial", "Data Emissão Final"],
             },
             # onde o ATF entrega os XML (sino do topo)
             "mensagens": {
                 "funcao": "SEG_064",
+                "pagina": "SEGf_MinhasMensagens.do",
                 "titulo": "Minhas Mensagens",
                 "botao": ['[title*="Mensage" i]', '[aria-label*="Mensage" i]', '[title*="Notifica" i]',
                           '[aria-label*="Notifica" i]', 'button:has(.bi-bell)', 'a:has(.bi-bell)',

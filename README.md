@@ -120,7 +120,23 @@ Se o robô travar numa tela, grave você mesmo o caminho:
 
 O arquivo traz cada clique e campo preenchido com o endereço exato do elemento na página e a lista de
 campos de cada tela. **A senha não é gravada** (aparece como `***`). Com ele, o robô passa a repetir
-exatamente os seus passos.
+exatamente os seus passos. O arquivo que você baixar durante a gravação (o XML) também fica nessa pasta:
+com o Chrome ligado à automação, o download iria para uma pasta temporária e sumiria.
+
+### Como o ATF é por dentro (da gravação de 17/10/2026)
+
+- Login: `SEGf_Login.jsp`, campos `edtNoLogin` (#login) e `edtDsSenha` (#senha), botão `btnAvancar`.
+- O ATF é dividido em quadros: cabeçalho (`cabecalho.htm`, botões "Mensagens" e "Encerrar Sessão"),
+  menu (`SEGf_Menu.jsp`) e conteúdo.
+- Consulta NF-e: `fis/FISf_ConsultarNFeXml2.do?limparSessao=true` — `edtDtInicial`, `edtDtFinal`,
+  `cmbTpDoccmpEmit`/`cmbTpDoccmpDest`, `cmbTpExibicao` (HTML/TXT/XML) e `btnConsultar` (#btnConsulta, com reCAPTCHA).
+  O Número, o Pesquisar e o Nome/Razão Social de cada bloco ficam num **quadro próprio**:
+  `componentes/CodDescLstBS.jsp?id=FISf_ConsultarNFeXml2_cmpEmit` (ou `_cmpDest`), com
+  `hidNrDocumentocmpEmit`, `btnPesquisar` e `hidNoHumanoInstcmpEmit`.
+- Minhas Mensagens: `seg/SEGf_MinhasMensagens.do`. Cada consulta é uma mensagem **mãe**
+  (`javascript:abrirFilhas('<id>',3)`, "(3 Mensagens)") com 3 **filhas**; a filha final abre em
+  `SEGf_LerMensagem.do?hidsqMensagem=<filha>&sqMensagemPai=<mãe>` e tem o anexo
+  `javascript:mostrarArquivo(0)` ("Dados referentes ao ano de ...").
 
 ### Diagnóstico
 

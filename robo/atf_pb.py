@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Callable
+from urllib.parse import urlparse
 
 from navegador import CapturadorArquivos, pausa
 
@@ -47,9 +48,9 @@ _SEM_NOTAS = re.compile(
 _FORA_DO_AR = re.compile(r"servi[cç]o\s+(temporariamente\s+)?indispon[ií]vel|em\s+manuten[cç][aã]o|"
                          r"service unavailable|bad gateway|gateway time-?out", re.I)
 
-_CAMPOS_LOGIN = ['input[name*="usuario" i]', 'input[id*="usuario" i]', 'input[name*="login" i]', 'input[id*="login" i]', 'input[name*="usuario" i]',
+_CAMPOS_LOGIN = ['input[name="edtNoLogin"]', '#login', 'input[name*="usuario" i]', 'input[id*="usuario" i]', 'input[name*="login" i]', 'input[id*="login" i]', 'input[name*="usuario" i]',
                  'input[id*="usuario" i]', 'input[name*="user" i]', 'input[name*="cpf" i]']
-_BOTOES_ENTRAR = ['button:has-text("Avançar")', 'input[value*="Avançar" i]', 'button[type="submit"]', 'input[type="submit"]', 'input[type="image"]',
+_BOTOES_ENTRAR = ['button[name="btnAvancar"]', 'button:has-text("Avançar")', 'input[value*="Avançar" i]', 'button[type="submit"]', 'input[type="submit"]', 'input[type="image"]',
                   'button:has-text("Entrar")', 'button:has-text("Acessar")', 'a:has-text("Entrar")',
                   'input[value*="Entrar" i]', 'input[value*="Acessar" i]', 'input[value*="OK" i]']
 _ERRO_CONSULTA = re.compile(r"\berro\b|inv[aá]lid|obrigat[oó]ri|n[aã]o\s+(foi\s+)?(encontrad|localizad|cadastrad)|"
@@ -61,6 +62,8 @@ _MENSAGEM_FINAL = re.compile(r"tarefa\s+executada|executada\s+com\s+sucesso|n[a�
 _PERIODO = re.compile(r"per[ií]odo\s+solicitado:?\s*(\d{2}/\d{2}/\d{4})\s*a\s*(\d{2}/\d{2}/\d{4})", re.I)
 _INPUT_TEXTO = "input:not([type=hidden]):not([type=checkbox]):not([type=radio]):not([type=button]):not([type=submit])"
 _BOTAO = "button, input[type=button], input[type=submit], a.btn"
+# sufixo dos campos de cada bloco no ATF (hidNrDocumentocmpEmit, cmbTpDoccmpDest...)
+_SUFIXO_BLOCO = {"Emitente": "Emit", "Destinatário": "Dest"}
 
 # Acha o campo que vem depois de um texto da tela e marca com data-robo-alvo
 _JS_APOS_ROTULO = """([rotulo, css, ordem, texto, marca]) => {
@@ -90,25 +93,23 @@ _SELETOR_ANEXOS = ('a:has-text("Dados referentes"), a[href*=".zip" i], a[href*="
                    'a[href*="arquivo" i], a[download], a:has-text(".zip"), a:has-text(".xml"), '
                    'a[title*="anexo" i], a[title*="download" i], button[title*="download" i], button:has-text("Download")')
 
-# Lê as linhas de Minhas Mensagens; marca cada uma (data-robo) para poder clicar depois
-_JS_MENSAGENS = """() => Array.from(document.querySelectorAll('tr')).map((tr, i) => {
-    if (tr.querySelector('tr')) return null;  // tabela de layout com outra dentro
-    const celulas = Array.from(tr.querySelectorAll('td')).map(td => td.innerText.trim());
-    const texto = celulas.join(' | ');
-    const codigo = (texto.match(/\\b(FIS|SEG)_\\d+/) || [''])[0];
-    if (!codigo) return null;
-    const data = (texto.match(/\\d{2}\\/\\d{2}\\/\\d{4}\\s+\\d{2}:\\d{2}:\\d{2}/) || [null])[0];
-    tr.setAttribute('data-robo', String(i));
-    const anexo = !!tr.querySelector('img[src*="clip" i], img[src*="anexo" i], [class*="clip" i], [title*="anexo" i], [alt*="anexo" i]');
-    const link = tr.querySelector('a[href]');
-    const href = link && /^https?:/.test(link.href) && !/^javascript:/i.test(link.getAttribute('href')) ? link.href : '';
-    return {marca: String(i), codigo, data, remetente: celulas.find(c => c.includes(codigo)) || codigo,
-            enviada: data || '', anexo, href, base: codigo + '|' + (data || texto)};
-}).filter(Boolean).map((l, _, todas) => {
-    // a mesma consulta gera 3 mensagens no mesmo segundo: numera as repetidas
-    const iguais = todas.filter(o => o.base === l.base);
-    return Object.assign(l, {chave: l.base + '|' + iguais.indexOf(l)});
-})"""
+# Minhas Mensagens: cada linha tem links "javascript:abrirFilhas('<id>',<n filhas>)". Agrupa por id:
+# código do remetente (FIS_1322...), data de envio e quantas filhas (a consulta gera uma mãe com 3).
+_JS_MENSAGENS = """() => {
+    const m = new Map();
+    for (const a of document.querySelectorAll('a[href*="abrirFilhas"]')) {
+        const r = /abrirFilhas\\(\\s*'?(\\d+)'?\\s*,\\s*(\\d+)\\s*\\)/.exec(a.getAttribute('href') || '');
+        if (!r) continue;
+        if (!m.has(r[1])) m.set(r[1], {id: r[1], filhas: +r[2], codigo: '', data: null, remetente: ''});
+        const o = m.get(r[1]);
+        const t = (a.innerText || '').replace(/\\s+/g, ' ').trim();
+        const c = /\\b(FIS|SEG)_\\d+/.exec(t);
+        if (c && !o.codigo) { o.codigo = c[0]; o.remetente = t; }
+        const d = /\\d{2}\\/\\d{2}\\/\\d{4}\\s+\\d{2}:\\d{2}:\\d{2}/.exec(t);
+        if (d && !o.data) o.data = d[0];
+    }
+    return Array.from(m.values());
+}"""
 
 # Tipo de XML -> tela e bloco onde vai a inscrição estadual (um bloco por consulta)
 TIPO_TELA = {
@@ -243,9 +244,10 @@ class AtfPB:
         self.page = contexto.new_page()
         self.login_atual = ""
         self.ultimo_uso = 0.0
-        self._url_tela: dict[str, str] = {}
+        self._url_tela: dict[str, tuple] = {}  # tela -> (quadro, endereço)
         self._respostas: list[str] = []
-        self._mensagens_lidas: set[str] = set()
+        self._mensagens_lidas: set[str] = set()   # consultas (mensagens mãe) já concluídas
+        self._filhas_lidas: set[str] = set()
         self._diag_mensagem_salvo = False
         self._hora_consulta: datetime | None = None
         self._marcas = 0
@@ -376,6 +378,11 @@ class AtfPB:
                 self._log(f"ATF recusou o login: {erro.group(0)}")
                 raise SenhaInvalida(f"o ATF recusou o acesso ({erro.group(0).lower()}). Confira login e senha.")
             if self._senha_na_tela() is None and texto.strip():
+                # o topo do ATF mostra "Login: mar00134": tem de ser o login pedido
+                aberto = re.search(r"login:\s*([\w.@-]+)", texto, re.I)
+                if aberto and aberto.group(1).lower() != login.lower():
+                    self.sair(silencioso=True)
+                    raise EtapaNaoConcluida(f"o ATF abriu a sessão de outro login ({aberto.group(1)})")
                 self._log("Login aceito")
                 self.login_atual = login
                 self.ultimo_uso = time.time()
@@ -388,8 +395,22 @@ class AtfPB:
         raise EtapaNaoConcluida("o ATF não confirmou o login a tempo." + (f" Diagnóstico: {pasta}" if pasta else ""))
 
     # ------------------------------------------------------------------ navegação
+    def _quadro_da_tela(self, tela: dict):
+        """Quadro (frame) onde a tela está aberta. O ATF é dividido em quadros: cabeçalho, menu e conteúdo."""
+        if tela.get("pagina"):
+            for frame in self.page.frames:
+                if tela["pagina"].lower() in (frame.url or "").lower():
+                    return frame
+        for frame in self.page.frames:
+            try:
+                if re.search(re.escape(tela["titulo"]), frame.evaluate("() => document.body ? document.body.innerText : ''"), re.I):
+                    return frame
+            except Exception:
+                continue
+        return None
+
     def _tela_aberta(self, tela: dict) -> bool:
-        return re.search(re.escape(tela["titulo"]), _texto_da_pagina(self.page), re.I) is not None
+        return self._quadro_da_tela(tela) is not None
 
     def _clicar_texto(self, texto: str) -> bool:
         alvo = self._achar("", [f"xpath=//a[{_xpath_texto(texto)}]", f"xpath=//*[self::button or self::li or self::span]"
@@ -400,29 +421,56 @@ class AtfPB:
         pausa(self.page, 0.8, 1.5)
         return True
 
+    def _ir(self, frame, url: str):
+        try:
+            frame.goto(url, wait_until="domcontentloaded", timeout=60_000)
+        except Exception as e:
+            if "net::ERR" in str(e) or "Timeout" in type(e).__name__:
+                raise SiteForaDoAr(f"não consegui abrir o ATF ({e.__class__.__name__}).") from e
+            raise
+        pausa(self.page, 1.0, 1.8)
+
     def abrir_tela(self, nome: str, recarregar: bool = True):
-        """Abre uma tela do ATF: pelo endereço já visitado, pelo botão (sino das mensagens), pelo
-        menu lateral ou pelo campo Função do topo."""
+        """Abre uma tela do ATF: pelo endereço já visitado (no mesmo quadro), pelo link do menu, pelo
+        botão (sino das mensagens), pelo texto do menu ou pelo campo Função do topo."""
         tela = self.atf["telas"][nome]
         if self._senha_na_tela() is not None:
             raise SessaoExpirada("o ATF voltou para a tela de login.")
-        url = self._url_tela.get(nome)
-        if url and (recarregar or not self._tela_aberta(tela)):
-            self._abrir(url)  # recarrega: formulário limpo / lista de mensagens atualizada
-            if self._tela_aberta(tela):
-                return
+        guardado = self._url_tela.get(nome)
+        if guardado and (recarregar or not self._tela_aberta(tela)):
+            frame, url = guardado
+            try:
+                if not frame.is_detached():
+                    self._ir(frame, url)  # formulário limpo / lista de mensagens atualizada
+                    if self._tela_aberta(tela):
+                        return
+            except SiteForaDoAr:
+                raise
+            except Exception:
+                pass
+        if not self._tela_aberta(tela) and tela.get("pagina"):
+            link = self._achar("", [f'a[href*="{tela["pagina"]}"]'])
+            if link is not None:
+                link.click()
+                pausa(self.page, 1.5, 2.5)
         if tela.get("botao") and not self._tela_aberta(tela):
             botao = self._achar("", tela["botao"])
             if botao is not None:
                 botao.click()
-                pausa(self.page, 1.0, 2.0)
+                pausa(self.page, 1.5, 2.5)
         # menu lateral: volta à raiz (/ MEN), entra no módulo e escolhe a consulta
         if tela.get("menu") and not self._tela_aberta(tela):
             for _ in range(2):
                 self._clicar_texto("/ MEN") or self._clicar_texto("MEN")
-                if self._clicar_texto(tela["menu"][0]) and self._clicar_texto(tela["menu"][1]):
-                    break
-                menu = self._achar("", ['button:has-text("☰")', 'button[aria-label*="menu" i]', '.navbar-toggler',
+                if self._clicar_texto(tela["menu"][0]):
+                    link = self._achar("", [f'a[href*="{tela["pagina"]}"]']) if tela.get("pagina") else None
+                    if link is not None:
+                        link.click()
+                        pausa(self.page, 1.5, 2.5)
+                        break
+                    if self._clicar_texto(tela["menu"][1]):
+                        break
+                menu = self._achar("", ['#toggleMenuHeader', 'button[aria-label*="menu" i]', '.navbar-toggler',
                                         'button[title*="menu" i]'])
                 if menu is not None:
                     menu.click()
@@ -439,10 +487,14 @@ class AtfPB:
                 if sugestao is not None and not self._tela_aberta(tela):
                     sugestao.click()
                     pausa(self.page, 1.5, 2.5)
-        if not self._tela_aberta(tela):
+        frame = self._quadro_da_tela(tela)
+        if frame is None:
             raise EtapaNaoConcluida(f"não consegui abrir a tela '{tela['titulo']}'")
-        self._url_tela[nome] = self.page.url
-        self._log(f"Tela aberta: {tela['titulo']}")
+        url = frame.url
+        if nome == "mensagens":  # sempre a lista principal, não a de uma mensagem aberta
+            url = url.split("SEGf_")[0] + "SEGf_MinhasMensagens.do?limparSessao=true"
+        self._url_tela[nome] = (frame, url)
+        self._log(f"Tela aberta: {tela['titulo']} ({frame.url[:90]})")
 
     # ------------------------------------------------------------------ consulta (envio)
     def _dialogo(self, dialogo):
@@ -527,21 +579,43 @@ class AtfPB:
                 return texto
         return ""
 
+    def _no_quadro(self, frame, css: str):
+        """Primeiro elemento visível do seletor dentro de um quadro (ou None)."""
+        if frame is None:
+            return None
+        try:
+            return self._primeiro_visivel(frame.locator(css))
+        except Exception:
+            return None
+
+    def _quadro_do_bloco(self, bloco: str):
+        """O Número, o Pesquisar e o Nome/Razão Social de cada bloco ficam num quadro próprio do ATF
+        (componentes/CodDescLstBS.jsp?id=..._cmpEmit / _cmpDest)."""
+        suf = _SUFIXO_BLOCO[bloco]
+        for frame in self.page.frames:
+            try:
+                if frame.locator(f'input[id^="hidNrDocumento"][id$="{suf}"]').count():
+                    return frame
+            except Exception:
+                continue
+        return None
+
     def _preencher_consulta(self, tipo: str, ie: str, inicio: date, fim: date):
         nome_tela, bloco = TIPO_TELA[tipo]
         tela = self.atf["telas"][nome_tela]
-        self.abrir_tela(nome_tela)
-        limpar = self._achar("", ['button:has-text("Limpar")', 'input[value="Limpar" i]'])
-        if limpar is not None:
-            limpar.click()
-            pausa(self.page, 0.5, 1.0)
+        self.abrir_tela(nome_tela)  # abre com limparSessao=true: formulário limpo
+        tela_frame = self._quadro_da_tela(tela)
+        suf = _SUFIXO_BLOCO[bloco]
 
-        # período: do 1º ao último dia da competência
-        rotulos = tela["rotulos_data"]
-        if len(rotulos) == 1:
-            campos = [self._apos_rotulo(rotulos[0], _INPUT_TEXTO, 1), self._apos_rotulo(rotulos[0], _INPUT_TEXTO, 2)]
-        else:
-            campos = [self._apos_rotulo(rotulos[0], _INPUT_TEXTO, 1), self._apos_rotulo(rotulos[1], _INPUT_TEXTO, 1)]
+        # período: do 1º ao último dia da competência (edtDtInicial / edtDtFinal)
+        campos = [self._no_quadro(tela_frame, 'input[name="edtDtInicial"]'),
+                  self._no_quadro(tela_frame, 'input[name="edtDtFinal"]')]
+        if None in campos:  # outra tela: pelos rótulos
+            rotulos = tela["rotulos_data"]
+            if len(rotulos) == 1:
+                campos = [self._apos_rotulo(rotulos[0], _INPUT_TEXTO, 1), self._apos_rotulo(rotulos[0], _INPUT_TEXTO, 2)]
+            else:
+                campos = [self._apos_rotulo(rotulos[0], _INPUT_TEXTO, 1), self._apos_rotulo(rotulos[1], _INPUT_TEXTO, 1)]
         if None in campos:
             raise EtapaNaoConcluida("campos de data não encontrados")
         for campo, data in zip(campos, (inicio, fim)):
@@ -550,36 +624,47 @@ class AtfPB:
         self.page.keyboard.press("Escape")  # fecha o calendário, se abriu
         self._log(f"Período preenchido: {inicio:%d/%m/%Y} a {fim:%d/%m/%Y}")
 
-        # só um bloco preenchido: o outro fica com o Número vazio
+        # Tipo de Identificação = Inscrição Estadual (já vem assim; confere)
+        tipo_id = self._no_quadro(tela_frame, f'select[id^="cmbTpDoc"][id$="{suf}"]') or self._campo_do_bloco(bloco, "select")
+        if tipo_id is not None:
+            self._escolher(tipo_id, r"inscri[cç][aã]o\s+estadual")
+
+        # só um bloco preenchido: o Número do outro fica vazio
         outro = {"Emitente": "Destinatário", "Destinatário": "Emitente"}[bloco]
-        numero_outro = self._campo_do_bloco(outro, _INPUT_TEXTO)
+        q_outro = self._quadro_do_bloco(outro)
+        numero_outro = self._no_quadro(q_outro, f'input[id^="hidNrDocumento"][id$="{_SUFIXO_BLOCO[outro]}"]')
         if numero_outro is not None and numero_outro.input_value():
             numero_outro.fill("")
 
-        tipo_id = self._campo_do_bloco(bloco, "select")
-        numero = self._campo_do_bloco(bloco, _INPUT_TEXTO)
+        # IE no Número do bloco e "Pesquisar" (confere a IE e traz o Nome/Razão Social)
+        quadro = self._quadro_do_bloco(bloco)
+        sel_numero = f'input[id^="hidNrDocumento"][id$="{suf}"]'
+        sel_nome = f'input[id^="hidNoHumanoInst"][id$="{suf}"]'
+        if quadro is not None:
+            numero = self._no_quadro(quadro, sel_numero)
+            pesquisar = self._no_quadro(quadro, 'button[name="btnPesquisar"], input[name="btnPesquisar"]')
+        else:  # outra tela: pelo título do bloco
+            numero = self._campo_do_bloco(bloco, _INPUT_TEXTO)
+            pesquisar = self._campo_do_bloco(bloco, _BOTAO, texto="Pesquisar")
         if numero is None:
             raise EtapaNaoConcluida(f"campo Número do bloco {bloco} não encontrado")
-        if tipo_id is not None:
-            self._escolher(tipo_id, r"inscri[cç][aã]o\s+estadual")
         self._digitar(numero, ie)
-        numero.press("Tab")
-
-        # "Pesquisar" do bloco: confere a IE e traz o Nome/Razão Social
-        pesquisar = self._campo_do_bloco(bloco, _BOTAO, texto="Pesquisar")
+        self._log(f"IE {ie} no bloco {bloco}")
         if pesquisar is not None:
             pesquisar.click()
-            nome = self._campo_do_bloco(bloco, _INPUT_TEXTO, 2)
-            achou = nome is None
-            for _ in range(16):
+            achou = False
+            for _ in range(20):
                 pausa(self.page, 0.5, 0.8)
                 try:
+                    q = self._quadro_do_bloco(bloco)  # o quadro recarrega depois do Pesquisar
+                    nome = self._no_quadro(q, sel_nome) if q is not None else self._campo_do_bloco(bloco, _INPUT_TEXTO, 2)
                     if nome is None or nome.input_value().strip():
                         achou = True
+                        if nome is not None:
+                            self._log(f"Pesquisar: {nome.input_value().strip()[:60]}")
                         break
                 except Exception:
-                    achou = True
-                    break
+                    continue
             erro = self._avisos_na_tela()
             if erro and _ERRO_CONSULTA.search(erro):
                 raise IeNaoEncontrada(f"o ATF não aceitou a IE {ie}: {erro[:150]}")
@@ -588,20 +673,21 @@ class AtfPB:
             self._respostas = []
 
         # Tipo de Exibição = XML e Consultar
-        exibicao = self._apos_rotulo("Tipo de Exibição", "select", 1)
+        tela_frame = self._quadro_da_tela(tela) or tela_frame
+        exibicao = self._no_quadro(tela_frame, 'select[name="cmbTpExibicao"]') or self._apos_rotulo("Tipo de Exibição", "select", 1)
         if exibicao is None:
             raise EtapaNaoConcluida("campo Tipo de Exibição não encontrado")
         if not self._escolher(exibicao, r"^\s*xml\s*$"):
             raise EtapaNaoConcluida("opção XML não encontrada em Tipo de Exibição")
-        consultar = None
-        for frame in self.page.frames:
-            try:
-                consultar = self._primeiro_visivel(frame.get_by_role("button", name=re.compile(r"^\W*consultar\s*$", re.I)))
-            except Exception:
-                consultar = None
-            if consultar is not None:
-                break
-        consultar = consultar or self._achar("", ['input[value="Consultar" i]', 'button:has-text("Consultar")'])
+        consultar = self._no_quadro(tela_frame, '#btnConsulta, button[name="btnConsultar"], input[name="btnConsultar"]')
+        if consultar is None:
+            for frame in self.page.frames:
+                try:
+                    consultar = self._primeiro_visivel(frame.get_by_role("button", name=re.compile(r"^\W*consultar\s*$", re.I)))
+                except Exception:
+                    consultar = None
+                if consultar is not None:
+                    break
         if consultar is None:
             raise EtapaNaoConcluida("botão Consultar não encontrado")
         self._log(f"Consultando {bloco} IE {ie}, {inicio:%d/%m/%Y} a {fim:%d/%m/%Y}, exibição XML")
@@ -628,57 +714,50 @@ class AtfPB:
             return False
 
     # ------------------------------------------------------------------ Minhas Mensagens (recebimento)
-    def _ler_linhas(self) -> list[dict]:
-        linhas: list[dict] = []
-        for i, frame in enumerate(self.page.frames):
-            try:
-                linhas.extend(dict(l, quadro=i) for l in frame.evaluate(_JS_MENSAGENS))
-            except Exception:
-                continue
-        return linhas
-
     def listar_mensagens(self) -> list[dict]:
-        """Recarrega Minhas Mensagens e lê as linhas: código (FIS_...), enviada, anexo, link.
+        """Recarrega Minhas Mensagens e lê as mensagens "mãe" (uma por consulta).
         O ATF só deixa consultar a caixa de 1 em 1 minuto: respeita esse intervalo."""
         espera = self.atf["segundos_entre_verificacoes"] - (time.time() - self._ultima_lista)
         if espera > 0:
             pausa(self.page, espera, espera + 2)
         self.abrir_tela("mensagens", recarregar=True)
         self._ultima_lista = time.time()
-        return self._ler_linhas()
+        quadro = self._quadro_da_tela(self.atf["telas"]["mensagens"])
+        try:
+            return quadro.evaluate(_JS_MENSAGENS) if quadro is not None else []
+        except Exception:
+            return []
 
-    def abrir_mensagem(self, linha: dict, capt: CapturadorArquivos) -> str:
-        """Abre a mensagem ("Ler Mensagem"), baixa o anexo ("Dados referentes ao ano de ...") e
-        devolve o texto dela. Sem anexo = a consulta não tem dados no período."""
-        if linha.get("href"):
-            self._abrir(linha["href"])
-        else:
-            frame = self.page.frames[linha["quadro"]] if linha["quadro"] < len(self.page.frames) else self.page.main_frame
-            tr = frame.locator(f'tr[data-robo="{linha["marca"]}"]')
-            (self._primeiro_visivel(tr.locator("a")) or tr).click()
-            pausa(self.page, 1.5, 2.5)
-        texto = _texto_da_pagina(self.page)
+    def _quadro_mensagens(self):
+        """O quadro de conteúdo onde Minhas Mensagens foi aberta (continua sendo ele ao abrir as mensagens)."""
+        guardado = self._url_tela.get("mensagens")
+        if guardado and not guardado[0].is_detached():
+            return guardado[0]
+        quadro = self._quadro_da_tela(self.atf["telas"]["mensagens"])
+        if quadro is None:
+            raise EtapaNaoConcluida("Minhas Mensagens não está aberta")
+        return quadro
+
+    def _base_seg(self, quadro) -> str:
+        return quadro.url.split("SEGf_")[0]
+
+    def _ler_mensagem(self, quadro, filha: str, mae: str, capt: CapturadorArquivos) -> tuple[str, int]:
+        """Abre uma mensagem (SEGf_LerMensagem) e baixa o anexo ("Dados referentes ao ano de ...",
+        javascript:mostrarArquivo). Devolve (texto, arquivos baixados)."""
+        self._ir(quadro, f"{self._base_seg(quadro)}SEGf_LerMensagem.do?hidsqMensagem={filha}&sqMensagemPai={mae}")
+        texto = quadro.evaluate("() => document.body ? document.body.innerText : ''")
         antes = len(capt.recebidos)
-        qtd = re.search(r"(\d+)\s*anexo\(?s?\)?", texto, re.I)
-        if qtd and int(qtd.group(1)) > 0:
-            alvos = []
-            for frame in self.page.frames:
-                try:
-                    anexos = frame.locator(_SELETOR_ANEXOS)
-                    alvos += [anexos.nth(i) for i in range(min(anexos.count(), 20))]
-                    if not alvos:  # links logo depois de "N Anexo(s):"
-                        depois = frame.locator("xpath=//*[contains(normalize-space(.), 'Anexo(s)')]"
-                                               "[not(.//*[contains(normalize-space(.), 'Anexo(s)')])]/following::a")
-                        alvos += [depois.nth(i) for i in range(min(depois.count(), int(qtd.group(1))))]
-                except Exception:
-                    continue
-            for a in alvos:
-                try:
-                    if a.is_visible():
-                        a.click()
-                        pausa(self.page, 1.0, 1.5)
-                except Exception:
-                    continue
+        anexos = quadro.locator(f'a[href*="mostrarArquivo"], {_SELETOR_ANEXOS}')
+        clicados = 0
+        for i in range(min(anexos.count(), 10)):
+            try:
+                if anexos.nth(i).is_visible():
+                    anexos.nth(i).click()
+                    clicados += 1
+                    pausa(self.page, 1.0, 1.5)
+            except Exception:
+                continue
+        if clicados:
             limite = time.time() + 60
             while time.time() < limite:
                 pausa(self.page, 0.8, 1.2)
@@ -688,25 +767,36 @@ class AtfPB:
             if len(capt.recebidos) == antes and not self._diag_mensagem_salvo:
                 self._diag_mensagem_salvo = True  # uma vez por rodada: para ajustar o roteiro
                 self.diag.salvar(self.page, "anexo-nao-baixado")
-        self._log(f"Mensagem {linha['remetente'][:40]} de {linha['enviada']}: {len(capt.recebidos) - antes} arquivo(s)")
-        self.ultimo_uso = time.time()
-        return texto
+        return texto, len(capt.recebidos) - antes
 
-    def _voltar_para_lista(self) -> list[dict]:
-        """Botão Voltar da mensagem; devolve as linhas da lista (vazia se o ATF pedir para aguardar)."""
-        voltar = self._achar("", ['input[value="Voltar" i]', 'button:has-text("Voltar")', 'a:has-text("Voltar")'])
-        if voltar is None:
-            return []
-        voltar.click()
-        pausa(self.page, 1.5, 2.5)
-        return self._ler_linhas() if self._tela_aberta(self.atf["telas"]["mensagens"]) else []
+    def ler_consulta(self, mae: dict, capt: CapturadorArquivos) -> tuple[str, list, bool]:
+        """Lê as mensagens de uma consulta: abre a mãe (abrirFilhas) e cada filha ainda não lida.
+        Devolve (textos, anexos baixados, achou a mensagem final)."""
+        quadro = self._quadro_mensagens()
+        filhas = [mae]
+        if mae.get("filhas", 0) > 0:
+            self._ir(quadro, f"{self._base_seg(quadro)}SEGf_MinhasMensagens.do?hidsqMensagem={mae['id']}")
+            filhas = [f for f in quadro.evaluate(_JS_MENSAGENS) if f["id"] != mae["id"]] or [mae]
+        textos, antes, final = [], len(capt.recebidos), False
+        for f in filhas:
+            if f["id"] in self._filhas_lidas:
+                continue
+            texto, n = self._ler_mensagem(quadro, f["id"], mae["id"], capt)
+            self._log(f"Mensagem {f['id']} ({mae.get('remetente', '')[:30]}): {n} arquivo(s)")
+            if n or _MENSAGEM_FINAL.search(texto):
+                final = True
+                self._filhas_lidas.add(f["id"])
+            textos.append(texto)
+        self.ultimo_uso = time.time()
+        return "\n".join(textos), capt.recebidos[antes:], final
 
     def recolher(self, esperadas: dict[str, int], desde: datetime, minutos: int,
                  relevante: Callable[[list, str], bool] | None = None) -> Recolha:
         """Acompanha Minhas Mensagens até chegarem as respostas finais esperadas ({código FIS: quantas})
         das consultas feitas a partir de 'desde' (hora do ATF ao clicar em Consultar), ou até o tempo
-        acabar. Cada consulta gera 3 mensagens; só a final ("Tarefa executada...") conta, e só se
-        'relevante(anexos, texto)' disser que é desta rodada."""
+        acabar. Cada consulta gera uma mensagem mãe com 3 filhas; a final ("Tarefa executada...") traz o
+        anexo, ou vem sem anexo quando não há dados. Só conta se 'relevante(anexos, texto)' disser que é
+        desta rodada (outra competência ou outra empresa não contam)."""
         recolha = Recolha()
         capt = CapturadorArquivos(self.contexto, self.cfg["chrome"]["pasta_downloads"])
         limite = time.time() + minutos * 60
@@ -714,28 +804,19 @@ class AtfPB:
             while True:
                 if self._senha_na_tela() is not None:
                     raise SessaoExpirada("o ATF voltou para a tela de login.")
-                linhas = self.listar_mensagens()
-                while True:
-                    novas = [l for l in linhas
-                             if l["codigo"] in esperadas and l["chave"] not in self._mensagens_lidas
-                             and (l["data"] is None or _data_br(l["data"]) >= desde - timedelta(seconds=5))]
-                    if not novas:
-                        break
-                    linha = novas[0]
-                    self._mensagens_lidas.add(linha["chave"])
-                    antes = len(capt.recebidos)
-                    texto = self.abrir_mensagem(linha, capt)
-                    anexos = capt.recebidos[antes:]
-                    recolha.textos.append((linha["codigo"], texto))
-                    final = bool(anexos) or bool(_MENSAGEM_FINAL.search(texto))
-                    if final and (relevante is None or relevante(anexos, texto)):
-                        recolha.recebidas[linha["codigo"]] = recolha.recebidas.get(linha["codigo"], 0) + 1
-                    elif final:
-                        self._log("Mensagem de outra consulta (outra empresa ou competência): não conta")
-                    # volta para a lista pelo Voltar; se o ATF pedir para aguardar, segue só com as
-                    # mensagens que têm link próprio (as outras ficam para a próxima leitura da caixa)
-                    de_volta = self._voltar_para_lista()
-                    linhas = de_volta or [l for l in linhas if l.get("href")]
+                maes = [m for m in self.listar_mensagens()
+                        if m["codigo"] in esperadas and m["id"] not in self._mensagens_lidas
+                        and (not m["data"] or _data_br(m["data"]) >= desde - timedelta(seconds=5))]
+                for mae in maes:
+                    textos, anexos, final = self.ler_consulta(mae, capt)
+                    recolha.textos.append((mae["codigo"], textos))
+                    if not final:
+                        continue  # ainda processando: volta nela na próxima leitura da caixa
+                    self._mensagens_lidas.add(mae["id"])
+                    if relevante is None or relevante(anexos, textos):
+                        recolha.recebidas[mae["codigo"]] = recolha.recebidas.get(mae["codigo"], 0) + 1
+                    else:
+                        self._log("Consulta de outra empresa ou competência: não conta")
                 if all(recolha.recebidas.get(c, 0) >= n for c, n in esperadas.items()):
                     break
                 if time.time() >= limite:
@@ -754,7 +835,8 @@ class AtfPB:
     def sair(self, silencioso: bool = False):
         """Encerra a sessão antes de trocar de login (um login nunca herda a sessão do outro)."""
         try:
-            link = self._achar("", ['a:has-text("Sair")', 'button:has-text("Sair")', '[title*="Sair" i]',
+            link = self._achar("", ['[aria-label="Encerrar Sessão" i]', '[aria-label*="Encerrar" i]', '[title*="Encerrar" i]',
+                                    'a:has-text("Sair")', 'button:has-text("Sair")', '[title*="Sair" i]',
                                     '[aria-label*="Sair" i]', 'a[href*="logout" i]', 'a[href*="sair" i]'])
             if link is not None:
                 link.click()
@@ -762,7 +844,10 @@ class AtfPB:
         except Exception:
             pass
         try:
-            self.contexto.clear_cookies(domain=re.compile(r"sefaz\.pb\.gov\.br$"))
+            # www4.sefaz.pb.gov.br -> sefaz.pb.gov.br (pega também os cookies de ".sefaz.pb.gov.br")
+            partes = (urlparse(self.atf["url_login"]).hostname or "sefaz.pb.gov.br").split(".")
+            dominio = ".".join(partes[-4:]) if len(partes) > 4 else ".".join(partes)
+            self.contexto.clear_cookies(domain=re.compile(re.escape(dominio) + "$"))
         except Exception as e:
             if not silencioso:
                 self._log(f"Não limpei os cookies do ATF: {e}")

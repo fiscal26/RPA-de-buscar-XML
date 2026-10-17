@@ -136,7 +136,7 @@ class CapturadorArquivos:
         try:
             tipo = resposta.headers.get("content-type", "").lower()
             disp = resposta.headers.get("content-disposition", "").lower()
-            if "zip" in tipo or "octet-stream" in tipo or "attachment" in disp or \
+            if "zip" in tipo or "octet-stream" in tipo or "download" in tipo or "attachment" in disp or \
                     ("xml" in tipo and "html" not in tipo):
                 self._respostas.append(resposta)
         except Exception:
