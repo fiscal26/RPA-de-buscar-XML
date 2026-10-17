@@ -66,7 +66,7 @@ def topo():
             '<nav><a href="/atf/home">/ MEN</a> <a href="/atf/menu/nfe">NF-e</a> <a href="/atf/menu/nfce">NFC-e</a></nav>')
 
 
-BLOCO = """<div class="secao">{nome}</div>
+BLOCO = """<div class="secao card-header"><span>&nbsp;{nome}&nbsp;</span></div>
 <div class="form-floating"><select id="s{n}"><option>CPF</option><option>CNPJ</option>
 <option selected>Inscrição Estadual</option></select><label>Tipo de Identificação</label></div>
 <div class="form-floating"><input id="x{n}" class="form-control"><label>Número</label></div>
@@ -78,7 +78,13 @@ RODAPE = """<label>Tipo de Exibição</label><select id="te"><option>HTML</optio
 <button type="button" onclick="consultar()"><i class="bi-search"></i> Consultar</button>
 <button type="button" onclick="limpar()">Limpar</button>
 <div id="aviso"></div>
+<div id="calendario" style="display:none; position:fixed; left:0; top:0; width:100%; height:100%; z-index:999;
+     background:rgba(255,255,255,.9)">calendário aberto</div>
 <script>
+// calendário que abre ao focar as datas e cobre a tela até apertar Esc (como os seletores de data)
+for (const id of ['d1', 'd2']) document.getElementById(id).addEventListener('focus',
+    () => document.getElementById('calendario').style.display = 'block');
+document.addEventListener('keydown', e => { if (e.key === 'Escape') document.getElementById('calendario').style.display = 'none'; });
 function v(id) { const e = document.getElementById(id); return e ? e.value : ''; }
 function limpar() { document.querySelectorAll('input').forEach(e => { if (e.id !== 'f1') e.value = ''; }); }
 async function consultar() {

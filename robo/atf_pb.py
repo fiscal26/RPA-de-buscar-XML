@@ -59,7 +59,32 @@ _CONFIRMADA = re.compile(r"resultado\s+ser[aá]\s+enviado|caixa\s+de\s+mensagens
 # Mensagem final de uma consulta (as outras 2 mensagens da mesma consulta são de andamento)
 _MENSAGEM_FINAL = re.compile(r"tarefa\s+executada|executada\s+com\s+sucesso|n[aã]o\s+existem\s+dados|relat[oó]rio\s+gerado", re.I)
 _PERIODO = re.compile(r"per[ií]odo\s+solicitado:?\s*(\d{2}/\d{2}/\d{4})\s*a\s*(\d{2}/\d{2}/\d{4})", re.I)
-_INPUT_TEXTO = "input[not(@type='hidden') and not(@type='checkbox') and not(@type='radio') and not(@type='button') and not(@type='submit')]"
+_INPUT_TEXTO = "input:not([type=hidden]):not([type=checkbox]):not([type=radio]):not([type=button]):not([type=submit])"
+_BOTAO = "button, input[type=button], input[type=submit], a.btn"
+
+# Acha o campo que vem depois de um texto da tela e marca com data-robo-alvo
+_JS_APOS_ROTULO = """([rotulo, css, ordem, texto, marca]) => {
+    const norm = s => (s || '').normalize('NFD').replace(/[\\u0300-\\u036f]/g, '')
+        .replace(/[\\s\\u00a0]+/g, ' ').trim().toLowerCase();
+    const vis = e => { const r = e.getBoundingClientRect(); const st = getComputedStyle(e);
+        return r.width > 0 && r.height > 0 && st.visibility !== 'hidden' && st.display !== 'none'; };
+    const alvo = norm(rotulo);
+    const todos = Array.from(document.body ? document.body.querySelectorAll('*') : []);
+    const ignorar = ['OPTION', 'SCRIPT', 'STYLE', 'SELECT', 'TEXTAREA', 'INPUT', 'NOSCRIPT'];
+    const txt = e => norm(e.innerText !== undefined ? e.innerText : e.textContent);
+    const rotulos = todos.filter(e => !ignorar.includes(e.tagName) && vis(e) && txt(e) === alvo
+        && !Array.from(e.children).some(c => txt(c) === alvo));
+    for (const r of rotulos) {
+        let n = 0;
+        for (const e of todos) {
+            if (r.contains(e) || !(r.compareDocumentPosition(e) & Node.DOCUMENT_POSITION_FOLLOWING)) continue;
+            if (!e.matches(css) || !vis(e)) continue;
+            if (texto && norm(e.innerText || e.value) !== norm(texto)) continue;
+            if (++n === ordem) { e.setAttribute('data-robo-alvo', marca); return true; }
+        }
+    }
+    return false;
+}"""
 # Anexos dentro de uma mensagem aberta
 _SELETOR_ANEXOS = ('a:has-text("Dados referentes"), a[href*=".zip" i], a[href*=".xml" i], a[href*="anexo" i], a[href*="download" i], '
                    'a[href*="arquivo" i], a[download], a:has-text(".zip"), a:has-text(".xml"), '
@@ -223,6 +248,7 @@ class AtfPB:
         self._mensagens_lidas: set[str] = set()
         self._diag_mensagem_salvo = False
         self._hora_consulta: datetime | None = None
+        self._marcas = 0
         self._ultima_lista = 0.0
         self.page.on("dialog", self._dialogo)
 
@@ -254,13 +280,26 @@ class AtfPB:
                     return achado
         return None
 
-    def _apos_rotulo(self, rotulo: str, alvo: str, ordem: int = 1):
-        """Campo que vem depois de um texto da tela (ex.: o 2º input depois de 'Data de Emissão')."""
-        xp = f"xpath=//*[{_xpath_texto(rotulo)}][not(self::option)]/following::{alvo}[{ordem}]"
-        return self._achar("", [xp])
+    def _apos_rotulo(self, rotulo: str, css: str, ordem: int = 1, texto: str = ""):
+        """Campo visível que vem depois de um texto da tela (ex.: o 2º input depois de 'Data de Emissão',
+        o 1º input depois do título 'Emitente'). Compara sem acento, sem maiúscula e ignorando espaços
+        invisíveis (&nbsp;). 'texto' filtra pelo texto do próprio campo (ex.: botão 'Pesquisar')."""
+        self._marcas += 1
+        marca = f"r{self._marcas}"
+        for frame in self.page.frames:
+            try:
+                if frame.evaluate(_JS_APOS_ROTULO, [rotulo, css, ordem, texto, marca]):
+                    return frame.locator(f'[data-robo-alvo="{marca}"]').first
+            except Exception:
+                continue
+        return None
 
     def _digitar(self, campo, texto: str):
-        campo.click()
+        try:
+            campo.scroll_into_view_if_needed(timeout=3000)
+            campo.click(timeout=5000)
+        except Exception:
+            campo.focus()  # algo por cima do campo (calendário, rótulo flutuante): só foca
         campo.fill("")
         for letra in texto:
             campo.press_sequentially(letra)
@@ -457,8 +496,8 @@ class AtfPB:
         except Exception as e:
             self._log(f"{nome_tipo} IE {ie}: automático parou: {e}")
             self.diag.salvar(self.page, f"consulta-{tipo}")
-            self.aviso(f"Faça no Chrome a consulta {nome_tipo} da IE {ie} ({inicio:%d/%m/%Y} a {fim:%d/%m/%Y}), "
-                       "Tipo de Exibição XML, e clique em Consultar.")
+            self.aviso(f"Não consegui seguir sozinho ({e}). Faça no Chrome a consulta {nome_tipo} da IE {ie} "
+                       f"({inicio:%d/%m/%Y} a {fim:%d/%m/%Y}), Tipo de Exibição XML, e clique em Consultar.")
             resposta = self._esperar_resposta(self.segundos_assistido)
             envio.assistido = True
         finally:
@@ -500,14 +539,16 @@ class AtfPB:
         # período: do 1º ao último dia da competência
         rotulos = tela["rotulos_data"]
         if len(rotulos) == 1:
-            campos = [self._apos_rotulo(rotulos[0], "input", 1), self._apos_rotulo(rotulos[0], "input", 2)]
+            campos = [self._apos_rotulo(rotulos[0], _INPUT_TEXTO, 1), self._apos_rotulo(rotulos[0], _INPUT_TEXTO, 2)]
         else:
-            campos = [self._apos_rotulo(rotulos[0], "input", 1), self._apos_rotulo(rotulos[1], "input", 1)]
+            campos = [self._apos_rotulo(rotulos[0], _INPUT_TEXTO, 1), self._apos_rotulo(rotulos[1], _INPUT_TEXTO, 1)]
         if None in campos:
             raise EtapaNaoConcluida("campos de data não encontrados")
         for campo, data in zip(campos, (inicio, fim)):
             self._digitar(campo, f"{data:%d/%m/%Y}")
             campo.press("Tab")
+        self.page.keyboard.press("Escape")  # fecha o calendário, se abriu
+        self._log(f"Período preenchido: {inicio:%d/%m/%Y} a {fim:%d/%m/%Y}")
 
         # só um bloco preenchido: o outro fica com o Número vazio
         outro = {"Emitente": "Destinatário", "Destinatário": "Emitente"}[bloco]
@@ -525,8 +566,7 @@ class AtfPB:
         numero.press("Tab")
 
         # "Pesquisar" do bloco: confere a IE e traz o Nome/Razão Social
-        pesquisar = self._campo_do_bloco(bloco, f"*[self::button or self::input][{_xpath_texto('Pesquisar')} or "
-                                                f"translate(@value,'PESQUISAR','pesquisar')='pesquisar']")
+        pesquisar = self._campo_do_bloco(bloco, _BOTAO, texto="Pesquisar")
         if pesquisar is not None:
             pesquisar.click()
             nome = self._campo_do_bloco(bloco, _INPUT_TEXTO, 2)
@@ -548,7 +588,7 @@ class AtfPB:
             self._respostas = []
 
         # Tipo de Exibição = XML e Consultar
-        exibicao = self._apos_rotulo("Tipo de Exibição", "select", 1) or self._apos_rotulo("Tipo de Exibicao", "select", 1)
+        exibicao = self._apos_rotulo("Tipo de Exibição", "select", 1)
         if exibicao is None:
             raise EtapaNaoConcluida("campo Tipo de Exibição não encontrado")
         if not self._escolher(exibicao, r"^\s*xml\s*$"):
@@ -568,12 +608,9 @@ class AtfPB:
         self._hora_consulta = self.hora_servidor() or datetime.now()
         consultar.click()
 
-    def _campo_do_bloco(self, bloco: str, alvo: str, ordem: int = 1):
-        for nome in dict.fromkeys([bloco, bloco.replace("á", "a")]):
-            campo = self._apos_rotulo(nome, alvo, ordem)
-            if campo is not None:
-                return campo
-        return None
+    def _campo_do_bloco(self, bloco: str, css: str, ordem: int = 1, texto: str = ""):
+        """Campo dentro do bloco Emitente/Destinatário (o que vem depois do título do bloco)."""
+        return self._apos_rotulo(bloco, css, ordem, texto)
 
     def _escolher(self, select, padrao: str) -> bool:
         try:
