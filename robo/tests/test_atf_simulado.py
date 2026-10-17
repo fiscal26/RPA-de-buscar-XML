@@ -367,16 +367,18 @@ def test_rodada_um_login_xml_pelas_mensagens(ambiente):
     assert blocos == [("E", IE_EMPRESA, "nfe"), ("D", IE_EMPRESA, "nfe"), ("D", IE_OUTRA, "nfe"), ("E", IE_OUTRA, "nfce")]
 
     assert r1.status == "concluido", r1
-    assert r1.detalhes["nfe_saida"]["salvos"] == 2 and r1.detalhes["nfe_entrada"]["sem_notas"], r1
+    assert r1.detalhes["nfe_saida"]["notas"] == 2 and r1.detalhes["nfe_entrada"]["sem_notas"], r1
     assert r2.status == "concluido", r2
-    assert r2.detalhes["nfe_entrada"]["salvos"] == 1 and r2.detalhes["nfce"]["salvos"] == 1, r2
+    assert r2.detalhes["nfe_entrada"]["notas"] == 1 and r2.detalhes["nfce"]["notas"] == 1, r2
     assert r3.status == "erro" and "não encontrou a IE" in r3.mensagem, r3
     base = pasta / "xml"
-    assert len(list(base.glob("Arquivos baixados/015-Padaria/2026-09/NF-e Saida/*.xml"))) == 2  # a antiga (nº 99) não
+    # o ZIP do ATF guardado como veio, na pasta com o total (2 notas de R$ 100,00); a antiga (nº 99) não entrou
+    (zip_saida,) = list(base.glob("Arquivos baixados/015-Padaria/2026-09/NF-e Saida - R$ 200,00/*.zip"))
+    assert zip_saida.read_bytes()[:2] == b"PK" and len(zipfile.ZipFile(zip_saida).namelist()) == 2
     assert not list(base.glob("Arquivos baixados/015-Padaria/2026-08"))  # resposta de outra competência não entrou
-    assert len(list(base.glob("Arquivos baixados/016-Mercado/2026-09/NF-e Entrada/*.xml"))) == 1
-    assert len(list(base.glob("Arquivos baixados/016-Mercado/2026-09/NFC-e/*.xml"))) == 1
-    assert len(list(base.glob("Arquivos baixados/_sem_empresa/2026-09/*.xml"))) == 1  # a da consulta manual
+    assert len(list(base.glob("Arquivos baixados/016-Mercado/2026-09/NF-e Entrada - R$ 100,00/*.zip"))) == 1
+    assert len(list(base.glob("Arquivos baixados/016-Mercado/2026-09/NFC-e - R$ 100,00/*.zip"))) == 1
+    assert len(list(base.glob("Arquivos baixados/_sem_empresa/*"))) == 1  # a da consulta manual
     assert ESTADO["lista_cedo"] == 0  # respeitou o intervalo da caixa de mensagens
     # só abre o necessário: com anexo, só a filha do clipe; sem anexo, para no "Nenhum registro satisfaz"
     por_mae: dict = {}
@@ -416,7 +418,7 @@ def test_caixa_lenta_tenta_de_novo(ambiente):
         executor.fechar()
     assert ESTADO["caixa_fora"] == 0
     assert r.status == "concluido", r
-    assert list((pasta / "xml" / "Arquivos baixados" / "020-Lenta").glob("2026-09/NF-e Saida/*.xml"))
+    assert list((pasta / "xml" / "Arquivos baixados" / "020-Lenta").glob("2026-09/NF-e Saida - R$ */*.zip"))
 
 
 def test_caixa_nao_abre_e_o_robo_para(ambiente):

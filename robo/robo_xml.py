@@ -3,7 +3,8 @@
 Roda no seu PC (com o Chrome aberto pelo abrir_chrome.bat), pega os agendamentos feitos no
 portal, entra no ATF com o login do contador, pesquisa as notas de cada empresa pela inscrição
 estadual e salva os XML em pastas.destino:
-    <destino>/<ID> - <Nome fantasia>/<AAAA-MM>/<NF-e Saida | NF-e Entrada | NFC-e>/
+    <destino>/Arquivos baixados/<ID>-<Nome>/<AAAA-MM>/<NF-e Saida | NF-e Entrada | NFC-e> - R$ <total>/
+(o ZIP baixado do ATF é guardado como veio, sem descompactar)
 
 O ATF não entrega o XML na hora: a consulta (Tipo de Exibição XML) gera uma mensagem com o anexo em
 "Minhas Mensagens". Por isso o robô trabalha em rodadas de um login: envia as consultas de todas as
@@ -206,57 +207,55 @@ class Executor:
         return [self._resultado(t, envios, por_destino, recolha, completas) for t in trabalhos]
 
     def _salvar_recolha(self, trabalhos: list[Trabalho], alvos, recolha: Recolha, salvar_empresas: bool = True):
-        """Distribui os arquivos baixados pelo conteúdo. Nada se perde: XML de empresa fora da rodada vai
-        para _sem_empresa e arquivo que não é XML/ZIP vai para _nao_identificados."""
+        """Distribui os arquivos baixados pelo conteúdo, cada um INTEIRO (o ZIP continua ZIP). Nada se
+        perde: arquivo de empresa fora da rodada vai para _sem_empresa e o que não é XML/ZIP vai para
+        _nao_identificados."""
         destino = self.cfg["pastas"]["destino"]
-        xmls, brutos = [], []
-        for nome, dados in recolha.arquivos:
-            extraidos = arquivos.extrair(dados, nome)
-            if extraidos:
-                xmls.extend(extraidos)
-            else:
-                brutos.append((nome, dados))
+        por_destino, sem_empresa, brutos = arquivos.distribuir_arquivos(recolha.arquivos, alvos)
         if brutos:
             for caminho, (nome, dados) in zip(arquivos.salvar_nao_identificados(brutos, destino), brutos):
                 log.warning("   ATENÇÃO: o arquivo baixado '%s' (%s, %d bytes) não é XML nem ZIP de XML; guardado em %s",
                             nome, arquivos.tipo_de_arquivo(dados), len(dados), caminho)
-        por_destino, sobras = arquivos.distribuir(xmls, alvos)
-        if sobras:
-            n = arquivos.salvar_sobras(sobras, destino)
-            log.info("   %d XML de empresas fora desta rodada salvos em %s/_sem_empresa", n, arquivos.PASTA_BAIXADOS)
+        if sem_empresa:
+            n = arquivos.salvar_sem_empresa(sem_empresa, destino)
+            log.info("   %d arquivo(s) de empresas fora desta rodada salvos em %s/_sem_empresa", n, arquivos.PASTA_BAIXADOS)
         if salvar_empresas:
             for t in trabalhos:
                 for tipo in t.tipos:
                     if por_destino.get((t.ie, tipo)):
-                        arquivos.salvar(por_destino[(t.ie, tipo)], destino, t.nome, t.ie, t.cnpj, tipo, t.codigo)
+                        arquivos.salvar_originais(por_destino[(t.ie, tipo)], destino, t.nome, t.ie, tipo,
+                                                  f"{t.inicio:%Y-%m}", t.codigo)
         return por_destino
 
     def _resultado(self, t: Trabalho, envios, por_destino, recolha: Recolha, completas: bool) -> Resultado:
-        total = arquivos.Resumo()
         detalhes: dict = {}
-        sem_notas, faltando, falhas = [], [], []
+        sem_notas, faltando, falhas, partes = [], [], [], []
+        total_notas = 0
         for tipo in t.tipos:
             nome = arquivos.TIPOS.get(tipo, tipo)
             envio = envios.get((t.ie, tipo))
-            r = arquivos.salvar(por_destino.get((t.ie, tipo), []), self.cfg["pastas"]["destino"], t.nome, t.ie, t.cnpj,
-                                tipo, t.codigo)
-            total.somar(r)
-            vazio = r.total == 0 and r.conferir == 0
-            # todas as respostas chegaram e nenhuma trouxe XML desta empresa/tipo: sem notas no período
+            baixados = por_destino.get((t.ie, tipo), [])
+            r = arquivos.salvar_originais(baixados, self.cfg["pastas"]["destino"], t.nome, t.ie, tipo,
+                                          f"{t.inicio:%Y-%m}", t.codigo) if baixados else None
+            vazio = r is None
+            # todas as respostas chegaram e nenhuma trouxe arquivo desta empresa/tipo: sem notas no período
             sem = vazio and envio.ok and (envio.sem_notas or completas)
-            detalhes[tipo] = {"salvos": r.salvos, "repetidos": r.repetidos, "conferir": r.conferir, "sem_notas": bool(sem)}
-            if not envio.ok:
+            detalhes[tipo] = {"arquivos": r["novos"] if r else 0, "repetidos": r["repetidos"] if r else 0,
+                              "notas": r["notas"] if r else 0, "valor": r["valor"] if r else 0.0, "sem_notas": bool(sem)}
+            if r:
+                total_notas += r["notas"]
+                partes.append(f"{nome}: {r['notas']} nota(s), {arquivos.reais(r['valor'])}")
+                log.info("   %s %s: %d arquivo(s) novo(s), %d nota(s), %s — %s", t.nome, nome, r["novos"], r["notas"],
+                         arquivos.reais(r["valor"]), r["pasta"])
+            elif not envio.ok:
                 falhas.append(f"{nome}: {envio.resposta or 'consulta não aceita'}")
-            elif vazio and sem:
+            elif sem:
                 sem_notas.append(nome)
-            elif vazio:
+                log.info("   %s %s: sem notas", t.nome, nome)
+            else:
                 faltando.append(nome)
-            log.info("   %s %s: %d novo(s), %d repetido(s)%s", t.nome, nome, r.salvos, r.repetidos,
-                     " — sem notas" if vazio and sem else "")
 
         pasta = arquivos.pasta_empresa(self.cfg["pastas"]["destino"], t.nome, t.ie, t.codigo).name
-        partes = [f"{arquivos.TIPOS.get(k, k)}: {d['salvos'] + d['repetidos']}" for k, d in detalhes.items()
-                  if d["salvos"] + d["repetidos"]]
         if sem_notas:
             partes.append("sem notas em " + ", ".join(sem_notas))
         if faltando:
@@ -264,15 +263,13 @@ class Executor:
         if falhas:
             partes.append("; ".join(falhas))
         msg = "; ".join(partes) + "."
-        if total.conferir:
-            msg += f" {total.conferir} XML de outra empresa separado(s) em _conferir."
-        if total.total:
+        if any(d["arquivos"] or d["repetidos"] for d in detalhes.values()):
             status = "concluido"
         elif faltando or falhas:
             status = "erro"
         else:
             status = "sem_notas"
-        return Resultado(status, msg[:1].upper() + msg[1:], total.total, detalhes, pasta)
+        return Resultado(status, msg[:1].upper() + msg[1:], total_notas, detalhes, pasta)
 
     @property
     def login_aberto(self) -> str:

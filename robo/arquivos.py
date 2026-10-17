@@ -1,11 +1,11 @@
-"""XML baixados: abre ZIP, lê cada documento, confere se é da empresa e salva organizado.
+"""Arquivos baixados do ATF: guardados como vieram (ZIP continua ZIP) na pasta da empresa.
 
-Pasta final:  <destino>/Arquivos baixados/<ID>-<Nome fantasia>/<AAAA-MM>/<NF-e Saida | NF-e Entrada | NFC-e>/<chave>.xml
-(ex.: ID 5 e nome "joao" -> "5-joao"; sem ID na planilha, só o nome). O mês é o da emissão de cada nota.
-Arquivo baixado que não é XML/ZIP (ou não é de nenhuma empresa) fica em "Arquivos baixados/_nao_identificados"
-e "_sem_empresa": nada do que foi baixado é descartado.
-XML que não é da empresa consultada (IE/CNPJ do emitente ou destinatário diferente) vai para a
-subpasta "_conferir", nunca para a de outra empresa.
+Pasta final:  <destino>/Arquivos baixados/<ID>-<Nome>/<AAAA-MM>/<NF-e Saida | NF-e Entrada | NFC-e> - R$ <total>/
+(ex.: ID 5 e nome "joao" -> "5-joao"; sem ID na planilha, só o nome). O conteúdo de cada arquivo é
+lido só para saber de qual empresa e tipo ele é (IE/CNPJ do emitente ou destinatário dentro das
+notas), contar as notas e somar o valor (notas autorizadas, sem as canceladas) que vai no nome da pasta.
+Arquivo de empresa fora da rodada fica em "Arquivos baixados/_sem_empresa" e o que não é XML/ZIP em
+"_nao_identificados": nada do que foi baixado é descartado.
 """
 from __future__ import annotations
 
@@ -40,6 +40,9 @@ class InfoXml:
     ie_dest: str = ""
     emissao: str = ""          # aaaa-mm-dd
     evento: bool = False       # cancelamento, carta de correção etc.
+    tipo_evento: str = ""      # 110111 = cancelamento
+    valor: float = 0.0         # vNF (valor total da nota)
+    situacao: str = ""         # cStat da autorização (100 = autorizada)
 
 
 @dataclass
@@ -118,10 +121,17 @@ def ler_xml(dados: bytes) -> InfoXml | None:
         info.cnpj_dest = _texto(dest, "CNPJ") or _texto(dest, "CPF")
         info.ie_emit = re.sub(r"\D", "", _texto(emit, "IE"))
         info.ie_dest = re.sub(r"\D", "", _texto(dest, "IE"))
+        try:
+            info.valor = float(_texto(_filho(_filho(inf, "total"), "ICMSTot"), "vNF") or 0)
+        except ValueError:
+            info.valor = 0.0
+        prot = nomes.get("infProt")
+        info.situacao = _texto(prot, "cStat") if prot is not None else ""
     elif "infEvento" in nomes or raiz_nome in ("procEventoNFe", "evento"):
         inf = nomes.get("infEvento")
         info.evento = True
         info.chave = _texto(inf, "chNFe")
+        info.tipo_evento = _texto(inf, "tpEvento")
         info.cnpj_emit = _texto(inf, "CNPJ") or _texto(inf, "CPF")
         info.emissao = _texto(inf, "dhEvento")[:10]
         info.modelo = info.chave[20:22] if len(info.chave) == 44 else ""
@@ -295,11 +305,12 @@ def salvar_sobras(arquivos: list[tuple[str, bytes]], destino: str | Path) -> int
     return n
 
 
-def salvar_nao_identificados(arquivos: list[tuple[str, bytes]], destino: str | Path) -> list[Path]:
+def salvar_nao_identificados(arquivos: list[tuple[str, bytes]], destino: str | Path,
+                              subpasta: str = "_nao_identificados") -> list[Path]:
     """Arquivo baixado que não é XML nem ZIP de XML: guarda como veio, para conferir (nada se perde)."""
     import hashlib
 
-    pasta = Path(destino) / PASTA_BAIXADOS / "_nao_identificados"
+    pasta = Path(destino) / PASTA_BAIXADOS / subpasta
     salvos = []
     for nome, dados in arquivos:
         base = Path(nome_de_pasta(Path(nome).name) or "arquivo")
@@ -324,3 +335,107 @@ def tipo_de_arquivo(dados: bytes) -> str:
     if dados[:4] == b"%PDF":
         return "PDF"
     return "outro"
+
+
+# ---------------------------------------------------------------------- arquivos como vieram do ATF
+# O ZIP baixado é guardado do jeito que chegou (sem descompactar). O conteúdo só é lido para saber
+# de qual empresa e tipo ele é, contar as notas e somar o valor que aparece no nome da pasta.
+
+def distribuir_arquivos(brutos: list[tuple[str, bytes]], alvos: list["Alvo"]):
+    """Cada arquivo baixado (ZIP ou XML) vai inteiro para a empresa/tipo da maioria das suas notas.
+    Devolve ({(ie, tipo): [(nome, dados)]}, sem_empresa, nao_identificados)."""
+    por_destino: dict[tuple[str, str], list[tuple[str, bytes]]] = {}
+    sem_empresa, nao_identificados, empatados = [], [], []
+    for nome, dados in brutos:
+        xmls = extrair(dados, nome)
+        if not xmls:
+            nao_identificados.append((nome, dados))
+            continue
+        por, _ = distribuir(xmls, alvos)
+        if not por:
+            sem_empresa.append((nome, dados))
+            continue
+        maior = max(len(v) for v in por.values())
+        candidatos = [k for k, v in por.items() if len(v) == maior]
+        if len(candidatos) == 1:
+            por_destino.setdefault(candidatos[0], []).append((nome, dados))
+        else:  # ex.: ZIP só com notas entre duas empresas da rodada (saída de uma = entrada da outra)
+            empatados.append((nome, dados, candidatos))
+    # empate: cada consulta gera o seu arquivo, então vai para quem ainda não recebeu nenhum
+    for nome, dados, candidatos in empatados:
+        livre = next((k for k in candidatos if k not in por_destino), candidatos[0])
+        por_destino.setdefault(livre, []).append((nome, dados))
+    return por_destino, sem_empresa, nao_identificados
+
+
+def valor_total(xmls: list[tuple[str, bytes]]) -> tuple[int, float]:
+    """(quantidade de notas, soma do vNF) das notas autorizadas e não canceladas."""
+    notas: dict[str, float] = {}
+    canceladas: set[str] = set()
+    for _, dados in xmls:
+        info = ler_xml(dados)
+        if not info:
+            continue
+        if info.evento:
+            if info.tipo_evento in ("110111", "110112"):  # cancelamento (e por substituição)
+                canceladas.add(info.chave)
+        elif info.situacao in ("", "100", "150"):
+            notas[info.chave] = info.valor
+    validas = {k: v for k, v in notas.items() if k not in canceladas}
+    return len(validas), round(sum(validas.values()), 2)
+
+
+def reais(valor: float) -> str:
+    return "R$ " + f"{valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def _pasta_do_tipo(pasta_mes: Path, nome_tipo: str) -> Path:
+    """A pasta do tipo pode já existir com o valor no nome ("NF-e Saida - R$ 1.234,56")."""
+    if pasta_mes.is_dir():
+        for d in sorted(pasta_mes.iterdir()):
+            if d.is_dir() and (d.name == nome_tipo or d.name.startswith(nome_tipo + " - R$")):
+                return d
+    return pasta_mes / nome_tipo
+
+
+def salvar_originais(brutos: list[tuple[str, bytes]], destino: str | Path, nome: str, ie: str, tipo: str,
+                     competencia: str, codigo: str = "") -> dict:
+    """Guarda os arquivos baixados como vieram (ZIP continua ZIP) em
+    Arquivos baixados/<ID>-<Nome>/<AAAA-MM>/<tipo - R$ total>/ e devolve
+    {novos, repetidos, notas, valor, pasta}. Rodar de novo não duplica (compara o conteúdo)."""
+    import hashlib
+
+    nome_tipo = TIPOS.get(tipo, tipo)
+    pasta_mes = pasta_empresa(destino, nome, ie, codigo) / competencia
+    pasta = _pasta_do_tipo(pasta_mes, nome_tipo)
+    existentes = {hashlib.sha1(a.read_bytes()).hexdigest() for a in pasta.iterdir() if a.is_file()} if pasta.is_dir() else set()
+    novos = repetidos = 0
+    for nome_arq, dados in brutos:
+        assinatura = hashlib.sha1(dados).hexdigest()
+        if assinatura in existentes:
+            repetidos += 1
+            continue
+        existentes.add(assinatura)
+        ext = ".zip" if dados[:4] == b"PK\x03\x04" else ".gz" if dados[:2] == b"\x1f\x8b" else ".xml"
+        pasta.mkdir(parents=True, exist_ok=True)
+        base = f"{nome_tipo} {competencia}"
+        arquivo, n = pasta / f"{base}{ext}", 1
+        while arquivo.exists():
+            n += 1
+            arquivo = pasta / f"{base} ({n}){ext}"
+        arquivo.write_bytes(dados)
+        novos += 1
+    if not pasta.is_dir():
+        return {"novos": 0, "repetidos": repetidos, "notas": 0, "valor": 0.0, "pasta": ""}
+    # valor de tudo o que está na pasta (inclusive de rodadas anteriores) e nome da pasta com o total
+    todos = [x for a in sorted(pasta.iterdir()) if a.is_file() for x in extrair(a.read_bytes(), a.name)]
+    notas, valor = valor_total(todos)
+    novo_nome = f"{nome_tipo} - {reais(valor)}" if notas else nome_tipo
+    if pasta.name != novo_nome and not (pasta_mes / novo_nome).exists():
+        pasta = pasta.rename(pasta_mes / novo_nome)
+    return {"novos": novos, "repetidos": repetidos, "notas": notas, "valor": valor, "pasta": str(pasta)}
+
+
+def salvar_sem_empresa(brutos: list[tuple[str, bytes]], destino: str | Path) -> int:
+    """Arquivo baixado que não é de nenhuma empresa da rodada: guardado como veio."""
+    return len(salvar_nao_identificados(brutos, destino, "_sem_empresa"))

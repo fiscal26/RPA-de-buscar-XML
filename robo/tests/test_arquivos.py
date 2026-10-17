@@ -1,5 +1,6 @@
 import io
 import zipfile
+from pathlib import Path
 
 import arquivos
 from util import IE_EMPRESA, IE_OUTRA, chave, evento, nfe
@@ -100,3 +101,30 @@ def test_arquivo_que_nao_e_xml_nao_se_perde(tmp_path):
 def test_gzip(tmp_path):
     import gzip
     assert [n for n, _ in arquivos.extrair(gzip.compress(nfe(EMPRESA, OUTRA, 1)), "nota.xml.gz")] == ["nota.xml"]
+
+
+def test_zip_guardado_como_veio_e_total_no_nome_da_pasta(tmp_path):
+    zip1 = _zip({"a.xml": nfe(EMPRESA, OUTRA, 1, ie_emit=IE_EMPRESA, valor=1000.5),
+                 "b.xml": nfe(EMPRESA, OUTRA, 2, ie_emit=IE_EMPRESA, valor=234.06),
+                 "c.xml": nfe(EMPRESA, OUTRA, 3, ie_emit=IE_EMPRESA, valor=99999),
+                 "cancel.xml": evento(EMPRESA, chave(EMPRESA, numero=3)).replace(b"<tpEvento>110111", b"<tpEvento>110111")})
+    r = arquivos.salvar_originais([("Dados 2026.zip", zip1)], tmp_path, "joao", IE_EMPRESA, "nfe_saida", "2026-09", "5")
+    pasta = tmp_path / "Arquivos baixados" / "5-joao" / "2026-09" / "NF-e Saida - R$ 1.234,56"
+    assert r["pasta"] == str(pasta) and (r["notas"], r["valor"]) == (2, 1234.56)  # a nota 3 foi cancelada
+    (arquivo,) = list(pasta.iterdir())
+    assert arquivo.name == "NF-e Saida 2026-09.zip" and arquivo.read_bytes() == zip1  # o ZIP intacto
+
+    # rodar de novo não duplica; um ZIP novo soma no total e a pasta é renomeada
+    assert arquivos.salvar_originais([("x.zip", zip1)], tmp_path, "joao", IE_EMPRESA, "nfe_saida", "2026-09", "5")["repetidos"] == 1
+    zip2 = _zip({"d.xml": nfe(EMPRESA, OUTRA, 4, ie_emit=IE_EMPRESA, valor=10)})
+    r = arquivos.salvar_originais([("y.zip", zip2)], tmp_path, "joao", IE_EMPRESA, "nfe_saida", "2026-09", "5")
+    assert r["pasta"].endswith("NF-e Saida - R$ 1.244,56") and len(list(Path(r["pasta"]).iterdir())) == 2
+
+
+def test_distribuir_arquivos_inteiros():
+    venda = _zip({"v1.xml": nfe(EMPRESA, OUTRA, 1, ie_emit=IE_EMPRESA, ie_dest=IE_OUTRA),
+                  "v2.xml": nfe(EMPRESA, "", 2, ie_emit=IE_EMPRESA)})
+    alvos = [arquivos.Alvo(IE_EMPRESA, "", ["nfe_saida"]), arquivos.Alvo(IE_OUTRA, "", ["nfe_entrada"])]
+    por, sem_empresa, nao = arquivos.distribuir_arquivos([("z.zip", venda), ("r.pdf", b"%PDF")], alvos)
+    assert list(por) == [(IE_EMPRESA, "nfe_saida")] and por[(IE_EMPRESA, "nfe_saida")][0][1] == venda
+    assert not sem_empresa and [n for n, _ in nao] == ["r.pdf"]

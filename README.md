@@ -8,16 +8,19 @@ pela **inscrição estadual** e salva os XML da competência numa pasta do seu c
   Arquivos baixados/
     5-joao/                        (ID-NOME FANTASIA da planilha; sem ID, só o nome)
       2026-09/
-        NF-e Saida/      <chave>.xml ...     empresa como emitente
-        NF-e Entrada/    <chave>.xml ...     empresa como destinatária
-        NFC-e/           <chave>.xml ...
-          Eventos/       cancelamentos, cartas de correção
-      _conferir/         XML que veio de outra empresa (nunca vai para a pasta errada)
-    _sem_empresa/        XML de empresa fora da rodada (ex.: consulta feita à mão no mesmo login)
+        NF-e Saida - R$ 12.345,67/     NF-e Saida 2026-09.zip     (o ZIP do ATF, como veio)
+        NF-e Entrada - R$ 8.900,00/    NF-e Entrada 2026-09.zip
+        NFC-e - R$ 1.230,50/           NFC-e 2026-09.zip
+    _sem_empresa/        arquivo de empresa fora da rodada (ex.: consulta feita à mão no mesmo login)
     _nao_identificados/  arquivo baixado que não é XML/ZIP (guardado como veio, para conferir)
   _relatorios/           relatório de cada rodada
   _diagnostico/          telas e campos quando algo não é reconhecido
 ```
+
+O ZIP baixado do ATF **não é descompactado**: fica do jeito que veio. O robô só lê o conteúdo para
+saber de qual empresa e tipo ele é e para somar o **valor total** (vNF das notas autorizadas, sem as
+canceladas), que aparece no nome da pasta. Rodar de novo a mesma competência não duplica o arquivo; um
+arquivo novo soma no total e a pasta é renomeada.
 
 O robô é ativado pelo **portal web**: o cliente envia a planilha modelo na área de agendamento,
 escolhe a competência e o horário, e o robô no seu PC executa.
