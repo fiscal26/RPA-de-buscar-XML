@@ -16,6 +16,7 @@ Uso:
     python robo_xml.py --gerar-chaves      cria as chaves das senhas (uma vez só; veja o README)
     python robo_xml.py --modelo PASTA      copia a planilha modelo para a pasta
     python robo_xml.py --local empresas.xlsx [--competencia 09/2026]
+    python robo_xml.py --gravar            grava os passos que você faz no Chrome (para ajustar o robô)
                                            roda direto da planilha, sem o portal (para testar)
 """
 from __future__ import annotations
@@ -492,6 +493,7 @@ def main():
     ap.add_argument("--modelo", metavar="PASTA", help="copia a planilha modelo para a pasta")
     ap.add_argument("--local", metavar="PLANILHA", help="roda direto da planilha, sem o portal")
     ap.add_argument("--competencia", help="MM/AAAA (padrão: mês anterior)")
+    ap.add_argument("--gravar", action="store_true", help="grava os passos que você faz no Chrome do robô")
     args = ap.parse_args()
 
     logging.basicConfig(
@@ -512,6 +514,13 @@ def main():
         return
     if args.mostrar_chave_publica:
         print(cripto.publica_de(cripto.carregar_privada(cfg["chaves"]["privada"])))
+        return
+    if args.gravar:
+        from gravador import Gravador
+        try:
+            Gravador(cfg).gravar()
+        except ChromeIndisponivel as e:
+            sys.exit(str(e))
         return
     if args.modelo:
         print(planilha.copiar_modelo(args.modelo))

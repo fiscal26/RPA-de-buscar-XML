@@ -12,3 +12,6 @@ __pycache__/
 *.pyc
 .pytest_cache/
 robo/robo_xml.log
+
+# Gravações de passos (podem ter dados de clientes)
+robo/gravacoes/

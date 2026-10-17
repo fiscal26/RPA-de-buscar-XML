@@ -108,6 +108,20 @@ python robo_xml.py --local empresas.xlsx --competencia 09/2026
 
 Gera um relatório em `<destino>/_relatorios/`.
 
+### Gravador de passos (para ajustar o robô à tela real)
+
+Se o robô travar numa tela, grave você mesmo o caminho:
+
+1. Abra o Chrome pelo `abrir_chrome.bat`.
+2. Rode `gravar_passos.bat` (ou `py robo_xml.py --gravar`).
+3. No Chrome, faça o caminho completo no ATF: login, NF-e, a consulta (datas, IE, Pesquisar, XML,
+   Consultar), Minhas Mensagens, abrir a mensagem e baixar o anexo.
+4. Volte ao PowerShell e aperte **Ctrl+C**. O arquivo fica em `robo/gravacoes/gravacao_<data>.json`.
+
+O arquivo traz cada clique e campo preenchido com o endereço exato do elemento na página e a lista de
+campos de cada tela. **A senha não é gravada** (aparece como `***`). Com ele, o robô passa a repetir
+exatamente os seus passos.
+
 ### Diagnóstico
 
 Quando uma etapa não é reconhecida, o robô salva em `<destino>/_diagnostico/` uma pasta com
