@@ -39,7 +39,7 @@ import arquivos
 import config
 import cripto
 import planilha
-from atf_pb import (_SEM_NOTAS as SEM_NOTAS, TIPO_TELA, AtfPB, Diagnostico, EtapaNaoConcluida, Recolha,
+from atf_pb import (TIPO_TELA, AtfPB, Diagnostico, EtapaNaoConcluida, Recolha,
                     SenhaInvalida, SessaoExpirada, SiteForaDoAr)
 from navegador import Chrome, ChromeIndisponivel
 
@@ -143,7 +143,6 @@ class Executor:
         atf = self.atf
         t0 = trabalhos[0]
         self._entrar(t0)
-        desde = atf.hora_servidor() or datetime.now()
 
         # 1) envia as consultas (uma por empresa e tipo; Emitente OU Destinatário)
         envios: dict[tuple[str, str], object] = {}
@@ -168,17 +167,22 @@ class Executor:
                 codigo = atf.atf["telas"][TIPO_TELA[tipo][0]]["funcao"]
                 esperadas[codigo] = esperadas.get(codigo, 0) + 1
         alvos = [arquivos.Alvo(t.ie, t.cnpj, t.tipos) for t in trabalhos]
-        ies = {t.ie for t in trabalhos}
+
+        periodo = (f"{t0.inicio:%d/%m/%Y}", f"{t0.fim:%d/%m/%Y}")
 
         def relevante(anexos: list, texto: str) -> bool:
+            # "Período solicitado: 01/09/2026 a 30/09/2026": resposta de outra competência não conta
+            m = re.search(r"per[ií]odo\s+solicitado:?\s*(\d{2}/\d{2}/\d{4})\s*a\s*(\d{2}/\d{2}/\d{4})", texto, re.I)
+            if m and (m.group(1), m.group(2)) != periodo:
+                return False
             xmls = [x for nome, dados in anexos for x in arquivos.extrair(dados, nome)]
             if xmls:
                 return bool(arquivos.distribuir(xmls, alvos)[0])
-            # sem anexo ("nenhum registro"): só não conta se citar a IE de outra empresa
-            citadas = {planilha.so_digitos(m) for m in re.findall(r"\b\d{2}\.?\d{3}\.?\d{3}-?\d\b", texto)}
-            citadas = {c for c in citadas if planilha.ie_pb_valida(c)}
-            return not citadas or bool(citadas & ies)
+            return True  # sem anexo: "não existem dados para o período consultado"
 
+        # as respostas chegam depois do clique em Consultar (hora do próprio ATF)
+        horas = [e.hora for e in envios.values() if e.hora]
+        desde = min(horas) if horas else datetime.now() - timedelta(minutes=1)
         recolha = Recolha()
         if esperadas:
             for tentativa in (1, 2):
@@ -204,7 +208,6 @@ class Executor:
         total = arquivos.Resumo()
         detalhes: dict = {}
         sem_notas, faltando, falhas = [], [], []
-        ie_formatada = planilha.formatar_ie(t.ie)
         for tipo in t.tipos:
             nome = arquivos.TIPOS.get(tipo, tipo)
             envio = envios.get((t.ie, tipo))
@@ -212,9 +215,8 @@ class Executor:
                                 tipo, t.codigo)
             total.somar(r)
             vazio = r.total == 0 and r.conferir == 0
-            citada = any(t.ie in texto or ie_formatada in texto for _, texto in recolha.textos)
-            sem = vazio and (envio.sem_notas or completas or (citada and any(
-                SEM_NOTAS.search(texto) for _, texto in recolha.textos if t.ie in texto or ie_formatada in texto)))
+            # todas as respostas chegaram e nenhuma trouxe XML desta empresa/tipo: sem notas no período
+            sem = vazio and envio.ok and (envio.sem_notas or completas)
             detalhes[tipo] = {"salvos": r.salvos, "repetidos": r.repetidos, "conferir": r.conferir, "sem_notas": bool(sem)}
             if not envio.ok:
                 falhas.append(f"{nome}: {envio.resposta or 'consulta não aceita'}")

@@ -47,16 +47,21 @@ _SEM_NOTAS = re.compile(
 _FORA_DO_AR = re.compile(r"servi[cç]o\s+(temporariamente\s+)?indispon[ií]vel|em\s+manuten[cç][aã]o|"
                          r"service unavailable|bad gateway|gateway time-?out", re.I)
 
-_CAMPOS_LOGIN = ['input[name*="login" i]', 'input[id*="login" i]', 'input[name*="usuario" i]',
+_CAMPOS_LOGIN = ['input[name*="usuario" i]', 'input[id*="usuario" i]', 'input[name*="login" i]', 'input[id*="login" i]', 'input[name*="usuario" i]',
                  'input[id*="usuario" i]', 'input[name*="user" i]', 'input[name*="cpf" i]']
-_BOTOES_ENTRAR = ['button[type="submit"]', 'input[type="submit"]', 'input[type="image"]',
+_BOTOES_ENTRAR = ['button:has-text("Avançar")', 'input[value*="Avançar" i]', 'button[type="submit"]', 'input[type="submit"]', 'input[type="image"]',
                   'button:has-text("Entrar")', 'button:has-text("Acessar")', 'a:has-text("Entrar")',
                   'input[value*="Entrar" i]', 'input[value*="Acessar" i]', 'input[value*="OK" i]']
 _ERRO_CONSULTA = re.compile(r"\berro\b|inv[aá]lid|obrigat[oó]ri|n[aã]o\s+(foi\s+)?(encontrad|localizad|cadastrad)|"
                             r"informe\s+|preencha|n[aã]o\s+permitid|sem\s+permiss", re.I)
+# Tela da consulta, depois de clicar em Consultar
+_CONFIRMADA = re.compile(r"resultado\s+ser[aá]\s+enviado|caixa\s+de\s+mensagens", re.I)
+# Mensagem final de uma consulta (as outras 2 mensagens da mesma consulta são de andamento)
+_MENSAGEM_FINAL = re.compile(r"tarefa\s+executada|executada\s+com\s+sucesso|n[aã]o\s+existem\s+dados|relat[oó]rio\s+gerado", re.I)
+_PERIODO = re.compile(r"per[ií]odo\s+solicitado:?\s*(\d{2}/\d{2}/\d{4})\s*a\s*(\d{2}/\d{2}/\d{4})", re.I)
 _INPUT_TEXTO = "input[not(@type='hidden') and not(@type='checkbox') and not(@type='radio') and not(@type='button') and not(@type='submit')]"
 # Anexos dentro de uma mensagem aberta
-_SELETOR_ANEXOS = ('a[href*=".zip" i], a[href*=".xml" i], a[href*="anexo" i], a[href*="download" i], '
+_SELETOR_ANEXOS = ('a:has-text("Dados referentes"), a[href*=".zip" i], a[href*=".xml" i], a[href*="anexo" i], a[href*="download" i], '
                    'a[href*="arquivo" i], a[download], a:has-text(".zip"), a:has-text(".xml"), '
                    'a[title*="anexo" i], a[title*="download" i], button[title*="download" i], button:has-text("Download")')
 
@@ -70,9 +75,15 @@ _JS_MENSAGENS = """() => Array.from(document.querySelectorAll('tr')).map((tr, i)
     const data = (texto.match(/\\d{2}\\/\\d{2}\\/\\d{4}\\s+\\d{2}:\\d{2}:\\d{2}/) || [null])[0];
     tr.setAttribute('data-robo', String(i));
     const anexo = !!tr.querySelector('img[src*="clip" i], img[src*="anexo" i], [class*="clip" i], [title*="anexo" i], [alt*="anexo" i]');
+    const link = tr.querySelector('a[href]');
+    const href = link && /^https?:/.test(link.href) && !/^javascript:/i.test(link.getAttribute('href')) ? link.href : '';
     return {marca: String(i), codigo, data, remetente: celulas.find(c => c.includes(codigo)) || codigo,
-            enviada: data || '', anexo, chave: codigo + '|' + (data || texto)};
-}).filter(Boolean)"""
+            enviada: data || '', anexo, href, base: codigo + '|' + (data || texto)};
+}).filter(Boolean).map((l, _, todas) => {
+    // a mesma consulta gera 3 mensagens no mesmo segundo: numera as repetidas
+    const iguais = todas.filter(o => o.base === l.base);
+    return Object.assign(l, {chave: l.base + '|' + iguais.indexOf(l)});
+})"""
 
 # Tipo de XML -> tela e bloco onde vai a inscrição estadual (um bloco por consulta)
 TIPO_TELA = {
@@ -98,6 +109,10 @@ class EtapaNaoConcluida(Exception):
     pass
 
 
+class IeNaoEncontrada(Exception):
+    pass
+
+
 @dataclass
 class Envio:
     """Uma consulta enviada (empresa + tipo). A resposta chega depois, em Minhas Mensagens."""
@@ -107,6 +122,7 @@ class Envio:
     sem_notas: bool = False
     assistido: bool = False
     resposta: str = ""
+    hora: datetime | None = None   # hora do ATF ao clicar em Consultar (as mensagens chegam depois dela)
 
 
 @dataclass
@@ -206,6 +222,8 @@ class AtfPB:
         self._respostas: list[str] = []
         self._mensagens_lidas: set[str] = set()
         self._diag_mensagem_salvo = False
+        self._hora_consulta: datetime | None = None
+        self._ultima_lista = 0.0
         self.page.on("dialog", self._dialogo)
 
     # ------------------------------------------------------------------ utilidades
@@ -422,6 +440,7 @@ class AtfPB:
         escolhe Tipo de Exibição = XML e clica em Consultar. O ATF entrega o XML depois, em
         Minhas Mensagens."""
         self._respostas = []
+        self._hora_consulta = None
         envio = Envio(ie=ie, tipo=tipo)
         try:
             if not self.atf["tentar_automatico"]:
@@ -430,6 +449,11 @@ class AtfPB:
             resposta = self._esperar_resposta(self.atf["segundos_resposta"])
         except (SiteForaDoAr, SessaoExpirada):
             raise
+        except IeNaoEncontrada as e:
+            self._log(f"{nome_tipo} IE {ie}: {e}")
+            envio.ok = False
+            envio.resposta = str(e)
+            return envio
         except Exception as e:
             self._log(f"{nome_tipo} IE {ie}: automático parou: {e}")
             self.diag.salvar(self.page, f"consulta-{tipo}")
@@ -440,7 +464,10 @@ class AtfPB:
         finally:
             self.ultimo_uso = time.time()
         envio.resposta = resposta[:300]
-        if _SEM_NOTAS.search(resposta):
+        envio.hora = self._hora_consulta
+        if _CONFIRMADA.search(resposta):
+            pass  # "O resultado será enviado para sua caixa de mensagens do ATF"
+        elif _SEM_NOTAS.search(resposta):
             envio.sem_notas = True
         elif _ERRO_CONSULTA.search(resposta):
             envio.ok = False
@@ -503,16 +530,21 @@ class AtfPB:
         if pesquisar is not None:
             pesquisar.click()
             nome = self._campo_do_bloco(bloco, _INPUT_TEXTO, 2)
-            for _ in range(10):
+            achou = nome is None
+            for _ in range(16):
                 pausa(self.page, 0.5, 0.8)
                 try:
                     if nome is None or nome.input_value().strip():
+                        achou = True
                         break
                 except Exception:
+                    achou = True
                     break
             erro = self._avisos_na_tela()
             if erro and _ERRO_CONSULTA.search(erro):
-                raise EtapaNaoConcluida(f"ATF não aceitou a IE {ie}: {erro[:150]}")
+                raise IeNaoEncontrada(f"o ATF não aceitou a IE {ie}: {erro[:150]}")
+            if not achou:
+                raise IeNaoEncontrada(f"o ATF não encontrou a IE {ie} (Pesquisar não trouxe o nome)")
             self._respostas = []
 
         # Tipo de Exibição = XML e Consultar
@@ -533,6 +565,7 @@ class AtfPB:
         if consultar is None:
             raise EtapaNaoConcluida("botão Consultar não encontrado")
         self._log(f"Consultando {bloco} IE {ie}, {inicio:%d/%m/%Y} a {fim:%d/%m/%Y}, exibição XML")
+        self._hora_consulta = self.hora_servidor() or datetime.now()
         consultar.click()
 
     def _campo_do_bloco(self, bloco: str, alvo: str, ordem: int = 1):
@@ -558,10 +591,7 @@ class AtfPB:
             return False
 
     # ------------------------------------------------------------------ Minhas Mensagens (recebimento)
-    def listar_mensagens(self) -> list[dict]:
-        """Linhas de Minhas Mensagens: remetente (FIS_...), enviada, se tem anexo. Cada linha recebe
-        uma marca (data-robo) para ser aberta depois."""
-        self.abrir_tela("mensagens", recarregar=True)
+    def _ler_linhas(self) -> list[dict]:
         linhas: list[dict] = []
         for i, frame in enumerate(self.page.frames):
             try:
@@ -570,47 +600,76 @@ class AtfPB:
                 continue
         return linhas
 
+    def listar_mensagens(self) -> list[dict]:
+        """Recarrega Minhas Mensagens e lê as linhas: código (FIS_...), enviada, anexo, link.
+        O ATF só deixa consultar a caixa de 1 em 1 minuto: respeita esse intervalo."""
+        espera = self.atf["segundos_entre_verificacoes"] - (time.time() - self._ultima_lista)
+        if espera > 0:
+            pausa(self.page, espera, espera + 2)
+        self.abrir_tela("mensagens", recarregar=True)
+        self._ultima_lista = time.time()
+        return self._ler_linhas()
+
     def abrir_mensagem(self, linha: dict, capt: CapturadorArquivos) -> str:
-        """Abre a mensagem, baixa os anexos (o capturador recolhe) e devolve o texto dela."""
-        frame = self.page.frames[linha["quadro"]] if linha["quadro"] < len(self.page.frames) else self.page.main_frame
-        tr = frame.locator(f'tr[data-robo="{linha["marca"]}"]')
-        link = self._primeiro_visivel(tr.locator("a"))
-        (link or tr).click()
-        pausa(self.page, 1.5, 2.5)
+        """Abre a mensagem ("Ler Mensagem"), baixa o anexo ("Dados referentes ao ano de ...") e
+        devolve o texto dela. Sem anexo = a consulta não tem dados no período."""
+        if linha.get("href"):
+            self._abrir(linha["href"])
+        else:
+            frame = self.page.frames[linha["quadro"]] if linha["quadro"] < len(self.page.frames) else self.page.main_frame
+            tr = frame.locator(f'tr[data-robo="{linha["marca"]}"]')
+            (self._primeiro_visivel(tr.locator("a")) or tr).click()
+            pausa(self.page, 1.5, 2.5)
+        texto = _texto_da_pagina(self.page)
         antes = len(capt.recebidos)
-        clicados = 0
-        for frame in self.page.frames:
-            try:
-                anexos = frame.locator(_SELETOR_ANEXOS)
-                for i in range(min(anexos.count(), 20)):
-                    a = anexos.nth(i)
+        qtd = re.search(r"(\d+)\s*anexo\(?s?\)?", texto, re.I)
+        if qtd and int(qtd.group(1)) > 0:
+            alvos = []
+            for frame in self.page.frames:
+                try:
+                    anexos = frame.locator(_SELETOR_ANEXOS)
+                    alvos += [anexos.nth(i) for i in range(min(anexos.count(), 20))]
+                    if not alvos:  # links logo depois de "N Anexo(s):"
+                        depois = frame.locator("xpath=//*[contains(normalize-space(.), 'Anexo(s)')]"
+                                               "[not(.//*[contains(normalize-space(.), 'Anexo(s)')])]/following::a")
+                        alvos += [depois.nth(i) for i in range(min(depois.count(), int(qtd.group(1))))]
+                except Exception:
+                    continue
+            for a in alvos:
+                try:
                     if a.is_visible():
                         a.click()
-                        clicados += 1
                         pausa(self.page, 1.0, 1.5)
-            except Exception:
-                continue
-        limite = time.time() + 40
-        while time.time() < limite:
-            pausa(self.page, 0.8, 1.2)
-            capt.verificar()
-            if len(capt.recebidos) > antes and capt.parado(4):
-                break
-            if not clicados and time.time() > limite - 30:
-                break
-        texto = _texto_da_pagina(self.page)
-        if len(capt.recebidos) == antes and not self._diag_mensagem_salvo:
-            self._diag_mensagem_salvo = True  # uma vez por rodada: para calibrar a tela da mensagem
-            self.diag.salvar(self.page, "mensagem-sem-anexo")
+                except Exception:
+                    continue
+            limite = time.time() + 60
+            while time.time() < limite:
+                pausa(self.page, 0.8, 1.2)
+                capt.verificar()
+                if len(capt.recebidos) > antes and capt.parado(4):
+                    break
+            if len(capt.recebidos) == antes and not self._diag_mensagem_salvo:
+                self._diag_mensagem_salvo = True  # uma vez por rodada: para ajustar o roteiro
+                self.diag.salvar(self.page, "anexo-nao-baixado")
         self._log(f"Mensagem {linha['remetente'][:40]} de {linha['enviada']}: {len(capt.recebidos) - antes} arquivo(s)")
         self.ultimo_uso = time.time()
         return texto
 
+    def _voltar_para_lista(self) -> list[dict]:
+        """Botão Voltar da mensagem; devolve as linhas da lista (vazia se o ATF pedir para aguardar)."""
+        voltar = self._achar("", ['input[value="Voltar" i]', 'button:has-text("Voltar")', 'a:has-text("Voltar")'])
+        if voltar is None:
+            return []
+        voltar.click()
+        pausa(self.page, 1.5, 2.5)
+        return self._ler_linhas() if self._tela_aberta(self.atf["telas"]["mensagens"]) else []
+
     def recolher(self, esperadas: dict[str, int], desde: datetime, minutos: int,
                  relevante: Callable[[list, str], bool] | None = None) -> Recolha:
-        """Acompanha Minhas Mensagens até chegarem as respostas esperadas ({código FIS: quantas}),
-        enviadas a partir de 'desde' (hora do ATF), ou até o tempo acabar. 'relevante(anexos, texto)'
-        diz se a mensagem é resposta desta rodada (uma consulta feita à mão no mesmo login não conta)."""
+        """Acompanha Minhas Mensagens até chegarem as respostas finais esperadas ({código FIS: quantas})
+        das consultas feitas a partir de 'desde' (hora do ATF ao clicar em Consultar), ou até o tempo
+        acabar. Cada consulta gera 3 mensagens; só a final ("Tarefa executada...") conta, e só se
+        'relevante(anexos, texto)' disser que é desta rodada."""
         recolha = Recolha()
         capt = CapturadorArquivos(self.contexto, self.cfg["chrome"]["pasta_downloads"])
         limite = time.time() + minutos * 60
@@ -618,21 +677,28 @@ class AtfPB:
             while True:
                 if self._senha_na_tela() is not None:
                     raise SessaoExpirada("o ATF voltou para a tela de login.")
-                novas = [l for l in self.listar_mensagens()
-                         if l["codigo"] in esperadas and l["chave"] not in self._mensagens_lidas
-                         and (l["data"] is None or _data_br(l["data"]) >= desde - timedelta(minutes=1))]
-                if novas:
-                    # uma por vez: ao voltar para a lista as linhas são lidas (e marcadas) de novo
+                linhas = self.listar_mensagens()
+                while True:
+                    novas = [l for l in linhas
+                             if l["codigo"] in esperadas and l["chave"] not in self._mensagens_lidas
+                             and (l["data"] is None or _data_br(l["data"]) >= desde - timedelta(seconds=5))]
+                    if not novas:
+                        break
                     linha = novas[0]
                     self._mensagens_lidas.add(linha["chave"])
                     antes = len(capt.recebidos)
                     texto = self.abrir_mensagem(linha, capt)
+                    anexos = capt.recebidos[antes:]
                     recolha.textos.append((linha["codigo"], texto))
-                    if relevante is None or relevante(capt.recebidos[antes:], texto):
+                    final = bool(anexos) or bool(_MENSAGEM_FINAL.search(texto))
+                    if final and (relevante is None or relevante(anexos, texto)):
                         recolha.recebidas[linha["codigo"]] = recolha.recebidas.get(linha["codigo"], 0) + 1
-                    else:
-                        self._log("Mensagem de outra consulta (empresa fora da rodada): não conta")
-                    continue
+                    elif final:
+                        self._log("Mensagem de outra consulta (outra empresa ou competência): não conta")
+                    # volta para a lista pelo Voltar; se o ATF pedir para aguardar, segue só com as
+                    # mensagens que têm link próprio (as outras ficam para a próxima leitura da caixa)
+                    de_volta = self._voltar_para_lista()
+                    linhas = de_volta or [l for l in linhas if l.get("href")]
                 if all(recolha.recebidas.get(c, 0) >= n for c, n in esperadas.items()):
                     break
                 if time.time() >= limite:
@@ -640,8 +706,7 @@ class AtfPB:
                     self._log(f"Tempo esgotado esperando mensagens: {recolha.recebidas} de {esperadas}")
                     break
                 faltam = {c: n - recolha.recebidas.get(c, 0) for c, n in esperadas.items()}
-                self.aviso(f"Aguardando o ATF entregar os XML em Minhas Mensagens ({faltam})...")
-                pausa(self.page, self.atf["segundos_entre_verificacoes"], self.atf["segundos_entre_verificacoes"] + 5)
+                self.aviso(f"Aguardando o ATF entregar os XML em Minhas Mensagens (faltam {faltam})...")
         finally:
             capt.verificar()
             capt.encerrar()

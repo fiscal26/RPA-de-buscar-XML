@@ -65,7 +65,8 @@ PADRAO = {
         "segundos_resposta": 15,
         # Quanto esperar o ATF entregar os XML em Minhas Mensagens, e de quanto em quanto olhar
         "minutos_espera_mensagens": 30,
-        "segundos_entre_verificacoes": 30,
+        # O ATF só deixa consultar a caixa de mensagens de 1 em 1 minuto
+        "segundos_entre_verificacoes": 65,
         # Empresas por rodada (um login): envia todas as consultas e depois recolhe as mensagens
         "empresas_por_rodada": 15,
         # Tempo que o modo assistido espera você concluir no Chrome.

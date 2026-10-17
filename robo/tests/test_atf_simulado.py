@@ -5,8 +5,12 @@
   Emitente e Destinatário (o ATF recusa os dois juntos), "Pesquisar" do bloco traz o nome,
   "Tipo de Exibição" = XML e "Consultar";
 - "NFC-e" > "Consulta por Emitente";
-- o XML NÃO vem na hora: chega segundos depois em "Minhas Mensagens" (sino), fora de ordem, como
-  anexo ZIP; consulta sem notas gera mensagem sem anexo; há mensagens antigas e de outra empresa.
+- depois do Consultar, o aviso "O resultado será enviado para sua caixa de mensagens do ATF";
+- o XML NÃO vem na hora: cada consulta gera 3 mensagens em "Minhas Mensagens" (sino), no mesmo
+  segundo, e só a final ("Tarefa executada com sucesso") traz o anexo "Dados referentes ao ano de
+  2026"; sem dados = mensagem final sem anexo; a caixa só pode ser consultada de tempos em tempos
+  (no ATF real, 1 minuto); há mensagens de outra competência e de consulta feita à mão no meio;
+- "Ler Mensagem" com "Período solicitado" e o botão Voltar.
 
 Os nomes dos campos são propositalmente estranhos: o robô precisa achá-los pelos textos da tela.
 Precisa do Chromium (CHROME_TESTE ou o do Playwright).
@@ -35,10 +39,12 @@ from util import IE_EMPRESA, IE_OUTRA, nfe
 EMPRESA = "11222333000181"
 FORNECEDOR = "45723174000110"
 IE_ESTRANHA = "161112226"  # empresa fora da rodada (consulta feita à mão no mesmo login)
+IE_INEXISTENTE = "160555558"  # o Pesquisar do ATF não traz nome
+INTERVALO_CAIXA = 3  # segundos entre consultas à caixa de mensagens (no ATF real: 60)
 CHROME = os.environ.get("CHROME_TESTE") or next(
     (str(p) for p in Path("/opt/pw-browsers").glob("chromium-*/chrome-linux/chrome")), shutil.which("chromium") or "")
 
-ESTADO = {"logins": [], "consultas": [], "mensagens": [], "recusas": []}
+ESTADO = {"logins": [], "consultas": [], "mensagens": [], "recusas": [], "ultima_lista": 0.0, "lista_cedo": 0}
 
 
 def _zip(itens: dict[str, bytes]) -> bytes:
@@ -64,7 +70,7 @@ BLOCO = """<div class="secao">{nome}</div>
 <div class="form-floating"><select id="s{n}"><option>CPF</option><option>CNPJ</option>
 <option selected>Inscrição Estadual</option></select><label>Tipo de Identificação</label></div>
 <div class="form-floating"><input id="x{n}" class="form-control"><label>Número</label></div>
-<button type="button" onclick="document.getElementById('r{n}').value = 'EMPRESA ' + document.getElementById('x{n}').value">Pesquisar</button>
+<button type="button" onclick="const ie = document.getElementById('x{n}').value; document.getElementById('r{n}').value = ie === '160555558' ? '' : 'EMPRESA ' + ie">Pesquisar</button>
 <div class="form-floating"><input id="r{n}"><label>Nome/Razão Social</label></div>
 <label>UF</label><select><option>---</option></select>"""
 
@@ -80,7 +86,7 @@ async function consultar() {
                                  exib: v('te'), tipo1: v('s1'), tipo2: v('s2'), nome1: v('r1'), nome2: v('r2')});
   const r = await fetch('/atf/consultar?' + q.toString());
   const a = document.getElementById('aviso');
-  a.className = 'alert'; a.innerText = await r.text();
+  a.className = 'alert alert-success'; a.innerText = await r.text();
 }
 </script>"""
 
@@ -104,10 +110,16 @@ def tela_nfce():
             + "<script>const TELA='nfce'</script>" + RODAPE)
 
 
-def _nova_mensagem(codigo: str, assunto: str, atraso: float, anexo: bytes | None, texto: str):
-    pronta = datetime.now() + timedelta(seconds=atraso)
-    ESTADO["mensagens"].append({"id": len(ESTADO["mensagens"]) + 1, "codigo": codigo, "assunto": assunto,
-                                "pronta": pronta, "anexo": anexo, "texto": texto})
+def _nova_mensagem(codigo: str, assunto: str, atraso: float, anexo: bytes | None, texto: str,
+                   periodo: str = "01/09/2026 a 30/09/2026"):
+    """Como o ATF: 3 mensagens no mesmo segundo; só a final tem o anexo."""
+    pronta = (datetime.now() + timedelta(seconds=atraso)).replace(microsecond=0)
+    final = (f"{texto}<br>Período solicitado: {periodo}<br><br>Tarefa executada com sucesso.<br>"
+             "Abra o arquivo em anexo para ver o relatório gerado.<br>Observação: A não existência de arquivo "
+             "em anexo significa que não existem dados para o período consultado.")
+    for txt, arq in (("Tarefa recebida.", None), (final, anexo), ("Tarefa em processamento.", None)):
+        ESTADO["mensagens"].append({"id": len(ESTADO["mensagens"]) + 1, "codigo": codigo, "assunto": assunto,
+                                    "pronta": pronta, "anexo": arq, "texto": txt})
 
 
 def _responder(q: dict) -> str:
@@ -119,6 +131,9 @@ def _responder(q: dict) -> str:
     assert (q["ini"], q["fim"], q["exib"]) == ("01/09/2026", "30/09/2026", "XML"), q
     assert q["tipo1"] == "Inscrição Estadual" and q["tipo2"] == "Inscrição Estadual", q
     ie = q["emit"] or q["dest"]
+    if ESTADO.pop("manual", False):
+        _nova_mensagem("FIS_1322", "NFe: Consulta Genérica (Ano 2026)", 0,
+                       _zip({"x.xml": nfe(FORNECEDOR, "", 7, ie_emit=IE_ESTRANHA)}), "consulta manual")
     assert q["nome1" if q["emit"] else "nome2"] == f"EMPRESA {ie}", "Pesquisar do bloco não foi clicado"
     if q["tela"] == "nfce":
         _nova_mensagem("FIS_1484", "NFCe: Consulta Genérica da NFC-e", 2,
@@ -135,7 +150,7 @@ def _responder(q: dict) -> str:
     else:
         _nova_mensagem("FIS_1322", "NFe: Consulta Genérica (Ano 2026)", 1, None,
                        f"Consulta destinatário {ie}: nenhum registro encontrado.")
-    return "Solicitação registrada. O resultado será enviado para Minhas Mensagens."
+    return "O resultado será enviado para sua caixa de mensagens do ATF"
 
 
 class AtfFalso(BaseHTTPRequestHandler):
@@ -161,8 +176,10 @@ class AtfFalso(BaseHTTPRequestHandler):
             else:
                 self._html('<iframe name="principal" src="/atf/login" width="600" height="300"></iframe>')
         elif u.path == "/atf/login":
-            self._html('<form method="post" action="/atf/entrar" target="_top">Login <input type="text" name="u_a1">'
-                       'Senha <input type="password" name="p_b2"><input type="submit" value="Entrar"></form>')
+            self._html('<form method="post" action="/atf/entrar" target="_top"><b>Login</b> SEFAZ-PB'
+                       '<div class="form-floating"><input type="text" name="u_a1"><label>Usuário</label></div>'
+                       '<div class="form-floating"><input type="password" name="p_b2"><label>Senha</label></div>'
+                       '<button class="btn">Avançar</button><a href="#">Acesse via Certificado Digital</a></form>')
         elif not logado:
             self._html("Sessão expirada. Faça login.")
         elif u.path == "/atf/home":
@@ -185,19 +202,30 @@ class AtfFalso(BaseHTTPRequestHandler):
             self.wfile.write(dados)
         elif u.path == "/atf/mensagens":
             agora = datetime.now()
+            if time.time() - ESTADO["ultima_lista"] < INTERVALO_CAIXA and not q.get("voltar"):
+                ESTADO["lista_cedo"] += 1
+                self._html(topo() + '<h4>Minhas Mensagens</h4><b>ATENÇÃO: Você poderá consultar sua caixa de '
+                           'mensagens em 1 minuto. AGUARDE!</b>')
+                return
+            if not q.get("voltar"):
+                ESTADO["ultima_lista"] = time.time()
             linhas = "".join(
                 f'<tr><td><input type="checkbox"></td><td>✉ {"<img src=/clip.png alt=anexo>" if m["anexo"] else ""}</td>'
-                f'<td><a href="/atf/mensagem?id={m["id"]}">{m["codigo"]} - Consulta Genérica ({m["id"]} Mensagens )</a></td>'
-                f'<td><a href="/atf/mensagem?id={m["id"]}">{m["assunto"]}</a></td>'
+                + (f'<td><a href="javascript:void(0)" onclick="location=\'/atf/mensagem?id={m["id"]}\'">{m["codigo"]} - Consulta Genérica NF-e</a></td>'
+                   if m["codigo"] == "FIS_1322" else
+                   f'<td><a href="/atf/mensagem?id={m["id"]}">{m["codigo"]} - Consulta de NFC-e por Emitente</a></td>')
+                + f'<td>{m["assunto"]}</td>'
                 f'<td>{m["pronta"]:%d/%m/%Y %H:%M:%S}</td><td>{m["pronta"] + timedelta(days=5):%d/%m/%Y}</td></tr>'
                 for m in sorted(ESTADO["mensagens"], key=lambda m: m["pronta"], reverse=True) if m["pronta"] <= agora)
             self._html(topo() + '<h4>Minhas Mensagens</h4><table><thead><tr><th></th><th></th><th>Remetente</th>'
                        f'<th>Assunto</th><th>Enviada</th><th>Validade</th></tr></thead><tbody>{linhas}</tbody></table>')
         elif u.path == "/atf/mensagem":
             m = ESTADO["mensagens"][int(q["id"]) - 1]
-            anexo = f'<a href="/atf/anexo?id={m["id"]}">xml_{m["id"]}.zip</a>' if m["anexo"] else ""
-            self._html(topo() + f'<h4>Minhas Mensagens</h4><h5>{m["assunto"]}</h5><p>{m["texto"]}</p>{anexo}'
-                       '<a href="/atf/mensagens">Voltar</a>')
+            anexo = (f'<img src="/clip.png"> 1 Anexo(s):<br><a href="/atf/anexo?id={m["id"]}">Dados referentes ao ano de 2026</a>'
+                     if m["anexo"] else "")
+            self._html(topo() + f'<b>Ler Mensagem</b><h5>{m["assunto"]}</h5>- De: {m["codigo"]}<br>- Enviada: '
+                       f'{m["pronta"]:%d/%m/%Y %H:%M:%S}<br>{anexo}<p>{m["texto"]}</p>'
+                       '<input type="button" value="Voltar" onclick="location=\'/atf/mensagens?voltar=1\'">')
         elif u.path == "/atf/anexo":
             dados = ESTADO["mensagens"][int(q["id"]) - 1]["anexo"]
             self.send_response(200)
@@ -248,7 +276,7 @@ def ambiente(tmp_path_factory):
     cfg["pastas"].update(destino=str(pasta / "xml"), diagnostico=str(pasta / "diag"))
     cfg["atf"].update(url_login=f"http://127.0.0.1:{servidor.server_port}/atf/", segundos_login=15,
                       segundos_resposta=5, segundos_assistido=2, minutos_espera_mensagens=1,
-                      segundos_entre_verificacoes=2)
+                      segundos_entre_verificacoes=INTERVALO_CAIXA + 1)
     yield cfg, pasta
     chrome.terminate()
     servidor.shutdown()
@@ -265,14 +293,16 @@ def test_rodada_um_login_xml_pelas_mensagens(ambiente):
     # mensagem antiga (de antes da rodada) e uma de empresa fora da rodada: não podem atrapalhar
     _nova_mensagem("FIS_1322", "NFe: Consulta Genérica (Ano 2026)", -3600,
                    _zip({"velha.xml": nfe(EMPRESA, FORNECEDOR, 99, ie_emit=IE_EMPRESA)}), "antiga")
+    _nova_mensagem("FIS_1322", "NFe: Consulta Genérica (Ano 2026)", 2,
+                   _zip({"agosto.xml": nfe(EMPRESA, FORNECEDOR, 98, "2026-08-10", ie_emit=IE_EMPRESA)}),
+                   "outra competência", periodo="01/08/2026 a 31/08/2026")
     executor = robo_xml.Executor(cfg)
     try:
-        threading.Timer(3, lambda: _nova_mensagem(
-            "FIS_1322", "NFe: Consulta Genérica (Ano 2026)", 0,
-            _zip({"x.xml": nfe(FORNECEDOR, "", 7, ie_emit=IE_ESTRANHA)}), "consulta manual")).start()
-        r1, r2 = executor.executar_rodada([
+        ESTADO["manual"] = True  # alguém consulta outra empresa à mão no mesmo login, durante a rodada
+        r1, r2, r3 = executor.executar_rodada([
             _trabalho(IE_EMPRESA, "Padaria", ["nfe_saida", "nfe_entrada"], codigo="015"),
             _trabalho(IE_OUTRA, "Mercado", ["nfe_entrada", "nfce"], codigo="016"),
+            _trabalho(IE_INEXISTENTE, "IE errada", ["nfe_saida"], codigo="017"),
         ])
     finally:
         executor.fechar()
@@ -288,6 +318,9 @@ def test_rodada_um_login_xml_pelas_mensagens(ambiente):
     assert r2.detalhes["nfe_entrada"]["salvos"] == 1 and r2.detalhes["nfce"]["salvos"] == 1, r2
     base = pasta / "xml"
     assert len(list(base.glob("015 - Padaria/2026-09/NF-e Saida/*.xml"))) == 2  # a antiga (nº 99) não entrou
+    assert not list(base.glob("015 - Padaria/2026-08"))  # resposta de outra competência não entrou
+    assert r3.status == "erro" and "não encontrou a IE" in r3.mensagem, r3
+    assert ESTADO["lista_cedo"] == 0  # respeitou o intervalo da caixa de mensagens
     assert len(list(base.glob("016 - Mercado/2026-09/NF-e Entrada/*.xml"))) == 1
     assert len(list(base.glob("016 - Mercado/2026-09/NFC-e/*.xml"))) == 1
     assert len(list(base.glob("_sem_empresa/2026-09/*.xml"))) == 1  # a da consulta manual

@@ -50,20 +50,25 @@ O ATF **não entrega o XML na hora**: a consulta com *Tipo de Exibição = XML* 
 uma mensagem com o anexo em **Minhas Mensagens** (sino do topo; SEG_064). Por isso o robô trabalha
 em **rodadas de um login** (até 15 empresas):
 
-1. **Login** com LOGIN e SENHA do contador, uma vez para a rodada inteira.
+1. **Login** (Usuário, Senha, *Avançar*) com o login do contador, uma vez para a rodada inteira.
 2. **Envia as consultas**, uma por empresa e por XML marcado:
    - *NF-e Saída / Entrada:* menu *NF-e* > *Consulta NF-e por Emitentes/Destinatários* (FIS_1322).
-     *Data de Emissão* do 1º ao último dia da competência; IE no bloco **Emitente** (saída) **ou**
-     **Destinatário** (entrada), nunca nos dois; *Pesquisar* do bloco (traz o nome);
-     *Tipo de Exibição* = XML; *Consultar*.
+     *Limpar*; *Data de Emissão* do 1º ao último dia da competência; IE no bloco **Emitente** (saída)
+     **ou** **Destinatário** (entrada), nunca nos dois; **Pesquisar** do bloco (o nome da empresa
+     precisa aparecer; se não aparecer, a IE não existe no ATF e a empresa fica com erro);
+     *Tipo de Exibição* = XML; *Consultar*. O ATF responde "O resultado será enviado para sua caixa
+     de mensagens do ATF".
    - *NFC-e:* menu *NFC-e* > *Consulta por Emitente* (FIS_1484), IE no bloco **Emitente**, mesmo final.
-3. **Recolhe as mensagens:** abre Minhas Mensagens, lê as mensagens novas dos remetentes FIS_1322 e
-   FIS_1484 (enviadas depois do início da rodada, pela hora do próprio ATF) e baixa os anexos. Repete a
-   cada 30 s, por até 30 min, até chegarem todas as respostas.
+3. **Recolhe as mensagens** (sino; SEG_064). Cada consulta gera **3 mensagens** no mesmo segundo; só a
+   final ("Tarefa executada com sucesso") importa: com o anexo *"Dados referentes ao ano de ..."* (o
+   XML) ou sem anexo (= não existem dados no período). O robô abre as mensagens enviadas **depois do
+   clique em Consultar** (hora do próprio ATF), baixa o anexo e volta pelo *Voltar*. A caixa só pode
+   ser consultada de 1 em 1 minuto: o robô espera 65 s entre uma leitura e outra, por até 30 min.
 4. **Distribui pelo conteúdo:** as mensagens têm todas o mesmo assunto e chegam fora de ordem, então cada
    XML vai para a empresa pela IE/CNPJ de dentro dele (emitente → NF-e Saída/NFC-e; destinatário →
-   NF-e Entrada). Uma venda entre duas empresas da rodada vai para as duas. XML de empresa fora da
-   rodada (consulta feita à mão no mesmo login) vai para `_sem_empresa` e não conta como resposta.
+   NF-e Entrada). Uma venda entre duas empresas da rodada vai para as duas. Resposta de outra
+   competência ("Período solicitado") é ignorada; XML de empresa fora da rodada (consulta feita à mão
+   no mesmo login) vai para `_sem_empresa` e não conta como resposta.
 5. Empresa/tipo sem XML: **Sem notas** se todas as respostas chegaram; **Erro** ("o ATF não entregou em
    30 min") se o tempo acabou.
 
@@ -116,7 +121,8 @@ e `log.txt`. É com esse pacote que ajustamos o roteiro.
 - [x] Banco próprio: fila com agendamento futuro, agrupamento por login, regras de acesso por cliente
 - [x] Robô: login do contador, telas FIS_1322 e FIS_1484, blocos Emitente/Destinatário, captura do download, modo assistido
 - [x] Fluxo de Minhas Mensagens: consulta com Tipo de Exibição XML, recolha dos anexos, distribuição pelo conteúdo
-- [ ] **Validar no ATF real**: tela de login, resposta ao clicar em Consultar e a tela da mensagem aberta (link do anexo)
+- [x] Roteiro conferido com as telas reais: login, consulta, aviso do Consultar, Minhas Mensagens e Ler Mensagem
+- [ ] **Primeira rodada no ATF real** (no seu PC, `--local`), para confirmar os cliques e o download do anexo
 
 ## Testes
 
