@@ -44,7 +44,7 @@ CHROME = os.environ.get("CHROME_TESTE") or next(
     (str(p) for p in Path("/opt/pw-browsers").glob("chromium-*/chrome-linux/chrome")), shutil.which("chromium") or "")
 
 ESTADO = {"logins": [], "consultas": [], "mensagens": [], "recusas": [], "ultima_lista": 0.0, "lista_cedo": 0,
-          "blocos": {}}
+          "blocos": {}, "abertas": []}
 
 
 def _zip(itens: dict[str, bytes]) -> bytes:
@@ -72,7 +72,9 @@ def _nova_mensagem(codigo: str, assunto: str, atraso: float, anexo: bytes | None
            "pronta": pronta, "filhas": []}
     final = (f"{texto}<br>NFe: Consulta Genérica<br>Período solicitado: {periodo}<br><br>Tarefa executada com sucesso."
              "<br>Abra o arquivo em anexo para ver o relatório gerado.<br>Observação: A não existência de arquivo "
-             "em anexo significa que não existem dados para o período consultado.")
+             "em anexo significa que não existem dados para o período consultado.") if anexo else (
+        f"{texto}<br>NFe: Consulta Genérica<br>Período solicitado: {periodo}<br><br>"
+        "Mensagem: Nenhum registro satisfaz a pesquisa.")
     for i, (txt, arq) in enumerate((("Tarefa recebida.", None), (final, anexo), ("Tarefa em processamento.", None))):
         mae["filhas"].append({"id": str(int(mae["id"]) + i + 1), "texto": txt, "anexo": arq})
     ESTADO["mensagens"].append(mae)
@@ -212,6 +214,7 @@ class AtfFalso(BaseHTTPRequestHandler):
             self._mensagens(q)
         elif p == "/atf/seg/SEGf_LerMensagem.do":
             mae, f = _filha(q["hidsqMensagem"])
+            ESTADO["abertas"].append((mae["id"], f["id"]))
             anexo = ('<img src="/clip.png"> 1 Anexo(s):<br><a href="javascript:mostrarArquivo(0)">Dados referentes ao '
                      f'ano de 2026</a><script>function mostrarArquivo(i) {{ location = "/atf/seg/arquivo?id={f["id"]}"; }}'
                      '</script>' if f["anexo"] else "")
@@ -253,14 +256,18 @@ class AtfFalso(BaseHTTPRequestHandler):
             linhas = "".join(
                 f'<tr><td><input type="checkbox" name="chbSqMensagems"></td>'
                 f'<td><a href="javascript:abrirFilhas(\'{m["id"]}\',3)"><img src="env.png"></a></td>'
-                f'<td><a href="javascript:abrirFilhas(\'{m["id"]}\',3)">{m["codigo"]} - Consulta Genérica (3 Mensagens )</a></td>'
+                + (f'<td><a href="javascript:abrirFilhas(\'{m["id"]}\',3)"><img src="clip.gif"></a></td>'
+                   if any(f["anexo"] for f in m["filhas"]) else '<td></td>')
+                + f'<td><a href="javascript:abrirFilhas(\'{m["id"]}\',3)">{m["codigo"]} - Consulta Genérica (3 Mensagens )</a></td>'
                 f'<td><a href="javascript:abrirFilhas(\'{m["id"]}\',3)">{m["assunto"]}</a></td>'
                 f'<td><a href="javascript:abrirFilhas(\'{m["id"]}\',3)">{m["pronta"]:%d/%m/%Y %H:%M:%S}</a></td></tr>'
                 for m in sorted(ESTADO["mensagens"], key=lambda m: m["pronta"], reverse=True) if m["pronta"] <= agora)
         else:
             mae = next(m for m in ESTADO["mensagens"] if m["id"] == q["hidsqMensagem"])
             linhas = "".join(
-                f'<tr><td><input type="checkbox"></td><td><a href="javascript:abrirFilhas(\'{f["id"]}\',0)">'
+                f'<tr><td><input type="checkbox"></td><td><a href="javascript:abrirFilhas(\'{f["id"]}\',0)"><img src="env.png"></a></td>'
+                + (f'<td><a href="javascript:abrirFilhas(\'{f["id"]}\',0)"><img src="clip.gif"></a></td>' if f["anexo"] else '<td></td>')
+                + f'<td><a href="javascript:abrirFilhas(\'{f["id"]}\',0)">'
                 f'{mae["codigo"]} - Consulta Genérica</a></td><td><a href="javascript:abrirFilhas(\'{f["id"]}\',0)">'
                 f'{mae["pronta"]:%d/%m/%Y %H:%M:%S}</a></td></tr>' for f in mae["filhas"])
         self._html(sessao() + '<b>Minhas Mensagens</b><form><table>' + linhas + '</table>'
@@ -366,6 +373,18 @@ def test_rodada_um_login_xml_pelas_mensagens(ambiente):
     assert len(list(base.glob("016 - Mercado/2026-09/NFC-e/*.xml"))) == 1
     assert len(list(base.glob("_sem_empresa/2026-09/*.xml"))) == 1  # a da consulta manual
     assert ESTADO["lista_cedo"] == 0  # respeitou o intervalo da caixa de mensagens
+    # só abre o necessário: com anexo, só a filha do clipe; sem anexo, para no "Nenhum registro satisfaz"
+    por_mae: dict = {}
+    for mae_id, filha_id in ESTADO["abertas"]:
+        por_mae.setdefault(mae_id, []).append(filha_id)
+    for m in ESTADO["mensagens"]:
+        abertas = por_mae.get(m["id"], [])
+        if not abertas:
+            continue
+        if any(f["anexo"] for f in m["filhas"]):
+            assert abertas == [m["filhas"][1]["id"]], (m["id"], abertas)
+        else:
+            assert len(abertas) == 2 and m["filhas"][2]["id"] not in abertas, (m["id"], abertas)
 
 
 def test_senha_errada_nao_insiste(ambiente):

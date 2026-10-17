@@ -136,7 +136,9 @@ com o Chrome ligado à automação, o download iria para uma pasta temporária e
 - Minhas Mensagens: `seg/SEGf_MinhasMensagens.do`. Cada consulta é uma mensagem **mãe**
   (`javascript:abrirFilhas('<id>',3)`, "(3 Mensagens)") com 3 **filhas**; a filha final abre em
   `SEGf_LerMensagem.do?hidsqMensagem=<filha>&sqMensagemPai=<mãe>` e tem o anexo
-  `javascript:mostrarArquivo(0)` ("Dados referentes ao ano de ...").
+  `javascript:mostrarArquivo(0)` ("Dados referentes ao ano de ..."). A filha com anexo tem o ícone de
+  clipe: o robô abre só ela. Sem anexo, a filha final diz "Mensagem: Nenhum registro satisfaz a
+  pesquisa." (sem notas na competência) e o robô para de abrir as demais.
 
 ### Diagnóstico
 

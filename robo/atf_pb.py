@@ -41,7 +41,7 @@ _ERRO_LOGIN = re.compile(
     re.I,
 )
 _SEM_NOTAS = re.compile(
-    r"nenhum(a)?\s+(nota|documento|registro|nf-?c?-?e|arquivo|resultado)|n[aã]o\s+(foram\s+)?encontrad[oa]s?|"
+    r"nenhum\s+registro\s+satisfaz|nenhum(a)?\s+(nota|documento|registro|nf-?c?-?e|arquivo|resultado)|n[aã]o\s+(foram\s+)?encontrad[oa]s?|"
     r"n[aã]o\s+h[aá]\s+(notas|documentos|registros)|sem\s+(notas|documentos|registros)|consulta\s+vazia",
     re.I,
 )
@@ -58,7 +58,8 @@ _ERRO_CONSULTA = re.compile(r"\berro\b|inv[aá]lid|obrigat[oó]ri|n[aã]o\s+(foi
 # Tela da consulta, depois de clicar em Consultar
 _CONFIRMADA = re.compile(r"resultado\s+ser[aá]\s+enviado|caixa\s+de\s+mensagens", re.I)
 # Mensagem final de uma consulta (as outras 2 mensagens da mesma consulta são de andamento)
-_MENSAGEM_FINAL = re.compile(r"tarefa\s+executada|executada\s+com\s+sucesso|n[aã]o\s+existem\s+dados|relat[oó]rio\s+gerado", re.I)
+_MENSAGEM_FINAL = re.compile(r"tarefa\s+executada|executada\s+com\s+sucesso|n[aã]o\s+existem\s+dados|relat[oó]rio\s+gerado|"
+                             r"nenhum\s+registro\s+satisfaz", re.I)
 _PERIODO = re.compile(r"per[ií]odo\s+solicitado:?\s*(\d{2}/\d{2}/\d{4})\s*a\s*(\d{2}/\d{2}/\d{4})", re.I)
 _INPUT_TEXTO = "input:not([type=hidden]):not([type=checkbox]):not([type=radio]):not([type=button]):not([type=submit])"
 _BOTAO = "button, input[type=button], input[type=submit], a.btn"
@@ -100,15 +101,20 @@ _JS_MENSAGENS = """() => {
     for (const a of document.querySelectorAll('a[href*="abrirFilhas"]')) {
         const r = /abrirFilhas\\(\\s*'?(\\d+)'?\\s*,\\s*(\\d+)\\s*\\)/.exec(a.getAttribute('href') || '');
         if (!r) continue;
-        if (!m.has(r[1])) m.set(r[1], {id: r[1], filhas: +r[2], codigo: '', data: null, remetente: ''});
+        if (!m.has(r[1])) m.set(r[1], {id: r[1], filhas: +r[2], codigo: '', data: null, remetente: '', anexo: false, icones: 0});
         const o = m.get(r[1]);
         const t = (a.innerText || '').replace(/\\s+/g, ' ').trim();
+        if (!t) o.icones += 1;  // links de ícone: envelope sempre; clipe só quando há anexo
+        const linha = a.closest('tr');
+        const imgs = Array.from((linha || a).querySelectorAll('img, i, span'));
+        if (imgs.some(i => /clip|anex|attach/i.test((i.getAttribute('src') || '') + ' ' + (i.getAttribute('alt') || '')
+                + ' ' + (i.getAttribute('title') || '') + ' ' + (i.className || '')))) o.anexo = true;
         const c = /\\b(FIS|SEG)_\\d+/.exec(t);
         if (c && !o.codigo) { o.codigo = c[0]; o.remetente = t; }
         const d = /\\d{2}\\/\\d{2}\\/\\d{4}\\s+\\d{2}:\\d{2}:\\d{2}/.exec(t);
         if (d && !o.data) o.data = d[0];
     }
-    return Array.from(m.values());
+    return Array.from(m.values()).map(o => Object.assign(o, {anexo: o.anexo || o.icones >= 2}));
 }"""
 
 # Tipo de XML -> tela e bloco onde vai a inscrição estadual (um bloco por consulta)
@@ -778,15 +784,17 @@ class AtfPB:
             self._ir(quadro, f"{self._base_seg(quadro)}SEGf_MinhasMensagens.do?hidsqMensagem={mae['id']}")
             filhas = [f for f in quadro.evaluate(_JS_MENSAGENS) if f["id"] != mae["id"]] or [mae]
         textos, antes, final = [], len(capt.recebidos), False
-        for f in filhas:
-            if f["id"] in self._filhas_lidas:
-                continue
+        # abre primeiro a filha com clipe (anexo) e para na mensagem final: as de andamento
+        # ("tarefa recebida", "em processamento") só são abertas se nenhuma tiver anexo
+        pendentes = sorted((f for f in filhas if f["id"] not in self._filhas_lidas), key=lambda f: not f.get("anexo"))
+        for f in pendentes:
             texto, n = self._ler_mensagem(quadro, f["id"], mae["id"], capt)
+            self._filhas_lidas.add(f["id"])
             self._log(f"Mensagem {f['id']} ({mae.get('remetente', '')[:30]}): {n} arquivo(s)")
+            textos.append(texto)
             if n or _MENSAGEM_FINAL.search(texto):
                 final = True
-                self._filhas_lidas.add(f["id"])
-            textos.append(texto)
+                break
         self.ultimo_uso = time.time()
         return "\n".join(textos), capt.recebidos[antes:], final
 
