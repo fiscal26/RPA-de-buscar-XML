@@ -1,8 +1,9 @@
 """XML baixados: abre ZIP, lê cada documento, confere se é da empresa e salva organizado.
 
-Pasta final:  <destino>/<Apelido> - <CNPJ>/<AAAA-MM>/<Tipo>/<chave>.xml
-O mês é o da emissão de cada nota (não o do pedido). XML que não é da empresa consultada
-(CNPJ do emitente/destinatário diferente) vai para a subpasta "_conferir", nunca para a de outra.
+Pasta final:  <destino>/<ID> - <Nome fantasia>/<AAAA-MM>/<NF-e Saida | NF-e Entrada | NFC-e>/<chave>.xml
+(sem ID na planilha: <Nome fantasia> - IE <inscrição>). O mês é o da emissão de cada nota.
+XML que não é da empresa consultada (IE/CNPJ do emitente ou destinatário diferente) vai para a
+subpasta "_conferir", nunca para a de outra empresa.
 """
 from __future__ import annotations
 
@@ -14,12 +15,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
-from planilha import formatar_cnpj
+from planilha import formatar_ie
 
+# os mesmos nomes das colunas da planilha modelo
 TIPOS = {
-    "nfe_emitidas": "NF-e Emitidas",
-    "nfe_recebidas": "NF-e Recebidas",
-    "nfce_emitidas": "NFC-e Emitidas",
+    "nfe_saida": "NF-e Saida",
+    "nfe_entrada": "NF-e Entrada",
+    "nfce": "NFC-e",
 }
 _MAX_ARQUIVOS_ZIP = 50_000
 _MAX_TAMANHO_XML = 20 * 1024 * 1024
@@ -31,6 +33,8 @@ class InfoXml:
     modelo: str = ""          # 55 = NF-e, 65 = NFC-e
     cnpj_emit: str = ""
     cnpj_dest: str = ""
+    ie_emit: str = ""
+    ie_dest: str = ""
     emissao: str = ""          # aaaa-mm-dd
     evento: bool = False       # cancelamento, carta de correção etc.
 
@@ -100,9 +104,11 @@ def ler_xml(dados: bytes) -> InfoXml | None:
         ide = _filho(inf, "ide")
         info.modelo = _texto(ide, "mod")
         info.emissao = (_texto(ide, "dhEmi") or _texto(ide, "dEmi"))[:10]
-        info.cnpj_emit = _texto(_filho(inf, "emit"), "CNPJ") or _texto(_filho(inf, "emit"), "CPF")
-        dest = _filho(inf, "dest")
+        emit, dest = _filho(inf, "emit"), _filho(inf, "dest")
+        info.cnpj_emit = _texto(emit, "CNPJ") or _texto(emit, "CPF")
         info.cnpj_dest = _texto(dest, "CNPJ") or _texto(dest, "CPF")
+        info.ie_emit = re.sub(r"\D", "", _texto(emit, "IE"))
+        info.ie_dest = re.sub(r"\D", "", _texto(dest, "IE"))
     elif "infEvento" in nomes or raiz_nome in ("procEventoNFe", "evento"):
         inf = nomes.get("infEvento")
         info.evento = True
@@ -140,25 +146,34 @@ def nome_de_pasta(texto: str) -> str:
     return re.sub(r"\s+", " ", texto).strip(" .")[:60] or "Empresa"
 
 
-def pasta_empresa(destino: str | Path, apelido: str, cnpj: str) -> Path:
-    # sem a barra do CNPJ (o Windows não aceita) e sem pontos no fim
-    doc = formatar_cnpj(cnpj).replace("/", "-")
-    return Path(destino) / f"{nome_de_pasta(apelido)} - {doc}"
+def pasta_empresa(destino: str | Path, nome: str, ie: str, codigo: str = "") -> Path:
+    if codigo:
+        return Path(destino) / nome_de_pasta(f"{codigo} - {nome}")
+    return Path(destino) / f"{nome_de_pasta(nome)} - IE {formatar_ie(ie)}"
 
 
-def pertence(info: InfoXml, cnpj: str, tipo: str) -> bool:
-    """O XML é da empresa? Emitidas: ela é a emitente. Recebidas: ela é a destinatária.
-    Evento de nota recebida pode vir do emitente: confere pela chave (CNPJ nas posições 7 a 20)."""
-    if tipo.endswith("_emitidas"):
-        return info.cnpj_emit == cnpj or info.chave[6:20] == cnpj
+def _mesmo_ie(a: str, b: str) -> bool:
+    return bool(a) and bool(b) and a.lstrip("0") == b.lstrip("0")
+
+
+def pertence(info: InfoXml, ie: str, cnpj: str, tipo: str) -> bool:
+    """O XML é da empresa? Saída/NFC-e: ela é a emitente. Entrada: ela é a destinatária.
+    Confere pela IE e, se houver, pelo CNPJ. Evento só traz o autor e a chave (CNPJ do emitente
+    nas posições 7 a 20)."""
+    emitente_chave = info.chave[6:20]
+    if tipo != "nfe_entrada":
+        if info.evento:
+            return not cnpj or cnpj in (info.cnpj_emit, emitente_chave)
+        return _mesmo_ie(info.ie_emit, ie) or (bool(cnpj) and cnpj in (info.cnpj_emit, emitente_chave))
     if info.evento:
-        return info.cnpj_emit == cnpj or info.chave[6:20] != cnpj
-    return info.cnpj_dest == cnpj
+        return not cnpj or info.cnpj_emit == cnpj or emitente_chave != cnpj
+    return _mesmo_ie(info.ie_dest, ie) or (bool(cnpj) and info.cnpj_dest == cnpj)
 
 
-def salvar(arquivos: list[tuple[str, bytes]], destino: str | Path, apelido: str, cnpj: str, tipo: str) -> Resumo:
+def salvar(arquivos: list[tuple[str, bytes]], destino: str | Path, nome: str, ie: str, cnpj: str, tipo: str,
+           codigo: str = "") -> Resumo:
     resumo = Resumo()
-    base = pasta_empresa(destino, apelido, cnpj)
+    base = pasta_empresa(destino, nome, ie, codigo)
     nome_tipo = TIPOS.get(tipo, tipo)
     for nome, dados in arquivos:
         info = ler_xml(dados)
@@ -167,7 +182,7 @@ def salvar(arquivos: list[tuple[str, bytes]], destino: str | Path, apelido: str,
             continue
         mes = info.emissao[:7]
         pasta = base / mes / nome_tipo
-        conferir = not pertence(info, cnpj, tipo)
+        conferir = not pertence(info, ie, cnpj, tipo)
         if conferir:
             pasta = base / "_conferir"
         if info.evento:

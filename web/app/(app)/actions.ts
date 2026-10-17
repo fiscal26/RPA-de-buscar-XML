@@ -5,43 +5,37 @@ import { contexto } from "@/lib/sessao";
 import { clienteAdmin } from "@/lib/supabase/admin";
 import { lerPlanilha } from "@/lib/planilha";
 import { cifrarSenha } from "@/lib/cripto";
-import { normalizarCnpj } from "@/lib/cnpj";
-import { IDS_TIPOS, MAX_DIAS_PERIODO } from "@/lib/xml";
+import { normalizarDocumento, normalizarIe } from "@/lib/documentos";
+import { IDS_TIPOS } from "@/lib/xml";
 
-/** Item da conferência. Vai e volta do navegador SEM a senha em texto: só a versão cifrada. */
+/** Empresa da conferência (sem senha nenhuma: as senhas vão à parte, cifradas, por login). */
 export type ItemAgendamento = {
-  cnpj: string;
-  apelido: string;
-  login: string;
-  linha: number;
-  senhaCifrada: string | null; // null = usa a senha já cadastrada
-  cadastrada: boolean;
+  ie: string; nome: string; cnpj: string; codigo: string; filial: string;
+  login: string; tipos: string[]; linha: number; cadastrada: boolean;
 };
+
+/** Login do contador. Vai e volta do navegador SEM a senha em texto: só a versão cifrada. */
+export type AcessoAgendamento = { login: string; senhaCifrada: string | null; cadastrado: boolean };
 
 export type Previa = {
   erro?: string;
   ok?: string;
   agendamentoId?: string;
   itens?: ItemAgendamento[];
+  acessos?: AcessoAgendamento[];
   erros?: string[];
   avisos?: string[];
   nomeArquivo?: string;
   orgId?: string;
-  inicio?: string;
-  fim?: string;
-  tipos?: string[];
+  competencia?: string;       // aaaa-mm
   executarEm?: string | null; // ISO; null = agora
 };
 
-const DATA = /^\d{4}-\d{2}-\d{2}$/;
-
-function conferirPeriodo(inicio: string, fim: string): string | null {
-  if (!DATA.test(inicio) || !DATA.test(fim)) return "Informe as datas inicial e final.";
-  if (fim < inicio) return "A data final é anterior à inicial.";
-  const dias = (Date.parse(fim) - Date.parse(inicio)) / 86_400_000;
-  if (dias > MAX_DIAS_PERIODO) return `Período maior que ${MAX_DIAS_PERIODO} dias: divida em mais agendamentos.`;
-  const hoje = new Date().toISOString().slice(0, 10);
-  if (inicio > hoje) return "O período começa no futuro: ainda não há notas para baixar.";
+function conferirCompetencia(valor: string): string | null {
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(valor)) return "Escolha a competência (mês e ano).";
+  const hoje = new Date().toISOString().slice(0, 7);
+  if (valor > hoje) return "A competência ainda não começou: não há notas para baixar.";
+  if (valor < "2006-01") return "Competência anterior à NF-e.";
   return null;
 }
 
@@ -59,12 +53,9 @@ export async function prepararAgendamento(_: Previa | undefined, form: FormData)
 
   const arquivo = form.get("arquivo");
   if (!(arquivo instanceof File) || arquivo.size === 0) return { erro: "Escolha a planilha das empresas (.xlsx ou .csv)." };
-  const inicio = String(form.get("inicio") ?? "");
-  const fim = String(form.get("fim") ?? "");
-  const erroPeriodo = conferirPeriodo(inicio, fim);
-  if (erroPeriodo) return { erro: erroPeriodo };
-  const tipos = form.getAll("tipo").map(String).filter((t) => IDS_TIPOS.includes(t));
-  if (!tipos.length) return { erro: "Marque ao menos um tipo de XML." };
+  const competencia = String(form.get("competencia") ?? "");
+  const erroCompetencia = conferirCompetencia(competencia);
+  if (erroCompetencia) return { erro: erroCompetencia };
   let executarEm: string | null = null;
   if (form.get("quando") === "agendar") {
     executarEm = horarioBrasilia(String(form.get("executar_em") ?? ""));
@@ -77,86 +68,114 @@ export async function prepararAgendamento(_: Previa | undefined, form: FormData)
   } catch (e) {
     return { erro: `Não consegui ler a planilha: ${(e as Error).message}` };
   }
-  if (!leitura.empresas.length) return { erro: "Nenhuma empresa válida na planilha.", erros: leitura.erros };
+  if (!leitura.empresas.length) return { erro: "Nenhuma empresa pronta na planilha.", erros: leitura.erros, avisos: leitura.avisos };
 
-  const { data: existentes } = await supabase.from("xml_empresas").select("cnpj").eq("org_id", orgId);
-  const cadastradas = new Set((existentes ?? []).map((e) => e.cnpj as string));
+  const [{ data: empresasCad }, { data: acessosCad }] = await Promise.all([
+    supabase.from("xml_empresas").select("ie").eq("org_id", orgId),
+    supabase.from("xml_acessos").select("login").eq("org_id", orgId),
+  ]);
+  const iesCadastradas = new Set((empresasCad ?? []).map((e) => e.ie as string));
+  const loginsCadastrados = new Set((acessosCad ?? []).map((a) => a.login as string));
 
-  const itens: ItemAgendamento[] = [];
+  // uma senha por login: a primeira preenchida; senhas diferentes para o mesmo login viram aviso
+  const senhas = new Map<string, string>();
+  const avisos = [...leitura.avisos];
+  for (const e of leitura.empresas) {
+    if (!e.senha) continue;
+    const ja = senhas.get(e.login);
+    if (ja === undefined) senhas.set(e.login, e.senha);
+    else if (ja !== e.senha) avisos.push(`Linha ${e.linha}: o login ${e.login} aparece com outra senha; vale a primeira da planilha`);
+  }
   const erros = [...leitura.erros];
+  const semSenha = new Set([...new Set(leitura.empresas.map((e) => e.login))].filter((l) => !senhas.has(l) && !loginsCadastrados.has(l)));
+  for (const e of leitura.empresas.filter((e) => semSenha.has(e.login))) {
+    erros.push(`Linha ${e.linha}: ${e.nome}: informe a SENHA do login ${e.login} (ainda não cadastrado)`);
+  }
+  const itens: ItemAgendamento[] = leitura.empresas.filter((e) => !semSenha.has(e.login)).map((e) => ({
+    ie: e.ie, nome: e.nome, cnpj: e.cnpj, codigo: e.codigo, filial: e.filial, login: e.login, tipos: e.tipos,
+    linha: e.linha, cadastrada: iesCadastradas.has(e.ie),
+  }));
+  if (!itens.length) return { erro: "Nenhuma empresa pronta para agendar.", erros, avisos };
+
+  let acessos: AcessoAgendamento[];
   try {
-    for (const e of leitura.empresas) {
-      const cadastrada = cadastradas.has(e.cnpj);
-      if (!e.senha && !cadastrada) {
-        erros.push(`Linha ${e.linha}: informe a senha do ATF de ${e.apelido} (empresa ainda não cadastrada)`);
-        continue;
-      }
-      itens.push({
-        cnpj: e.cnpj, apelido: e.apelido, login: e.login, linha: e.linha, cadastrada,
-        senhaCifrada: e.senha ? cifrarSenha(e.senha) : null,
-      });
-    }
+    acessos = [...new Set(itens.map((i) => i.login))].map((login) => {
+      const senha = senhas.get(login);
+      return { login, senhaCifrada: senha ? cifrarSenha(senha) : null, cadastrado: loginsCadastrados.has(login) };
+    });
   } catch (e) {
     return { erro: (e as Error).message };
   }
-  if (!itens.length) return { erro: "Nenhuma empresa pronta para agendar.", erros };
-  return { itens, erros, avisos: leitura.avisos, nomeArquivo: arquivo.name, orgId, inicio, fim, tipos, executarEm };
+  return { itens, acessos, erros, avisos, nomeArquivo: arquivo.name, orgId, competencia, executarEm };
 }
+
+const SENHA_CIFRADA = /^v1:[A-Za-z0-9+/=]{100,2000}$/;
 
 export async function confirmarAgendamento(previa: Previa): Promise<Previa> {
   const { user, perfil, admin } = await contexto();
   const orgId = admin ? previa.orgId ?? "" : perfil.org_id ?? "";
   if (!orgId || !previa.itens?.length) return { erro: "Agendamento vazio." };
   // confere de novo no servidor (os dados vieram do navegador)
-  const erroPeriodo = conferirPeriodo(previa.inicio ?? "", previa.fim ?? "");
-  if (erroPeriodo) return { erro: erroPeriodo };
-  const tipos = (previa.tipos ?? []).filter((t) => IDS_TIPOS.includes(t));
-  if (!tipos.length) return { erro: "Marque ao menos um tipo de XML." };
+  const competencia = previa.competencia ?? "";
+  const erroCompetencia = conferirCompetencia(competencia);
+  if (erroCompetencia) return { erro: erroCompetencia };
   const executarEm = previa.executarEm && !Number.isNaN(Date.parse(previa.executarEm)) ? previa.executarEm : new Date().toISOString();
+  const agora = new Date().toISOString();
+  const db = clienteAdmin(); // chave secreta: a organização já foi conferida pela sessão acima
 
-  const vistos = new Set<string>();
-  const itens = previa.itens.flatMap((i) => {
-    const { cnpj } = normalizarCnpj(i.cnpj);
-    if (!cnpj || vistos.has(cnpj)) return [];
-    vistos.add(cnpj);
-    const senha = typeof i.senhaCifrada === "string" && /^v1:[A-Za-z0-9+/=]{100,2000}$/.test(i.senhaCifrada) ? i.senhaCifrada : null;
-    return [{ cnpj, apelido: String(i.apelido ?? "").trim().slice(0, 60) || cnpj, login: String(i.login ?? "").trim().slice(0, 60), senha }];
+  // 1) logins do contador (senha nova substitui a guardada)
+  const acessos = (previa.acessos ?? []).flatMap((a) => {
+    const login = String(a.login ?? "").trim().slice(0, 60);
+    return login ? [{ login, senha: typeof a.senhaCifrada === "string" && SENHA_CIFRADA.test(a.senhaCifrada) ? a.senhaCifrada : null }] : [];
   });
-
-  // Gravação com a chave secreta: a organização já foi conferida pela sessão acima
-  const db = clienteAdmin();
-  const comSenha = itens.filter((i) => i.senha);
+  const comSenha = acessos.filter((a) => a.senha);
   if (comSenha.length) {
-    const { error } = await db.from("xml_empresas").upsert(
-      comSenha.map((i) => ({ org_id: orgId, cnpj: i.cnpj, apelido: i.apelido, login_atf: i.login, senha_cifrada: i.senha, atualizado_em: new Date().toISOString() })),
-      { onConflict: "org_id,cnpj" },
+    const { error } = await db.from("xml_acessos").upsert(
+      comSenha.map((a) => ({ org_id: orgId, login: a.login, senha_cifrada: a.senha, atualizado_em: agora })),
+      { onConflict: "org_id,login" },
     );
-    if (error) return { erro: `Não consegui salvar as empresas: ${error.message}` };
+    if (error) return { erro: `Não consegui salvar os logins do ATF: ${error.message}` };
   }
-  for (const i of itens.filter((i) => !i.senha)) {
-    await db.from("xml_empresas").update({ apelido: i.apelido, login_atf: i.login, atualizado_em: new Date().toISOString() })
-      .eq("org_id", orgId).eq("cnpj", i.cnpj);
-  }
-  const { data: empresas } = await db.from("xml_empresas").select("id, cnpj").eq("org_id", orgId).in("cnpj", itens.map((i) => i.cnpj));
-  const idPorCnpj = new Map((empresas ?? []).map((e) => [e.cnpj as string, e.id as string]));
-  const prontos = itens.filter((i) => idPorCnpj.has(i.cnpj));
-  if (!prontos.length) return { erro: "Nenhuma empresa com senha cadastrada." };
+  const { data: acessosDb } = await db.from("xml_acessos").select("id, login").eq("org_id", orgId);
+  const acessoPorLogin = new Map((acessosDb ?? []).map((a) => [a.login as string, a.id as string]));
 
+  // 2) empresas (uma por IE)
+  const vistas = new Set<string>();
+  const empresas = previa.itens.flatMap((i) => {
+    const { ie } = normalizarIe(i.ie);
+    const acessoId = acessoPorLogin.get(String(i.login ?? "").trim());
+    if (!ie || vistas.has(ie) || !acessoId) return [];
+    vistas.add(ie);
+    const tipos = (i.tipos ?? []).filter((t) => IDS_TIPOS.includes(t));
+    if (!tipos.length) return [];
+    return [{
+      org_id: orgId, ie, cnpj: normalizarDocumento(i.cnpj).doc, codigo: String(i.codigo ?? "").slice(0, 20),
+      filial: String(i.filial ?? "").slice(0, 20), nome: String(i.nome ?? "").trim().slice(0, 60) || ie,
+      acesso_id: acessoId, tipos, atualizado_em: agora,
+    }];
+  });
+  if (!empresas.length) return { erro: "Nenhuma empresa com login do ATF cadastrado." };
+  const { data: empresasDb, error: erroEmpresas } = await db.from("xml_empresas")
+    .upsert(empresas, { onConflict: "org_id,ie" }).select("id, ie");
+  if (erroEmpresas) return { erro: `Não consegui salvar as empresas: ${erroEmpresas.message}` };
+  const idPorIe = new Map((empresasDb ?? []).map((e) => [e.ie as string, e.id as string]));
+
+  // 3) agendamento e uma tarefa por empresa
   const { data: ag, error } = await db.from("xml_agendamentos").insert({
     org_id: orgId, criado_por: user.id, nome_arquivo: (previa.nomeArquivo ?? "").slice(0, 200),
-    data_inicio: previa.inicio, data_fim: previa.fim, tipos, executar_em: executarEm, total: prontos.length,
+    competencia: `${competencia}-01`, executar_em: executarEm, total: empresas.length,
   }).select("id").single();
   if (error) return { erro: error.message };
-  const { error: erroTarefas } = await db.from("xml_tarefas").insert(
-    prontos.map((i) => ({ org_id: orgId, agendamento_id: ag.id, empresa_id: idPorCnpj.get(i.cnpj), cnpj: i.cnpj, apelido: i.apelido })),
-  );
+  const { error: erroTarefas } = await db.from("xml_tarefas").insert(empresas.map((e) => ({
+    org_id: orgId, agendamento_id: ag.id, empresa_id: idPorIe.get(e.ie), ie: e.ie, nome: e.nome, codigo: e.codigo, tipos: e.tipos,
+  })));
   if (erroTarefas) {
     await db.from("xml_agendamentos").delete().eq("id", ag.id);
     return { erro: erroTarefas.message };
   }
   revalidatePath("/agendamentos");
   revalidatePath("/empresas");
-  return { ok: `Agendamento criado: ${prontos.length} empresa(s) na fila.`, agendamentoId: ag.id };
+  return { ok: `Agendamento criado: ${empresas.length} empresa(s) na fila.`, agendamentoId: ag.id };
 }
 
 export async function cancelarAgendamento(id: string) {

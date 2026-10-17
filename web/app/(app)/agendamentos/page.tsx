@@ -1,11 +1,11 @@
 import Link from "next/link";
 import AutoRefresh from "@/components/AutoRefresh";
 import { contexto } from "@/lib/sessao";
-import { dataBR, dataHoraBR } from "@/lib/cnpj";
-import { EM_ANDAMENTO, nomeTipo } from "@/lib/xml";
+import { competenciaBR, dataHoraBR } from "@/lib/documentos";
+import { EM_ANDAMENTO } from "@/lib/xml";
 
 type Agendamento = {
-  id: string; nome_arquivo: string; data_inicio: string; data_fim: string; tipos: string[];
+  id: string; nome_arquivo: string; competencia: string;
   executar_em: string; total: number; criado_em: string; organizacoes?: { nome: string } | null;
 };
 type Contagem = { prontas: number; fila: number; problemas: number; xml: number };
@@ -16,7 +16,7 @@ export default async function Agendamentos() {
   const { supabase, admin } = await contexto();
   const { data } = await supabase
     .from("xml_agendamentos")
-    .select("id, nome_arquivo, data_inicio, data_fim, tipos, executar_em, total, criado_em, organizacoes(nome)")
+    .select("id, nome_arquivo, competencia, executar_em, total, criado_em, organizacoes(nome)")
     .order("criado_em", { ascending: false })
     .limit(30);
   const agendamentos = (data ?? []) as unknown as Agendamento[];
@@ -58,8 +58,8 @@ export default async function Agendamentos() {
                 <tr>
                   <th>Criado em</th>
                   {admin && <th>Organização</th>}
-                  <th>Período</th>
-                  <th>Tipos</th>
+                  <th>Competência</th>
+                  <th>Arquivo</th>
                   <th>Início</th>
                   <th>Andamento</th>
                   <th>XML</th>
@@ -73,8 +73,8 @@ export default async function Agendamentos() {
                     <tr key={a.id}>
                       <td>{dataHoraBR(a.criado_em)}</td>
                       {admin && <td>{a.organizacoes?.nome}</td>}
-                      <td>{dataBR(a.data_inicio)} a {dataBR(a.data_fim)}</td>
-                      <td>{a.tipos.map(nomeTipo).join(", ")}</td>
+                      <td>{competenciaBR(a.competencia)}</td>
+                      <td className="suave">{a.nome_arquivo}</td>
                       <td>{dataHoraBR(a.executar_em)}</td>
                       <td>
                         {c.prontas}/{a.total} prontas

@@ -20,7 +20,7 @@ PADRAO = {
         "fechar_abas": True,
     },
     "pastas": {
-        # Onde os XML ficam: <destino>/<Apelido> - <CNPJ>/<AAAA-MM>/<tipo>/<chave>.xml
+        # Onde os XML ficam: <destino>/<ID> - <Nome fantasia>/<AAAA-MM>/<NF-e Saida | NF-e Entrada | NFC-e>/
         "destino": str(Path.home() / "Documents" / "XML SEFAZ-PB"),
         "diagnostico": str(Path.home() / "Documents" / "XML SEFAZ-PB" / "_diagnostico"),
     },
@@ -30,27 +30,34 @@ PADRAO = {
     },
     "atf": {
         "url_login": "https://www4.sefaz.pb.gov.br/atf/",
-        # Endereço da função do ATF que baixa os XML, por tipo. Vazio = o robô entra no ATF e espera
-        # você navegar até a tela e clicar em baixar (modo assistido); ele captura o arquivo sozinho.
-        "url_download": {
-            "nfe_emitidas": "",
-            "nfe_recebidas": "",
-            "nfce_emitidas": "",
+        # Telas de consulta: caminho no menu, código da função (campo "Função" do topo) e título
+        "telas": {
+            "nfe": {
+                "menu": ["NF-e", "Consulta NF-e por Emitentes/Destinatários"],
+                "funcao": "FIS_1322",
+                "titulo": "Consulta NF-e por Emitentes/Destinat",
+                "rotulos_data": ["Data de Emissão"],
+            },
+            "nfce": {
+                "menu": ["NFC-e", "Consulta por Emitente"],
+                "funcao": "FIS_1484",
+                "titulo": "Consulta Genérica da NFC-e",
+                "rotulos_data": ["Data Emissão Inicial", "Data Emissão Final"],
+            },
         },
-        # Seletores CSS fixos, caso a detecção automática dos campos não acerte. Vazio = automático.
+        # Seletores CSS fixos da tela de login, caso a detecção automática não acerte. Vazio = automático.
         "seletores": {
             "login": "",
             "senha": "",
             "entrar": "",
-            "data_inicio": "",
-            "data_fim": "",
-            "consultar": "",
         },
         "tentar_automatico": True,
         "segundos_login": 60,
         "segundos_automatico": 90,
         # Tempo que o modo assistido espera você concluir no Chrome.
         "segundos_assistido": 300,
+        # O ATF encerra a sessão com 15 min sem uso: depois disso o robô entra de novo.
+        "minutos_sessao": 12,
     },
     "portal": {
         # Robô do portal LotiVisse XML. Veja web/IMPLANTACAO.md.

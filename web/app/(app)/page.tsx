@@ -1,5 +1,5 @@
 import { contexto } from "@/lib/sessao";
-import { mesAnterior } from "@/lib/cnpj";
+import { mesAnterior } from "@/lib/documentos";
 import FormAgendamento from "./FormAgendamento";
 
 export default async function Agendar() {
@@ -7,26 +7,26 @@ export default async function Agendar() {
   const organizacoes = admin
     ? (await supabase.from("organizacoes").select("id, nome").eq("ativo", true).order("nome")).data ?? []
     : undefined;
-  const { inicio, fim } = mesAnterior();
   return (
     <>
       <h1>Agendar download de XML</h1>
       <div className="cartao">
         <p>
-          Preencha a planilha modelo, uma linha por empresa: <b>CNPJ</b>, <b>apelido</b> (vira o nome da pasta),{" "}
-          <b>senha do ATF</b> e, se o login não for o próprio CNPJ, o <b>login do ATF</b>. Depois escolha o período e os
-          tipos de XML. O robô entra no ATF da SEFAZ-PB de cada empresa e salva os XML organizados por empresa, mês e tipo.
+          Preencha a planilha modelo, uma linha por empresa: <b>INSCRICAO ESTADUAL</b> (é por ela que o ATF pesquisa),{" "}
+          <b>NOME FANTASIA</b>, <b>LOGIN</b> e <b>SENHA</b> do contador no ATF, e marque com <b>S</b> os XML desejados em{" "}
+          <b>NF-e Saida</b>, <b>NF-e Entrada</b> e <b>NFC-e</b>. Empresas com <b>ATIVA</b> = N ficam de fora.
         </p>
         <p>
-          <a className="botao secundario pequeno" href="/modelos/modelo_empresas_xml.xlsx" download>Baixar planilha modelo</a>
+          <a className="botao secundario pequeno" href="/modelos/modelo_empresas_sefaz_pb.xlsx" download>Baixar planilha modelo</a>
         </p>
         <p className="suave">
-          Empresa já cadastrada pode vir com a senha em branco: o robô usa a que está guardada. A planilha contém senhas;
-          apague-a do computador depois de enviar.
+          A senha só precisa vir uma vez por login: depois de cadastrada, pode ficar em branco. A planilha contém
+          senhas; apague-a do computador depois de enviar. As colunas de CT-e, faturas e certidões são de outros
+          serviços e não são usadas aqui.
         </p>
       </div>
       <div className="cartao">
-        <FormAgendamento organizacoes={organizacoes} inicio={inicio} fim={fim} />
+        <FormAgendamento organizacoes={organizacoes} competencia={mesAnterior()} />
       </div>
     </>
   );

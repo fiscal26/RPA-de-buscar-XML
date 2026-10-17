@@ -19,27 +19,55 @@ class ChromeIndisponivel(Exception):
     pass
 
 
-@contextmanager
-def conectar(porta: int, fechar_abas: bool = True):
-    """Entrega o contexto (perfil) do Chrome aberto. Ao sair, fecha as abas abertas durante a
-    tarefa e desconecta: o Chrome continua aberto para a próxima."""
-    from playwright.sync_api import sync_playwright
+class Chrome:
+    """Conexão com o Chrome aberto que fica de pé entre uma empresa e outra, para reaproveitar
+    a sessão do ATF do mesmo login. Ao fechar, fecha as abas abertas pelo robô e desconecta:
+    o Chrome continua aberto."""
 
-    with sync_playwright() as p:
+    def __init__(self, porta: int, fechar_abas: bool = True):
+        self.porta = porta
+        self.fechar_abas = fechar_abas
+        self.contexto = None
+        self._pw = None
+        self._antes: set = set()
+
+    def abrir(self):
+        from playwright.sync_api import sync_playwright
+
+        self._pw = sync_playwright().start()
         try:
-            browser = p.chromium.connect_over_cdp(f"http://127.0.0.1:{porta}")
+            browser = self._pw.chromium.connect_over_cdp(f"http://127.0.0.1:{self.porta}")
         except Exception as e:
+            self._pw.stop()
+            self._pw = None
             raise ChromeIndisponivel(
-                f"Não consegui conectar ao Chrome na porta {porta}. "
+                f"Não consegui conectar ao Chrome na porta {self.porta}. "
                 "Abra o Chrome pelo 'abrir_chrome.bat' e tente de novo."
             ) from e
-        contexto = browser.contexts[0] if browser.contexts else browser.new_context()
-        antes = set(contexto.pages)
-        try:
-            yield contexto
-        finally:
-            if fechar_abas:
-                fechar_abas_novas(contexto, antes)
+        self.contexto = browser.contexts[0] if browser.contexts else browser.new_context()
+        self._antes = set(self.contexto.pages)
+        return self.contexto
+
+    def fechar(self):
+        if self.contexto is not None and self.fechar_abas:
+            fechar_abas_novas(self.contexto, self._antes)
+        if self._pw is not None:
+            try:
+                self._pw.stop()
+            except Exception:
+                pass
+        self.contexto = None
+        self._pw = None
+
+
+@contextmanager
+def conectar(porta: int, fechar_abas: bool = True):
+    """Entrega o contexto (perfil) do Chrome aberto e desconecta ao sair."""
+    chrome = Chrome(porta, fechar_abas)
+    try:
+        yield chrome.abrir()
+    finally:
+        chrome.fechar()
 
 
 def fechar_abas_novas(contexto, antes: set):

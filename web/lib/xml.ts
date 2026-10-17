@@ -1,9 +1,9 @@
-// Tipos de XML e situações das tarefas (os mesmos do banco e do robô).
+// Tipos de XML (as colunas da planilha modelo) e situações das tarefas — os mesmos do banco e do robô.
 
 export const TIPOS = [
-  { id: "nfe_emitidas", nome: "NF-e emitidas" },
-  { id: "nfe_recebidas", nome: "NF-e recebidas" },
-  { id: "nfce_emitidas", nome: "NFC-e emitidas" },
+  { id: "nfe_saida", nome: "NF-e Saída", coluna: "nfe saida" },
+  { id: "nfe_entrada", nome: "NF-e Entrada", coluna: "nfe entrada" },
+  { id: "nfce", nome: "NFC-e", coluna: "nfce" },
 ] as const;
 export const IDS_TIPOS: string[] = TIPOS.map((t) => t.id);
 export const nomeTipo = (id: string) => TIPOS.find((t) => t.id === id)?.nome ?? id;
@@ -19,4 +19,3 @@ export const STATUS: Record<string, { nome: string; classe: string }> = {
   cancelado: { nome: "Cancelado", classe: "st-neutro" },
 };
 export const EM_ANDAMENTO = ["pendente", "processando"];
-export const MAX_DIAS_PERIODO = 366;

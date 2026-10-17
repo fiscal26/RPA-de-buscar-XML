@@ -4,14 +4,13 @@ Três partes: o **banco** (Supabase), o **portal** (Vercel, em `xml.lotivisse.co
 
 ## 1. Banco (Supabase)
 
-Pode usar **o mesmo projeto do portal de CND** (recomendado: o cliente usa o mesmo login e as
-organizações já existem) ou um projeto novo.
+Projeto **próprio** do Supabase (separado do portal de CND; só o domínio e a marca são os mesmos).
 
-1. Supabase > **SQL Editor** > cole todo o `web/supabase/schema.sql` > **Run**. Pode rodar de novo
-   sem perder dados.
-2. Projeto novo: crie os usuários em **Authentication > Users** e, para cada um, uma linha em
-   `organizacoes` e em `perfis` (papel `gestor` ou `usuario`; o seu, `admin`).
-3. Anote em **Project Settings > API**: a URL, a chave `anon`/`publishable` e a `service_role`/`secret`.
+1. Crie o projeto no Supabase (região São Paulo).
+2. **SQL Editor** > cole todo o `web/supabase/schema.sql` > **Run**. Pode rodar de novo sem perder dados.
+3. Crie os usuários em **Authentication > Users** e, para cada um, uma linha em `organizacoes`
+   (o escritório cliente) e em `perfis` (papel `gestor` ou `usuario`; o seu, `admin`).
+4. Anote em **Project Settings > API**: a URL, a chave `anon`/`publishable` e a `service_role`/`secret`.
 
 ## 2. Chaves das senhas (no PC do robô)
 
@@ -49,11 +48,10 @@ precisam ser enviadas de novo. Para ver a pública de novo: `python robo_xml.py 
 3. Ligue o robô com o `iniciar_robo.bat` e deixe a janela aberta. No portal, em **Agendamentos**,
    aparece "Robô ligado".
 
-## 5. Primeiro teste (calibração)
+## 5. Primeiro teste (validação no ATF real)
 
-1. Teste local com uma empresa sua, sem o portal:
-   `python robo_xml.py --local empresas.xlsx --inicio 01/09/2026 --fim 30/09/2026`
-2. Se o robô entrar no ATF mas não reconhecer a tela de download, ele espera você baixar no Chrome
-   (modo assistido) e salva um pacote em `<destino>/_diagnostico/`.
-3. Com esse pacote (e o endereço da tela de download que você usou) preenchemos
-   `atf.url_download` e, se precisar, `atf.seletores` no `config.json`. A partir daí, automático.
+1. Preencha a planilha modelo com uma ou duas empresas suas.
+2. Rode sem o portal: `python robo_xml.py --local empresas.xlsx --competencia 09/2026` e acompanhe no Chrome.
+3. Se alguma etapa não for reconhecida (login ou lista de notas depois do *Pesquisar*), o robô espera
+   você concluir no Chrome (modo assistido) e salva um pacote em `<destino>/_diagnostico/`.
+   Com esse pacote ajustamos o roteiro, e a partir daí fica automático.

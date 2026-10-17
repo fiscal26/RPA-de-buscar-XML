@@ -7,13 +7,5 @@
     "supabase_url": "https://SEU-PROJETO.supabase.co",
     "chave_service_role": "COLE-AQUI-A-CHAVE-SERVICE-ROLE",
     "nome_robo": "pc-escritorio"
-  },
-  "atf": {
-    "_comentario": "Endereços das telas de download do ATF: vamos preencher juntos na calibração.",
-    "url_download": {
-      "nfe_emitidas": "",
-      "nfe_recebidas": "",
-      "nfce_emitidas": ""
-    }
   }
 }

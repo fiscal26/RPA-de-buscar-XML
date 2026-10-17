@@ -2,13 +2,13 @@
 
 import Link from "next/link";
 import { useActionState, useState, useTransition } from "react";
-import { dataHoraBR, formatarCnpj } from "@/lib/cnpj";
+import { competenciaBR, dataHoraBR, formatarIe } from "@/lib/documentos";
 import { TIPOS, nomeTipo } from "@/lib/xml";
 import { confirmarAgendamento, prepararAgendamento, type Previa } from "./actions";
 
 type OrgOpcao = { id: string; nome: string };
 
-export default function FormAgendamento({ organizacoes, inicio, fim }: { organizacoes?: OrgOpcao[]; inicio: string; fim: string }) {
+export default function FormAgendamento({ organizacoes, competencia }: { organizacoes?: OrgOpcao[]; competencia: string }) {
   const [previa, ler, lendo] = useActionState(prepararAgendamento, undefined);
   const [resultado, setResultado] = useState<Previa | null>(null);
   const [enviando, iniciar] = useTransition();
@@ -30,12 +30,15 @@ export default function FormAgendamento({ organizacoes, inicio, fim }: { organiz
   }
 
   const novas = previa?.itens?.filter((i) => !i.cadastrada).length ?? 0;
-  const semSenha = previa?.itens?.filter((i) => !i.senhaCifrada).length ?? 0;
+  const contagem = TIPOS.map((t) => ({ ...t, n: previa?.itens?.filter((i) => i.tipos.includes(t.id)).length ?? 0 }));
 
   return (
     <>
       <form action={ler}>
         {previa?.erro && <div className="faixa erro">{previa.erro}</div>}
+        {previa?.erro && !!previa.erros?.length && (
+          <div className="faixa erro"><ul>{previa.erros.slice(0, 50).map((e) => <li key={e}>{e}</li>)}</ul></div>
+        )}
         {organizacoes && (
           <>
             <label htmlFor="org_id">Organização</label>
@@ -45,29 +48,12 @@ export default function FormAgendamento({ organizacoes, inicio, fim }: { organiz
             </select>
           </>
         )}
-        <label htmlFor="arquivo">Planilha das empresas (.xlsx ou .csv)</label>
-        <input id="arquivo" name="arquivo" type="file" accept=".xlsx,.xlsm,.csv,.txt" required />
+        <label htmlFor="arquivo">Planilha das empresas (.xlsx)</label>
+        <input id="arquivo" name="arquivo" type="file" accept=".xlsx,.xlsm,.csv" required />
 
-        <div className="linha">
-          <div>
-            <label htmlFor="inicio">Período: de</label>
-            <input id="inicio" name="inicio" type="date" defaultValue={inicio} required />
-          </div>
-          <div>
-            <label htmlFor="fim">até</label>
-            <input id="fim" name="fim" type="date" defaultValue={fim} required />
-          </div>
-        </div>
-
-        <label>Tipos de XML</label>
-        <div className="opcoes">
-          {TIPOS.map((t) => (
-            <label key={t.id}>
-              <input type="checkbox" name="tipo" value={t.id} defaultChecked={t.id !== "nfce_emitidas"} />
-              {t.nome}
-            </label>
-          ))}
-        </div>
+        <label htmlFor="competencia">Competência</label>
+        <input id="competencia" name="competencia" type="month" defaultValue={competencia} required style={{ maxWidth: 220 }} />
+        <p className="suave">O robô busca do 1º ao último dia do mês.</p>
 
         <label>Quando executar</label>
         <div className="opcoes">
@@ -87,12 +73,19 @@ export default function FormAgendamento({ organizacoes, inicio, fim }: { organiz
         <div style={{ marginTop: "1.5rem" }}>
           <h2>Conferência — {previa.nomeArquivo}</h2>
           <p>
-            <b>{previa.itens.length}</b> empresa(s) · período {previa.inicio?.split("-").reverse().join("/")} a{" "}
-            {previa.fim?.split("-").reverse().join("/")} · {previa.tipos?.map(nomeTipo).join(", ")} ·{" "}
+            <b>{previa.itens.length}</b> empresa(s) · competência <b>{competenciaBR(previa.competencia)}</b> ·{" "}
             {previa.executarEm ? `começa em ${dataHoraBR(previa.executarEm)}` : "começa assim que possível"}.
           </p>
-          {novas > 0 && <p className="suave">{novas} empresa(s) nova(s) serão cadastradas com a senha da planilha.</p>}
-          {semSenha > 0 && <p className="suave">{semSenha} empresa(s) sem senha na planilha: será usada a senha já cadastrada.</p>}
+          <p className="suave">
+            {contagem.filter((t) => t.n).map((t) => `${t.nome}: ${t.n}`).join(" · ")}
+            {novas > 0 && ` · ${novas} empresa(s) nova(s) no cadastro`}
+          </p>
+          {!!previa.acessos?.length && (
+            <p className="suave">
+              Logins do ATF:{" "}
+              {previa.acessos.map((a) => `${a.login} (${a.senhaCifrada ? (a.cadastrado ? "senha nova" : "novo") : "senha já cadastrada"})`).join(", ")}.
+            </p>
+          )}
           {!!previa.erros?.length && (
             <div className="faixa erro">
               <b>{previa.erros.length} linha(s) ignorada(s):</b>
@@ -104,17 +97,19 @@ export default function FormAgendamento({ organizacoes, inicio, fim }: { organiz
           )}
           <details>
             <summary>Ver empresas</summary>
-            <table>
-              <thead><tr><th>Linha</th><th>CNPJ</th><th>Apelido</th><th>Login ATF</th><th>Senha</th></tr></thead>
-              <tbody>
-                {previa.itens.map((i) => (
-                  <tr key={i.cnpj}>
-                    <td>{i.linha}</td><td>{formatarCnpj(i.cnpj)}</td><td>{i.apelido}</td><td>{i.login || "o próprio CNPJ"}</td>
-                    <td>{i.senhaCifrada ? (i.cadastrada ? "nova (substitui)" : "nova") : "já cadastrada"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <div className="tabela-rolagem">
+              <table>
+                <thead><tr><th>Linha</th><th>ID</th><th>Nome fantasia</th><th>Inscrição estadual</th><th>Login</th><th>XML</th></tr></thead>
+                <tbody>
+                  {previa.itens.map((i) => (
+                    <tr key={i.ie}>
+                      <td>{i.linha}</td><td>{i.codigo}</td><td>{i.nome}</td><td>{formatarIe(i.ie)}</td><td>{i.login}</td>
+                      <td>{i.tipos.map(nomeTipo).join(", ")}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </details>
           {resultado?.erro && <div className="faixa erro" style={{ marginTop: "1rem" }}>{resultado.erro}</div>}
           <p><button onClick={confirmar} disabled={enviando}>{enviando ? "Agendando…" : "Confirmar agendamento"}</button></p>

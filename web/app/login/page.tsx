@@ -12,7 +12,7 @@ export default async function Login({ searchParams }: { searchParams: Promise<{ 
         {erro === "sem-acesso" && <div className="faixa erro">Seu usuário está sem acesso. Fale com o responsável pelo site.</div>}
         <FormLogin />
         <p className="suave" style={{ textAlign: "center", marginTop: "1rem" }}>
-          Use o mesmo login do portal de certidões LotiVisse.
+          Acesso fornecido pela equipe LotiVisse.
         </p>
       </div>
     </div>

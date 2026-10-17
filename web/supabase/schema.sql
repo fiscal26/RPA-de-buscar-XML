@@ -1,31 +1,28 @@
 -- =====================================================================================
 -- LotiVisse XML — estrutura do banco (Supabase / PostgreSQL)
 --
+-- Projeto próprio do Supabase (separado do portal de CND; só o domínio e a marca são os mesmos).
 -- Como usar: no painel do Supabase, abra "SQL Editor", cole TODO este arquivo e clique em "Run".
 -- Pode rodar de novo sem perder dados.
 --
--- Funciona em um projeto novo OU no mesmo projeto do portal de CND: as tabelas "organizacoes" e
--- "perfis" (login e clientes) são as mesmas e só são criadas se ainda não existirem. As tabelas
--- deste módulo começam com "xml_".
---
 -- Senhas do ATF: chegam aqui já cifradas pelo portal com a chave pública do robô
 -- (coluna senha_cifrada, formato "v1:..."). Só o robô, no seu PC, tem a chave que abre.
+--
+-- Papéis:
+--   admin   -> responsável pela plataforma (você): vê e gerencia todas as organizações
+--   gestor  -> responsável pelo escritório cliente
+--   usuario -> usa o portal do escritório
 -- =====================================================================================
 
 create extension if not exists pgcrypto;
 
--- ------------------------------------------------------------------------- login e clientes
--- (mesma estrutura do portal de CND; se ele já roda neste projeto, nada muda)
+-- ------------------------------------------------------------------------- clientes e login
 create table if not exists public.organizacoes (
-  id             uuid primary key default gen_random_uuid(),
-  nome           text not null,
-  documento      text not null default '',
-  plano          text not null default 'piloto',
-  limite_mensal  integer check (limite_mensal is null or limite_mensal >= 0),
-  assinatura_ate date,
-  ativo          boolean not null default true,
-  observacoes    text not null default '',
-  criado_em      timestamptz not null default now()
+  id         uuid primary key default gen_random_uuid(),
+  nome       text not null,
+  documento  text not null default '',
+  ativo      boolean not null default true,
+  criado_em  timestamptz not null default now()
 );
 
 create table if not exists public.perfis (
@@ -54,51 +51,66 @@ language sql stable security definer set search_path = public as $$
   select coalesce(public.meu_papel() = 'admin', false)
 $$;
 
--- ------------------------------------------------------------------------- tabelas do XML
--- Empresas de cada cliente, com o acesso ao ATF (senha sempre cifrada)
-create table if not exists public.xml_empresas (
+-- ------------------------------------------------------------------------- XML
+-- Acessos do contador ao ATF (colunas LOGIN e SENHA da planilha). Um login serve várias empresas.
+create table if not exists public.xml_acessos (
   id             uuid primary key default gen_random_uuid(),
   org_id         uuid not null references public.organizacoes(id) on delete cascade,
-  cnpj           text not null check (cnpj ~ '^[0-9]{14}$'),
-  apelido        text not null check (length(apelido) between 1 and 60),
-  login_atf      text not null default '',                 -- vazio = o próprio CNPJ
+  login          text not null check (length(login) between 1 and 60),
   senha_cifrada  text not null check (senha_cifrada like 'v1:%'),
   criado_em      timestamptz not null default now(),
   atualizado_em  timestamptz not null default now(),
-  unique (org_id, cnpj)
+  unique (org_id, login)
 );
 
--- Cada planilha enviada na área de agendamento
+-- Empresas (uma por inscrição estadual), com os XML marcados na planilha
+create table if not exists public.xml_empresas (
+  id             uuid primary key default gen_random_uuid(),
+  org_id         uuid not null references public.organizacoes(id) on delete cascade,
+  ie             text not null check (ie ~ '^[0-9]{9}$'),
+  cnpj           text not null default '' check (cnpj ~ '^([0-9]{11}|[0-9]{14})?$'),
+  codigo         text not null default '',                  -- coluna ID da planilha
+  filial         text not null default '',                  -- coluna ID_FILIAL
+  nome           text not null check (length(nome) between 1 and 60),
+  acesso_id      uuid references public.xml_acessos(id) on delete set null,
+  tipos          text[] not null default '{}',
+  criado_em      timestamptz not null default now(),
+  atualizado_em  timestamptz not null default now(),
+  unique (org_id, ie),
+  check (tipos <@ array['nfe_saida', 'nfe_entrada', 'nfce'])
+);
+
+-- Cada planilha enviada na área de agendamento (uma competência: do 1º ao último dia do mês)
 create table if not exists public.xml_agendamentos (
   id            uuid primary key default gen_random_uuid(),
   org_id        uuid not null references public.organizacoes(id) on delete cascade,
   criado_por    uuid references auth.users(id) on delete set null,
   nome_arquivo  text not null default '',
-  data_inicio   date not null,
-  data_fim      date not null,
-  tipos         text[] not null,
-  executar_em   timestamptz not null default now(),       -- quando o robô pode começar
+  competencia   date not null check (extract(day from competencia) = 1),
+  data_inicio   date generated always as (competencia) stored,
+  data_fim      date generated always as ((competencia + interval '1 month' - interval '1 day')::date) stored,
+  executar_em   timestamptz not null default now(),          -- quando o robô pode começar
   total         integer not null default 0,
-  criado_em     timestamptz not null default now(),
-  check (data_fim >= data_inicio),
-  check (tipos <@ array['nfe_emitidas', 'nfe_recebidas', 'nfce_emitidas'] and cardinality(tipos) > 0)
+  criado_em     timestamptz not null default now()
 );
 
--- Uma tarefa por empresa do agendamento (o robô faz todos os tipos numa sessão do ATF)
+-- Uma tarefa por empresa do agendamento (o robô faz todos os XML marcados numa sessão do ATF)
 create table if not exists public.xml_tarefas (
   id              uuid primary key default gen_random_uuid(),
   org_id          uuid not null references public.organizacoes(id) on delete cascade,
   agendamento_id  uuid not null references public.xml_agendamentos(id) on delete cascade,
   empresa_id      uuid references public.xml_empresas(id) on delete set null,
-  cnpj            text not null check (cnpj ~ '^[0-9]{14}$'),
-  apelido         text not null default '',
+  ie              text not null,
+  nome            text not null default '',
+  codigo          text not null default '',
+  tipos           text[] not null,                            -- o que estava marcado ao agendar
   status          text not null default 'pendente' check (status in (
                     'pendente', 'processando', 'concluido', 'sem_notas', 'senha_invalida',
                     'erro', 'fora_do_ar', 'cancelado')),
   mensagem        text not null default '',
   qtd_xml         integer not null default 0,
-  detalhes        jsonb not null default '{}'::jsonb,       -- por tipo: salvos, repetidos, conferir
-  pasta           text not null default '',                  -- nome da pasta no PC do robô
+  detalhes        jsonb not null default '{}'::jsonb,          -- por tipo: salvos, repetidos, conferir
+  pasta           text not null default '',                    -- nome da pasta no PC do robô
   robo            text,
   criado_em       timestamptz not null default now(),
   iniciado_em     timestamptz,
@@ -117,11 +129,13 @@ create table if not exists public.xml_robos (
 );
 
 -- ------------------------------------------------------------------------- fila do robô
--- Pega a próxima tarefa liberada (executar_em já chegou), com o acesso ao ATF da empresa.
+-- Próxima tarefa liberada (executar_em já chegou), com o login e a senha cifrada do contador.
+-- Prefere o login que o robô já está usando (p_login): aproveita a sessão aberta no ATF.
 -- Vários robôs podem rodar juntos: "for update skip locked" evita que dois peguem a mesma.
 drop function if exists public.xml_pegar_tarefa(text);
-create or replace function public.xml_pegar_tarefa(p_robo text)
-returns table (id uuid, org_id uuid, cnpj text, apelido text, tipos text[], data_inicio date, data_fim date,
+drop function if exists public.xml_pegar_tarefa(text, text);
+create or replace function public.xml_pegar_tarefa(p_robo text, p_login text default '')
+returns table (id uuid, ie text, cnpj text, nome text, codigo text, tipos text[], data_inicio date, data_fim date,
                login_atf text, senha_cifrada text)
 language plpgsql security definer set search_path = public as $$
 #variable_conflict use_column
@@ -135,26 +149,30 @@ begin
   select t.id into t_id
     from public.xml_tarefas t
     join public.xml_agendamentos a on a.id = t.agendamento_id
+    left join public.xml_empresas e on e.id = t.empresa_id
+    left join public.xml_acessos c on c.id = e.acesso_id
    where t.status = 'pendente' and a.executar_em <= now()
-   order by a.executar_em, t.criado_em
+   order by (c.login is not distinct from nullif(p_login, '')) desc, a.executar_em, c.login, t.criado_em
    limit 1
    for update of t skip locked;
   if t_id is null then return; end if;
 
   update public.xml_tarefas set status = 'processando', iniciado_em = now(), robo = p_robo where xml_tarefas.id = t_id;
 
-  -- empresa apagada depois do agendamento: encerra a tarefa com aviso
-  if not exists (select 1 from public.xml_tarefas t join public.xml_empresas e on e.id = t.empresa_id where t.id = t_id) then
+  -- empresa ou acesso apagado depois do agendamento: encerra a tarefa com aviso
+  if not exists (select 1 from public.xml_tarefas t join public.xml_empresas e on e.id = t.empresa_id
+                   join public.xml_acessos c on c.id = e.acesso_id where t.id = t_id) then
     update public.xml_tarefas set status = 'erro', concluido_em = now(),
-           mensagem = 'Empresa removida do cadastro; envie a planilha de novo.' where xml_tarefas.id = t_id;
+           mensagem = 'Empresa ou login do ATF removido do cadastro; envie a planilha de novo.' where xml_tarefas.id = t_id;
     return;
   end if;
 
   return query
-  select t.id, t.org_id, t.cnpj, t.apelido, a.tipos, a.data_inicio, a.data_fim, e.login_atf, e.senha_cifrada
+  select t.id, t.ie, e.cnpj, t.nome, t.codigo, t.tipos, a.data_inicio, a.data_fim, c.login, c.senha_cifrada
     from public.xml_tarefas t
     join public.xml_agendamentos a on a.id = t.agendamento_id
     join public.xml_empresas e on e.id = t.empresa_id
+    join public.xml_acessos c on c.id = e.acesso_id
    where t.id = t_id;
 end $$;
 
@@ -175,29 +193,31 @@ end $$;
 -- depois de conferir a organização de quem enviou, e pelo robô.
 alter table public.organizacoes     enable row level security;
 alter table public.perfis           enable row level security;
+alter table public.xml_acessos      enable row level security;
 alter table public.xml_empresas     enable row level security;
 alter table public.xml_agendamentos enable row level security;
 alter table public.xml_tarefas      enable row level security;
 alter table public.xml_robos        enable row level security;
 
-do $$ begin
-  -- regras de leitura de organizacoes/perfis só se ainda não houver (o portal de CND já cria as dele)
-  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'organizacoes') then
-    create policy org_ler on public.organizacoes for select to authenticated
-      using (public.sou_admin() or id = public.minha_org());
-  end if;
-  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'perfis') then
-    create policy perfis_ler on public.perfis for select to authenticated
-      using (public.sou_admin() or id = auth.uid());
-  end if;
-end $$;
+drop policy if exists org_ler on public.organizacoes;
+create policy org_ler on public.organizacoes for select to authenticated
+  using (public.sou_admin() or id = public.minha_org());
+
+drop policy if exists perfis_ler on public.perfis;
+create policy perfis_ler on public.perfis for select to authenticated
+  using (public.sou_admin() or id = auth.uid()
+         or (org_id = public.minha_org() and public.meu_papel() = 'gestor'));
+
+drop policy if exists xml_acessos_ler on public.xml_acessos;
+create policy xml_acessos_ler on public.xml_acessos for select to authenticated
+  using (public.sou_admin() or org_id = public.minha_org());
+-- a senha cifrada não sai para o navegador: só as colunas abaixo podem ser lidas pelo usuário
+revoke select on public.xml_acessos from anon, authenticated;
+grant select (id, org_id, login, criado_em, atualizado_em) on public.xml_acessos to authenticated;
 
 drop policy if exists xml_empresas_ler on public.xml_empresas;
 create policy xml_empresas_ler on public.xml_empresas for select to authenticated
   using (public.sou_admin() or org_id = public.minha_org());
--- a senha cifrada não sai para o navegador: só as colunas abaixo podem ser lidas pelo usuário
-revoke select on public.xml_empresas from anon, authenticated;
-grant select (id, org_id, cnpj, apelido, login_atf, criado_em, atualizado_em) on public.xml_empresas to authenticated;
 
 drop policy if exists xml_agendamentos_ler on public.xml_agendamentos;
 create policy xml_agendamentos_ler on public.xml_agendamentos for select to authenticated
@@ -211,8 +231,8 @@ drop policy if exists xml_robos_ler on public.xml_robos;
 create policy xml_robos_ler on public.xml_robos for select to authenticated using (true);
 
 -- funções: quem pode chamar
-revoke all on function public.xml_pegar_tarefa(text) from public, anon, authenticated;
-grant execute on function public.xml_pegar_tarefa(text) to service_role;
+revoke all on function public.xml_pegar_tarefa(text, text) from public, anon, authenticated;
+grant execute on function public.xml_pegar_tarefa(text, text) to service_role;
 revoke all on function public.xml_cancelar_agendamento(uuid) from public, anon;
 grant execute on function public.xml_cancelar_agendamento(uuid) to authenticated;
 

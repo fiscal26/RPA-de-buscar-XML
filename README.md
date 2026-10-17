@@ -1,50 +1,77 @@
 # LotiVisse XML — robô de XML da SEFAZ-PB (piloto)
 
-Robô que entra no **ATF da SEFAZ-PB** de cada empresa, baixa os XML de NF-e/NFC-e do período
-pedido e salva numa pasta do seu computador, organizados assim:
+Robô que entra no **ATF da SEFAZ-PB com o login do contador**, pesquisa as notas de cada empresa
+pela **inscrição estadual** e salva os XML da competência numa pasta do seu computador:
 
 ```
 <pasta destino>/
-  Padaria Centro - 11.222.333-0001-81/
+  015 - Padaria Centro/            (ID - NOME FANTASIA; sem ID: "Nome - IE 16.012.345-3")
     2026-09/
-      NF-e Emitidas/   <chave>.xml ...
-      NF-e Recebidas/  <chave>.xml ...
+      NF-e Saida/      <chave>.xml ...     empresa como emitente
+      NF-e Entrada/    <chave>.xml ...     empresa como destinatária
+      NFC-e/           <chave>.xml ...
         Eventos/       cancelamentos, cartas de correção
-    _conferir/         XML que veio com CNPJ de outra empresa (nunca vai para a pasta errada)
+    _conferir/         XML que veio de outra empresa (nunca vai para a pasta errada)
 ```
 
-O robô é ativado pelo **portal web** (mesmo desenho do portal de CND): o cliente envia a planilha
-modelo na área de agendamento, escolhe período, tipos e horário, e o robô no seu PC executa.
+O robô é ativado pelo **portal web**: o cliente envia a planilha modelo na área de agendamento,
+escolhe a competência e o horário, e o robô no seu PC executa.
 
 | Peça | Onde roda | Pasta |
 |---|---|---|
-| Portal LotiVisse XML (login, agendamento, acompanhamento) | Vercel + Supabase, em `xml.lotivisse.com.br` | `web/` |
+| Portal LotiVisse XML (login, agendamento, acompanhamento) | Vercel + Supabase próprio, em `xml.lotivisse.com.br` | `web/` |
 | Robô (ATF, download, organização das pastas) | Seu PC, com o Chrome | `robo/` |
-| Planilha modelo | Portal e robô | `modelos/modelo_empresas_xml.xlsx` |
+| Planilha modelo | Portal e robô | `modelos/modelo_empresas_sefaz_pb.xlsx` |
 
 Passo a passo de implantação: **[web/IMPLANTACAO.md](web/IMPLANTACAO.md)**.
 
 ## Planilha modelo
 
-Aba **Empresas**, uma linha por empresa, a partir da linha 2:
+As colunas são achadas pelo nome do cabeçalho. O robô de XML usa:
 
-| Coluna | Conteúdo |
+| Coluna | Uso |
 |---|---|
-| A — CNPJ | com ou sem pontuação; o dígito verificador é conferido |
-| B — Apelido | nome curto; vira o nome da pasta |
-| C — Senha ATF | obrigatória na primeira vez; depois pode ficar em branco (usa a já cadastrada) |
-| D — Login ATF (opcional) | só se o login do ATF não for o próprio CNPJ |
+| ATIVA | em branco ou S = ativa; N = ignorada |
+| ID, ID_FILIAL | códigos do escritório; o ID entra no nome da pasta |
+| CNPJ | opcional; ajuda a conferir os XML |
+| INSCRICAO ESTADUAL | **obrigatória**: é por ela que o ATF pesquisa (dígito verificador da PB conferido) |
+| NOME FANTASIA | nome da pasta |
+| LOGIN, SENHA | acesso do contador ao ATF. A senha só precisa vir uma vez por login |
+| NF-e Saida, NF-e Entrada, NFC-e | **S** (ou X, SIM) = baixar esse XML |
+
+CT-e, Download Faturas, Extrato de Pagamentos, Omissão e Inadimplência, Certidão de Débitos,
+Conferência Cartão de Crédito e Dossiê MEI ficam para outros serviços: este robô não usa essas colunas.
+
+## Roteiro no ATF
+
+1. Login com LOGIN e SENHA do contador. **Um login, uma sessão:** todas as empresas daquele login
+   são feitas em sequência, sem sair e entrar de novo. Se a sessão expirar (15 min), o robô entra de novo.
+2. **NF-e Saída / Entrada:** menu *NF-e* > *Consulta NF-e por Emitentes/Destinatários* (FIS_1322).
+   *Data de Emissão* do 1º ao último dia da competência; inscrição estadual no bloco **Emitente** (saída)
+   ou **Destinatário** (entrada), com *Tipo de Identificação* = Inscrição Estadual; *Pesquisar*.
+3. **NFC-e:** menu *NFC-e* > *Consulta por Emitente* (FIS_1484). *Data Emissão Inicial/Final* e a
+   inscrição no bloco **Emitente**; *Pesquisar*.
+4. Na lista de notas: marca todas e baixa o XML/ZIP. Se o menu não responder, abre a tela pelo campo
+   *Função* do topo (FIS_1322 / FIS_1484).
+5. Abre ZIP, confere cada XML pela IE/CNPJ (emitente na saída e NFC-e, destinatário na entrada) e salva
+   sem duplicar: rodar de novo a mesma competência não repete arquivos.
+
+**Proteção do login do contador:** se o ATF recusar um login, o robô não tenta de novo com a mesma
+senha nas outras empresas (tentativas repetidas podem bloquear o acesso). Elas ficam como
+"Login recusado" até a senha ser atualizada.
+
+Se alguma etapa não for reconhecida, o robô salva um pacote de diagnóstico e passa ao **modo
+assistido**: você conclui no Chrome e ele captura o arquivo baixado.
 
 ## Segurança das senhas do ATF
 
 - O portal **cifra a senha assim que lê a planilha**, com a chave pública do robô (RSA-OAEP 3072).
-- No banco fica só a versão cifrada. O navegador do cliente nem consegue ler essa coluna.
-- **Só o robô, no seu PC, tem a chave privada** (`robo/chaves/robo_privada.pem`, fora do Git) e abre
-  a senha na hora do login. A senha não vai para logs nem para o pacote de diagnóstico.
-- Entre uma empresa e outra o robô sai do ATF e apaga os cookies da SEFAZ-PB, para uma empresa nunca
-  herdar a sessão da outra.
+- No banco fica só a versão cifrada, uma por login. O navegador nem consegue ler essa coluna.
+- **Só o robô, no seu PC, tem a chave privada** (`robo/chaves/robo_privada.pem`, fora do Git).
+  A senha não vai para logs nem para o diagnóstico.
+- Ao trocar de login, o robô sai do ATF e apaga os cookies da SEFAZ-PB.
 
-Faça uma cópia de segurança da chave privada: sem ela, as senhas cadastradas precisam ser enviadas de novo.
+Faça uma cópia de segurança da chave privada: sem ela, as senhas precisam ser enviadas de novo.
 
 ## Robô: instalação e uso
 
@@ -57,44 +84,27 @@ abrir_chrome.bat                         # Chrome com a porta 9222 e perfil pró
 iniciar_robo.bat                         # liga o robô do portal (deixe a janela aberta)
 ```
 
-Não é preciso `playwright install`: o robô usa o **seu** Google Chrome.
-
-**Teste sem o portal** (direto da planilha, bom para a calibração):
+**Teste sem o portal**, direto da planilha (bom para a calibração):
 
 ```bash
-python robo_xml.py --local empresas.xlsx --inicio 01/09/2026 --fim 30/09/2026 --tipos nfe_emitidas,nfe_recebidas
+python robo_xml.py --local empresas.xlsx --competencia 09/2026
 ```
 
-Gera também um relatório em `<destino>/_relatorios/`.
-
-### Como o robô trabalha no ATF
-
-1. **Automático:** abre o ATF, acha login e senha (inclusive dentro de quadros), digita tecla por
-   tecla e entra. Se a tela de download estiver configurada (`atf.url_download` no `config.json`),
-   preenche o período, marca o tipo e clica em consultar/baixar.
-2. **Assistido:** se uma etapa não for reconhecida (tela diferente, captcha, função ainda não
-   configurada), o robô avisa e espera você concluir no Chrome. Ele captura sozinho o XML/ZIP baixado,
-   seja como download, resposta do site ou arquivo novo na pasta Downloads.
-3. Abre ZIP (inclusive ZIP dentro de ZIP), lê cada XML, confere o CNPJ (emitente nas emitidas,
-   destinatário nas recebidas) e salva sem duplicar: rodar de novo o mesmo período não repete arquivos.
-
-Situações que aparecem no portal: **XML salvos**, **Sem notas**, **Login recusado** (senha/login do ATF),
-**ATF fora do ar**, **Erro** e **Cancelado**.
+Gera um relatório em `<destino>/_relatorios/`.
 
 ### Diagnóstico
 
 Quando uma etapa não é reconhecida, o robô salva em `<destino>/_diagnostico/` uma pasta com
-`tela.png`, `campos.txt` (campos, botões e links de cada quadro, **sem valores digitados**),
-`texto.txt` e `log.txt`. É com esse pacote que calibramos os seletores do ATF.
+`tela.png`, `campos.txt` (campos, botões, opções e links, **sem valores digitados**), `texto.txt`
+e `log.txt`. É com esse pacote que ajustamos o roteiro.
 
 ## Situação do piloto
 
-- [x] Portal: login, agendamento com planilha, período, tipos e data/hora; acompanhamento por empresa; cancelamento; cadastro de empresas
-- [x] Banco: fila com agendamento futuro, vários robôs, tarefa presa volta à fila, regras de acesso por cliente
-- [x] Robô: login no ATF, captura de downloads, modo assistido, organização e conferência dos XML, relatório
-- [ ] **Calibrar no ATF real**: endereços das telas de download por tipo e seletores (o site da SEFAZ-PB
-      não abre a partir do ambiente de desenvolvimento; a calibração é feita no seu PC com o diagnóstico)
-- [ ] Definir se o login do ATF é o CNPJ ou outro identificador (coluna D já existe)
+- [x] Planilha modelo do escritório, lida igual no portal e no robô
+- [x] Portal: login, agendamento por competência e horário, acompanhamento, cancelamento, empresas e logins
+- [x] Banco próprio: fila com agendamento futuro, agrupamento por login, regras de acesso por cliente
+- [x] Robô: login do contador, telas FIS_1322 e FIS_1484, blocos Emitente/Destinatário, captura do download, modo assistido
+- [ ] **Validar no ATF real**: tela de login e o que aparece depois do *Pesquisar* (lista de notas e botão de download)
 
 ## Testes
 
@@ -102,5 +112,6 @@ Quando uma etapa não é reconhecida, o robô salva em `<destino>/_diagnostico/`
 cd robo && python -m pytest -q tests
 ```
 
-Inclui um **ATF simulado** (login dentro de quadro, tela de período, ZIP e "nenhuma nota") num Chrome de
-verdade, e a prova de que a senha cifrada pelo portal (Node) é aberta pelo robô (Python).
+Inclui um **ATF simulado** com o menu, as telas FIS_1322/FIS_1484 e os blocos Emitente/Destinatário,
+num Chrome de verdade: prova que duas empresas do mesmo login usam uma sessão só e que uma senha
+recusada não é tentada de novo.
