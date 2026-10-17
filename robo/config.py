@@ -44,6 +44,14 @@ PADRAO = {
                 "titulo": "Consulta Genérica da NFC-e",
                 "rotulos_data": ["Data Emissão Inicial", "Data Emissão Final"],
             },
+            # onde o ATF entrega os XML (sino do topo)
+            "mensagens": {
+                "funcao": "SEG_064",
+                "titulo": "Minhas Mensagens",
+                "botao": ['[title*="Mensage" i]', '[aria-label*="Mensage" i]', '[title*="Notifica" i]',
+                          '[aria-label*="Notifica" i]', 'button:has(.bi-bell)', 'a:has(.bi-bell)',
+                          'button:has(.fa-bell)', 'a:has(.fa-bell)'],
+            },
         },
         # Seletores CSS fixos da tela de login, caso a detecção automática não acerte. Vazio = automático.
         "seletores": {
@@ -53,7 +61,13 @@ PADRAO = {
         },
         "tentar_automatico": True,
         "segundos_login": 60,
-        "segundos_automatico": 90,
+        # Depois de clicar em Consultar: quanto esperar a resposta na tela (sem resposta = segue)
+        "segundos_resposta": 15,
+        # Quanto esperar o ATF entregar os XML em Minhas Mensagens, e de quanto em quanto olhar
+        "minutos_espera_mensagens": 30,
+        "segundos_entre_verificacoes": 30,
+        # Empresas por rodada (um login): envia todas as consultas e depois recolhe as mensagens
+        "empresas_por_rodada": 15,
         # Tempo que o modo assistido espera você concluir no Chrome.
         "segundos_assistido": 300,
         # O ATF encerra a sessão com 15 min sem uso: depois disso o robô entra de novo.

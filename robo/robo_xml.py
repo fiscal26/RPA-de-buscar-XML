@@ -5,8 +5,11 @@ portal, entra no ATF com o login do contador, pesquisa as notas de cada empresa 
 estadual e salva os XML em pastas.destino:
     <destino>/<ID> - <Nome fantasia>/<AAAA-MM>/<NF-e Saida | NF-e Entrada | NFC-e>/
 
-Empresas do mesmo login usam a mesma sessão do ATF. Se o ATF recusar um login, o robô não tenta
-de novo com a mesma senha (evita bloquear o acesso do contador por tentativas repetidas).
+O ATF não entrega o XML na hora: a consulta (Tipo de Exibição XML) gera uma mensagem com o anexo em
+"Minhas Mensagens". Por isso o robô trabalha em rodadas de um login: envia as consultas de todas as
+empresas, recolhe as mensagens e distribui cada XML pela IE de dentro dele.
+Se o ATF recusar um login, o robô não tenta de novo com a mesma senha (evita bloquear o acesso do
+contador por tentativas repetidas).
 
 Uso:
     python robo_xml.py                     liga o robô do portal (deixe a janela aberta)
@@ -21,6 +24,7 @@ import argparse
 import calendar
 import hashlib
 import logging
+import re
 import signal
 import socket
 import sys
@@ -35,10 +39,11 @@ import arquivos
 import config
 import cripto
 import planilha
-from atf_pb import AtfPB, Diagnostico, EtapaNaoConcluida, SenhaInvalida, SessaoExpirada, SiteForaDoAr
+from atf_pb import (_SEM_NOTAS as SEM_NOTAS, TIPO_TELA, AtfPB, Diagnostico, EtapaNaoConcluida, Recolha,
+                    SenhaInvalida, SessaoExpirada, SiteForaDoAr)
 from navegador import Chrome, ChromeIndisponivel
 
-VERSAO = "0.2-piloto"
+VERSAO = "0.3-piloto"
 FALHA_NO_RETORNO = "O ATF não devolveu os XML. Tente agendar novamente mais tarde."
 
 log = logging.getLogger("robo")
@@ -72,7 +77,11 @@ class Trabalho:
 
 
 class Executor:
-    """Mantém o Chrome e a sessão do ATF abertos entre as empresas do mesmo login."""
+    """Mantém o Chrome e a sessão do ATF abertos e processa rodadas: um login, várias empresas.
+
+    1. envia todas as consultas da rodada (cada empresa × cada XML marcado; Tipo de Exibição XML);
+    2. acompanha Minhas Mensagens até o ATF entregar as respostas e baixa os anexos;
+    3. distribui cada XML pela IE/CNPJ de dentro dele e salva nas pastas das empresas."""
 
     def __init__(self, cfg: dict, segundos_assistido: int | None = None):
         self.cfg = cfg
@@ -92,76 +101,149 @@ class Executor:
         self.fechar()
         self.chrome = Chrome(self.cfg["chrome"]["porta"], self.cfg["chrome"]["fechar_abas"])
         contexto = self.chrome.abrir()  # ChromeIndisponivel sobe para quem chamou
-        self.atf = AtfPB(contexto, self.cfg, lambda m: self._aviso(m), diag, self.segundos_assistido)
+        self.atf = AtfPB(contexto, self.cfg, self._aviso, diag, self.segundos_assistido)
 
     def _aviso(self, msg: str):
         log.info("   %s", msg)
         if self.atf:
             self.atf.diag.log(msg)
 
-    def executar(self, t: Trabalho) -> Resultado:
-        if self._impressao(t.login, t.senha) in self.recusados:
-            return Resultado("senha_invalida", f"O ATF já recusou o login {t.login} nesta rodada; não tentei de novo "
-                                               "para não bloquear o acesso. Atualize a senha e agende de novo.")
-        diag = Diagnostico(self.cfg["pastas"]["diagnostico"], t.ie)
+    def executar_rodada(self, trabalhos: list[Trabalho]) -> list[Resultado]:
+        """Todos os trabalhos com o MESMO login. Devolve um resultado por trabalho, na mesma ordem."""
+        if not trabalhos:
+            return []
+        login, senha = trabalhos[0].login, trabalhos[0].senha
+        if self._impressao(login, senha) in self.recusados:
+            return [Resultado("senha_invalida", f"O ATF já recusou o login {login} nesta rodada; não tentei de novo "
+                                                "para não bloquear o acesso. Atualize a senha e agende de novo.")] * len(trabalhos)
+        diag = Diagnostico(self.cfg["pastas"]["diagnostico"], login)
         try:
             self._garantir_chrome(diag)
-            return self._executar(t)
+            return self._rodada(trabalhos)
         except SenhaInvalida as e:
-            self.recusados.add(self._impressao(t.login, t.senha))
-            return Resultado("senha_invalida", f"Login {t.login} recusado pelo ATF: {e}")
+            self.recusados.add(self._impressao(login, senha))
+            return [Resultado("senha_invalida", f"Login {login} recusado pelo ATF: {e}")] * len(trabalhos)
         except SiteForaDoAr as e:
-            return Resultado("fora_do_ar", f"ATF fora do ar: {e} Agende de novo mais tarde.")
+            return [Resultado("fora_do_ar", f"ATF fora do ar: {e} Agende de novo mais tarde.")] * len(trabalhos)
         except EtapaNaoConcluida as e:
             log.info("   motivo: %s", e)
-            return Resultado("erro", FALHA_NO_RETORNO)
+            return [Resultado("erro", FALHA_NO_RETORNO)] * len(trabalhos)
         except ChromeIndisponivel:
             raise
         except Exception:
             log.exception("   falha inesperada")
             self.fechar()  # conexão com o Chrome pode ter caído: recomeça na próxima
-            return Resultado("erro", FALHA_NO_RETORNO)
+            return [Resultado("erro", FALHA_NO_RETORNO)] * len(trabalhos)
 
-    def _executar(self, t: Trabalho) -> Resultado:
+    def _entrar(self, t: Trabalho):
+        if not self.atf.sessao_valida(t.login):
+            self.atf.entrar(t.login, t.senha)
+
+    def _rodada(self, trabalhos: list[Trabalho]) -> list[Resultado]:
         atf = self.atf
+        t0 = trabalhos[0]
+        self._entrar(t0)
+        desde = atf.hora_servidor() or datetime.now()
+
+        # 1) envia as consultas (uma por empresa e tipo; Emitente OU Destinatário)
+        envios: dict[tuple[str, str], object] = {}
+        for t in trabalhos:
+            log.info("%s — %s", t.rotulo, ", ".join(arquivos.TIPOS.get(x, x) for x in t.tipos))
+            for tipo in t.tipos:
+                for tentativa in (1, 2):
+                    try:
+                        envios[(t.ie, tipo)] = atf.solicitar(tipo, t.ie, t.inicio, t.fim, arquivos.TIPOS.get(tipo, tipo))
+                        break
+                    except SessaoExpirada:
+                        log.info("   sessão do ATF expirou; entrando de novo")
+                        atf.login_atual = ""
+                        self._entrar(t0)
+                        if tentativa == 2:
+                            raise EtapaNaoConcluida("a sessão do ATF expirou duas vezes")
+
+        # 2) recolhe as respostas em Minhas Mensagens
+        esperadas: dict[str, int] = {}
+        for (ie, tipo), envio in envios.items():
+            if envio.ok and not envio.sem_notas:
+                codigo = atf.atf["telas"][TIPO_TELA[tipo][0]]["funcao"]
+                esperadas[codigo] = esperadas.get(codigo, 0) + 1
+        alvos = [arquivos.Alvo(t.ie, t.cnpj, t.tipos) for t in trabalhos]
+        ies = {t.ie for t in trabalhos}
+
+        def relevante(anexos: list, texto: str) -> bool:
+            xmls = [x for nome, dados in anexos for x in arquivos.extrair(dados, nome)]
+            if xmls:
+                return bool(arquivos.distribuir(xmls, alvos)[0])
+            # sem anexo ("nenhum registro"): só não conta se citar a IE de outra empresa
+            citadas = {planilha.so_digitos(m) for m in re.findall(r"\b\d{2}\.?\d{3}\.?\d{3}-?\d\b", texto)}
+            citadas = {c for c in citadas if planilha.ie_pb_valida(c)}
+            return not citadas or bool(citadas & ies)
+
+        recolha = Recolha()
+        if esperadas:
+            for tentativa in (1, 2):
+                try:
+                    recolha = atf.recolher(esperadas, desde, self.cfg["atf"]["minutos_espera_mensagens"], relevante)
+                    break
+                except SessaoExpirada:
+                    atf.login_atual = ""
+                    self._entrar(t0)
+                    if tentativa == 2:
+                        raise EtapaNaoConcluida("a sessão do ATF expirou duas vezes")
+
+        # 3) distribui os XML pelo conteúdo e salva
+        xmls = [x for nome, dados in recolha.arquivos for x in arquivos.extrair(dados, nome)]
+        por_destino, sobras = arquivos.distribuir(xmls, alvos)
+        if sobras:
+            n = arquivos.salvar_sobras(sobras, self.cfg["pastas"]["destino"])
+            log.info("   %d XML de empresas fora desta rodada salvos em _sem_empresa", n)
+        completas = not recolha.tempo_esgotado
+        return [self._resultado(t, envios, por_destino, recolha, completas) for t in trabalhos]
+
+    def _resultado(self, t: Trabalho, envios, por_destino, recolha: Recolha, completas: bool) -> Resultado:
         total = arquivos.Resumo()
         detalhes: dict = {}
-        assistido = False
-        for tentativa in (1, 2):
-            try:
-                if not atf.sessao_valida(t.login):
-                    atf.entrar(t.login, t.senha)
-                for tipo in t.tipos:
-                    if tipo in detalhes:
-                        continue  # já feito antes da sessão expirar
-                    nome = arquivos.TIPOS.get(tipo, tipo)
-                    d = atf.baixar(tipo, t.ie, t.inicio, t.fim, nome)
-                    assistido |= d.assistido
-                    xmls = [x for nome_arq, dados in d.arquivos for x in arquivos.extrair(dados, nome_arq)]
-                    r = arquivos.salvar(xmls, self.cfg["pastas"]["destino"], t.nome, t.ie, t.cnpj, tipo, t.codigo)
-                    total.somar(r)
-                    detalhes[tipo] = {"salvos": r.salvos, "repetidos": r.repetidos, "conferir": r.conferir,
-                                      "sem_notas": d.sem_notas and not xmls}
-                    log.info("   %s: %d novo(s), %d repetido(s), %d para conferir", nome, r.salvos, r.repetidos, r.conferir)
-                break
-            except SessaoExpirada:
-                log.info("   sessão do ATF expirou; entrando de novo")
-                atf.login_atual = ""
-                if tentativa == 2:
-                    raise EtapaNaoConcluida("a sessão do ATF expirou duas vezes")
+        sem_notas, faltando, falhas = [], [], []
+        ie_formatada = planilha.formatar_ie(t.ie)
+        for tipo in t.tipos:
+            nome = arquivos.TIPOS.get(tipo, tipo)
+            envio = envios.get((t.ie, tipo))
+            r = arquivos.salvar(por_destino.get((t.ie, tipo), []), self.cfg["pastas"]["destino"], t.nome, t.ie, t.cnpj,
+                                tipo, t.codigo)
+            total.somar(r)
+            vazio = r.total == 0 and r.conferir == 0
+            citada = any(t.ie in texto or ie_formatada in texto for _, texto in recolha.textos)
+            sem = vazio and (envio.sem_notas or completas or (citada and any(
+                SEM_NOTAS.search(texto) for _, texto in recolha.textos if t.ie in texto or ie_formatada in texto)))
+            detalhes[tipo] = {"salvos": r.salvos, "repetidos": r.repetidos, "conferir": r.conferir, "sem_notas": bool(sem)}
+            if not envio.ok:
+                falhas.append(f"{nome}: {envio.resposta or 'consulta não aceita'}")
+            elif vazio and sem:
+                sem_notas.append(nome)
+            elif vazio:
+                faltando.append(nome)
+            log.info("   %s %s: %d novo(s), %d repetido(s)%s", t.nome, nome, r.salvos, r.repetidos,
+                     " — sem notas" if vazio and sem else "")
 
         pasta = arquivos.pasta_empresa(self.cfg["pastas"]["destino"], t.nome, t.ie, t.codigo).name
-        if total.total == 0 and total.conferir == 0:
-            if all(d.get("sem_notas") for d in detalhes.values()):
-                return Resultado("sem_notas", "Nenhuma nota na competência.", 0, detalhes, pasta)
-            return Resultado("erro", FALHA_NO_RETORNO, 0, detalhes, pasta)
-        partes = [f"{arquivos.TIPOS.get(k, k)}: {d['salvos'] + d['repetidos']}" for k, d in detalhes.items()]
-        msg = "XML salvos. " + "; ".join(partes) + "."
+        partes = [f"{arquivos.TIPOS.get(k, k)}: {d['salvos'] + d['repetidos']}" for k, d in detalhes.items()
+                  if d["salvos"] + d["repetidos"]]
+        if sem_notas:
+            partes.append("sem notas em " + ", ".join(sem_notas))
+        if faltando:
+            partes.append(f"o ATF não entregou {', '.join(faltando)} em {self.cfg['atf']['minutos_espera_mensagens']} min")
+        if falhas:
+            partes.append("; ".join(falhas))
+        msg = "; ".join(partes) + "."
         if total.conferir:
             msg += f" {total.conferir} XML de outra empresa separado(s) em _conferir."
-        if assistido:
-            msg += " (concluído no modo assistido)"
-        return Resultado("concluido", msg, total.total, detalhes, pasta)
+        if total.total:
+            status = "concluido"
+        elif faltando or falhas:
+            status = "erro"
+        else:
+            status = "sem_notas"
+        return Resultado(status, msg[:1].upper() + msg[1:], total.total, detalhes, pasta)
 
     @property
     def login_aberto(self) -> str:
@@ -181,6 +263,16 @@ class Executor:
             self.chrome.fechar()
         self.atf = None
         self.chrome = None
+
+
+def rodadas(trabalhos: list, tamanho: int, chave=lambda t: t.login):
+    """Agrupa por login, em rodadas de até 'tamanho' empresas."""
+    grupos: dict[str, list] = {}
+    for t in trabalhos:
+        grupos.setdefault(chave(t).lower(), []).append(t)
+    for grupo in grupos.values():
+        for i in range(0, len(grupo), max(1, tamanho)):
+            yield grupo[i:i + tamanho]
 
 
 def competencia(texto: str | None) -> tuple[date, date]:
@@ -213,9 +305,10 @@ class Portal:
             raise RuntimeError(f"{metodo} {caminho} -> {r.status_code}: {r.text[:300]}")
         return r
 
-    def pegar_tarefa(self, robo: str, login_aberto: str):
-        dados = self._r("POST", "/rest/v1/rpc/xml_pegar_tarefa", json={"p_robo": robo, "p_login": login_aberto}).json()
-        return dados[0] if dados else None
+    def pegar_lote(self, robo: str, login_aberto: str, maximo: int) -> list[dict]:
+        """Tarefas liberadas de UM login (de preferência o que já está aberto no ATF)."""
+        return self._r("POST", "/rest/v1/rpc/xml_pegar_lote",
+                       json={"p_robo": robo, "p_login": login_aberto, "p_max": maximo}).json() or []
 
     def atualizar_tarefa(self, tid: str, campos: dict):
         self._r("PATCH", f"/rest/v1/xml_tarefas?id=eq.{tid}", json=campos, headers={"Prefer": "return=minimal"})
@@ -245,7 +338,7 @@ class Robo:
         self.privada = cripto.carregar_privada(cfg["chaves"]["privada"])
         self.nome = p["nome_robo"] or socket.gethostname()
         self.executor = Executor(cfg, p["segundos_assistido"])
-        self.tarefa_atual: dict | None = None
+        self.tarefas_atuais: list[dict] = []
         self.ultimo_sinal = 0.0
         self.chrome_ok = True
         self.parar = False
@@ -256,51 +349,61 @@ class Robo:
         while not self.parar:
             try:
                 self._sinal()
-                tarefa = self.portal.pegar_tarefa(self.nome, self.executor.login_aberto)
+                lote = self.portal.pegar_lote(self.nome, self.executor.login_aberto, self.cfg["atf"]["empresas_por_rodada"])
             except Exception as e:
                 log.warning("Sem contato com o portal: %s", e)
                 time.sleep(30)
                 continue
-            if not tarefa:
+            if not lote:
                 self.executor.encerrar_sessao_ociosa()
                 time.sleep(self.cfg["portal"]["intervalo_segundos"])
                 continue
-            self.tarefa_atual = tarefa
+            self.tarefas_atuais = lote
             try:
-                self.processar(tarefa)
+                self.processar(lote)
             except ChromeIndisponivel as e:
                 self.chrome_ok = False
-                log.error("%s — a tarefa volta para a fila; nova tentativa em 60 s.", e)
-                self.portal.atualizar_tarefa(tarefa["id"], {"status": "pendente", "iniciado_em": None, "robo": None})
+                log.error("%s — as tarefas voltam para a fila; nova tentativa em 60 s.", e)
+                for t in lote:
+                    self.portal.atualizar_tarefa(t["id"], {"status": "pendente", "iniciado_em": None, "robo": None})
                 self._sinal(forcar=True)
                 time.sleep(60)
             except Exception:
-                log.exception("Erro inesperado na tarefa %s", tarefa["id"])
-                self._finalizar(tarefa, Resultado("erro", FALHA_NO_RETORNO))
-            self.tarefa_atual = None
+                log.exception("Erro inesperado no lote de %s", lote[0].get("login_atf"))
+                for t in lote:
+                    self._finalizar(t, Resultado("erro", FALHA_NO_RETORNO))
+            self.tarefas_atuais = []
 
     def _sinal(self, forcar=False):
         if forcar or time.time() - self.ultimo_sinal > 30:
-            self.portal.sinal(self.nome, {"chrome": self.chrome_ok, "tarefa": (self.tarefa_atual or {}).get("id")})
+            self.portal.sinal(self.nome, {"chrome": self.chrome_ok, "tarefas": [t["id"] for t in self.tarefas_atuais]})
             self.ultimo_sinal = time.time()
 
-    def processar(self, t: dict):
-        log.info("Tarefa %s: %s (IE %s) %s a %s — %s", t["id"][:8], t["nome"], planilha.formatar_ie(t["ie"]),
-                 t["data_inicio"], t["data_fim"], ", ".join(t["tipos"]))
+    def processar(self, lote: list[dict]):
+        login = lote[0]["login_atf"]
+        log.info("Rodada do login %s: %d empresa(s)", login, len(lote))
         try:
-            senha = cripto.decifrar(t["senha_cifrada"], self.privada)
+            senha = cripto.decifrar(lote[0]["senha_cifrada"], self.privada)
         except cripto.SenhaIlegivel as e:
-            self._finalizar(t, Resultado("senha_invalida", f"Senha não pôde ser lida: {e}"))
+            for t in lote:
+                self._finalizar(t, Resultado("senha_invalida", f"Senha não pôde ser lida: {e}"))
             return
-        trabalho = Trabalho(ie=t["ie"], nome=t["nome"], login=t["login_atf"], senha=senha, tipos=t["tipos"],
-                            inicio=date.fromisoformat(t["data_inicio"]), fim=date.fromisoformat(t["data_fim"]),
-                            cnpj=t.get("cnpj") or "", codigo=t.get("codigo") or "")
+        trabalhos = [Trabalho(ie=t["ie"], nome=t["nome"], login=login, senha=senha, tipos=t["tipos"],
+                              inicio=date.fromisoformat(t["data_inicio"]), fim=date.fromisoformat(t["data_fim"]),
+                              cnpj=t.get("cnpj") or "", codigo=t.get("codigo") or "") for t in lote]
         del senha
-        r = self.executor.executar(trabalho)
-        trabalho.senha = ""
+        # mesma competência na rodada (o banco pode juntar agendamentos diferentes do mesmo login)
+        resultados = []
+        for grupo in rodadas(trabalhos, len(trabalhos), chave=lambda t: f"{t.inicio}"):
+            resultados.extend(zip(grupo, self.executor.executar_rodada(grupo)))
+        por_ie_periodo = {(t.ie, t.inicio): r for t, r in resultados}
+        for t in trabalhos:
+            t.senha = ""
         self.chrome_ok = True
-        self._finalizar(t, r)
-        log.info("   -> %s: %s", r.status, r.mensagem)
+        for t in lote:
+            r = por_ie_periodo[(t["ie"], date.fromisoformat(t["data_inicio"]))]
+            self._finalizar(t, r)
+            log.info("   %s -> %s: %s", t["nome"], r.status, r.mensagem)
 
     def _finalizar(self, t, r: Resultado):
         self.portal.atualizar_tarefa(t["id"], {
@@ -311,9 +414,9 @@ class Robo:
     def encerrar(self, *_):
         log.info("Encerrando...")
         self.parar = True
-        if self.tarefa_atual:
-            try:  # a tarefa em andamento volta para a fila
-                self.portal.atualizar_tarefa(self.tarefa_atual["id"], {"status": "pendente", "iniciado_em": None, "robo": None})
+        for t in self.tarefas_atuais:  # as tarefas em andamento voltam para a fila
+            try:
+                self.portal.atualizar_tarefa(t["id"], {"status": "pendente", "iniciado_em": None, "robo": None})
             except Exception:
                 pass
         self.executor.fechar()
@@ -328,23 +431,31 @@ def rodar_local(cfg: dict, arquivo: str, inicio: date, fim: date):
     if not leitura.empresas:
         sys.exit("Nenhuma empresa válida na planilha.")
     log.info("%d empresa(s), competência %s a %s", len(leitura.empresas), f"{inicio:%d/%m/%Y}", f"{fim:%d/%m/%Y}")
+    # a senha do login é a primeira preenchida na planilha (as outras linhas do login podem vir em branco)
+    senhas: dict[str, str] = {}
+    for emp in leitura.empresas:
+        if emp.senha:
+            senhas.setdefault(emp.login.lower(), emp.senha)
     executor = Executor(cfg)
     resultados = []
     try:
-        # mesmo login em sequência: uma sessão do ATF para todas as empresas dele
-        for emp in sorted(leitura.empresas, key=lambda e: e.login.lower()):
-            if not emp.senha:
-                resultados.append((emp, Resultado("senha_invalida", "SENHA em branco na planilha.")))
+        prontos = []
+        for emp in leitura.empresas:
+            senha = senhas.get(emp.login.lower())
+            if not senha:
+                resultados.append((emp, Resultado("senha_invalida", f"SENHA do login {emp.login} em branco na planilha.")))
                 continue
-            log.info("%s (IE %s) — %s", emp.nome, planilha.formatar_ie(emp.ie), ", ".join(emp.tipos))
-            trabalho = Trabalho(ie=emp.ie, nome=emp.nome, login=emp.login, senha=emp.senha, tipos=emp.tipos,
-                                inicio=inicio, fim=fim, cnpj=emp.cnpj, codigo=emp.codigo)
+            prontos.append((emp, Trabalho(ie=emp.ie, nome=emp.nome, login=emp.login, senha=senha, tipos=emp.tipos,
+                                          inicio=inicio, fim=fim, cnpj=emp.cnpj, codigo=emp.codigo)))
+        for grupo in rodadas(prontos, cfg["atf"]["empresas_por_rodada"], chave=lambda p: p[1].login):
+            log.info("Rodada do login %s: %d empresa(s)", grupo[0][1].login, len(grupo))
             try:
-                r = executor.executar(trabalho)
+                rs = executor.executar_rodada([t for _, t in grupo])
             except ChromeIndisponivel as e:
                 sys.exit(str(e))
-            log.info("   -> %s: %s", r.status, r.mensagem)
-            resultados.append((emp, r))
+            for (emp, _), r in zip(grupo, rs):
+                log.info("   %s -> %s: %s", emp.nome, r.status, r.mensagem)
+                resultados.append((emp, r))
     finally:
         executor.fechar()
     log.info("Relatório: %s", salvar_relatorio(cfg, resultados, inicio))

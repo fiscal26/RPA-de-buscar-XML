@@ -67,3 +67,19 @@ def test_evento_vai_para_subpasta(tmp_path):
     r = arquivos.salvar([("ev.xml", evento(EMPRESA, ch))], tmp_path, "Loja", IE_EMPRESA, EMPRESA, "nfe_saida")
     assert r.salvos == 1
     assert list(tmp_path.glob("*/2026-09/NF-e Saida/Eventos/*.xml"))
+
+
+def test_distribuir_pelo_conteudo():
+    """Uma nota da Padaria (IE_EMPRESA) para o Mercado (IE_OUTRA) vai para a saída de uma e a entrada
+    da outra; NFC-e pelo modelo 65; evento segue a nota; XML de empresa fora da rodada é sobra."""
+    venda = nfe(EMPRESA, OUTRA, 1, ie_emit=IE_EMPRESA, ie_dest=IE_OUTRA)
+    cupom = nfe(OUTRA, "", 2, modelo="65", ie_emit=IE_OUTRA)
+    estranha = nfe(OUTRA, OUTRA, 3, ie_emit="161112226")
+    cancel = evento(EMPRESA, chave(EMPRESA, numero=1))
+    alvos = [arquivos.Alvo(IE_EMPRESA, "", ["nfe_saida", "nfe_entrada"]), arquivos.Alvo(IE_OUTRA, "", ["nfe_entrada", "nfce"])]
+    por, sobras = arquivos.distribuir([("v", venda), ("c", cupom), ("e", estranha), ("ev", cancel)], alvos)
+    assert [n for n, _ in por[(IE_EMPRESA, "nfe_saida")]] == ["v", "ev"]
+    assert [n for n, _ in por[(IE_OUTRA, "nfe_entrada")]] == ["v", "ev"]
+    assert [n for n, _ in por[(IE_OUTRA, "nfce")]] == ["c"]
+    assert (IE_EMPRESA, "nfe_entrada") not in por
+    assert [n for n, _ in sobras] == ["e"]

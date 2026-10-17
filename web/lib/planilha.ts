@@ -53,6 +53,7 @@ export function chave(v: unknown) {
     .replace(/[^a-z0-9]+/g, " ").trim();
 }
 
+const CAMPOS_EMPRESA = ["id", "id filial", "cnpj", "inscricao estadual", "nome fantasia", "login", "senha"];
 const SIM = new Set(["s", "sim", "x", "1", "true", "verdadeiro", "v", "ok", "ativa", "ativo", "✓", "✔"]);
 const NAO = new Set(["n", "nao", "0", "false", "falso", "f", "inativa", "inativo"]);
 
@@ -83,7 +84,8 @@ function interpretar(linhas: Linha[]): Leitura {
 
   const vistas = new Set<string>();
   for (const { n, valores } of linhas.slice(inicio + 1)) {
-    if (!valores.some((v) => texto(v))) continue;
+    // o modelo já vem com os "X" marcados: linha sem nenhum dado da empresa é linha livre
+    if (!CAMPOS_EMPRESA.some((c) => texto(campo(valores, c)))) continue;
     const nome = texto(campo(valores, "nome fantasia"));
     const rotulo = nome || `linha ${n}`;
     if (marcado(campo(valores, "ativa")) === false) {

@@ -119,6 +119,7 @@ class CapturadorArquivos:
         self._respostas = []
         self._vistos: set[Path] = set()
         self._assinaturas: set[int] = set()
+        self.ultimo_novo = 0.0
 
         for page in contexto.pages:
             page.on("download", self._novo_download)
@@ -173,7 +174,13 @@ class CapturadorArquivos:
             except Exception:
                 continue
         novos += self._verificar_pasta()
+        if novos:
+            self.ultimo_novo = time.time()
         return novos
+
+    def parado(self, segundos: float) -> bool:
+        """Nenhum arquivo novo nos últimos 'segundos' (o download terminou)."""
+        return time.time() - self.ultimo_novo > segundos
 
     @staticmethod
     def _ler_download(download) -> Optional[bytes]:

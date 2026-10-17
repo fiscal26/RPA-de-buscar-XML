@@ -12,9 +12,14 @@ export default async function Agendar() {
       <h1>Agendar download de XML</h1>
       <div className="cartao">
         <p>
-          Preencha a planilha modelo, uma linha por empresa: <b>INSCRICAO ESTADUAL</b> (é por ela que o ATF pesquisa),{" "}
-          <b>NOME FANTASIA</b>, <b>LOGIN</b> e <b>SENHA</b> do contador no ATF, e marque com <b>S</b> os XML desejados em{" "}
-          <b>NF-e Saida</b>, <b>NF-e Entrada</b> e <b>NFC-e</b>. Empresas com <b>ATIVA</b> = N ficam de fora.
+          A planilha modelo já vem com as opções marcadas com <b>X</b>. Preencha só os dados das empresas, uma por
+          linha: <b>INSCRICAO ESTADUAL</b> (é por ela que o ATF pesquisa), <b>NOME FANTASIA</b>, <b>LOGIN</b> e{" "}
+          <b>SENHA</b> do contador no ATF. Para não baixar algum XML, apague o X da coluna <b>NF-e Saida</b>,{" "}
+          <b>NF-e Entrada</b> ou <b>NFC-e</b>; para deixar uma empresa de fora, troque o X de <b>ATIVA</b> por N.
+        </p>
+        <p className="suave">
+          O ATF não entrega o XML na hora: o robô faz as consultas e recolhe os arquivos em Minhas Mensagens, que podem
+          levar alguns minutos para chegar.
         </p>
         <p>
           <a className="botao secundario pequeno" href="/modelos/modelo_empresas_sefaz_pb.xlsx" download>Baixar planilha modelo</a>

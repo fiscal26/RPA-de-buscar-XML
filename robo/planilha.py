@@ -1,15 +1,17 @@
 """Planilha de empresas (modelo em modelos/modelo_empresas_sefaz_pb.xlsx).
 
 As colunas são achadas pelo nome do cabeçalho (linha 1), não pela posição:
-    ATIVA                 em branco ou S = ativa; N = ignorada
+    ATIVA                 X (ou S, ou em branco) = ativa; N = ignorada
     ID, ID_FILIAL         códigos internos do escritório (opcionais; o ID entra no nome da pasta)
     CNPJ                  opcional (produtor rural pode ter só IE); usado para conferir os XML
     INSCRICAO ESTADUAL    obrigatória: é por ela que o ATF pesquisa as notas
     NOME FANTASIA         obrigatório: nome da pasta
     LOGIN, SENHA          acesso do contador ao ATF (no portal, senha em branco = usa a já cadastrada)
-    NF-e Saida            S = baixar as NF-e em que a empresa é emitente
-    NF-e Entrada          S = baixar as NF-e em que a empresa é destinatária
-    NFC-e                 S = baixar as NFC-e emitidas
+    NF-e Saida            X = baixar as NF-e em que a empresa é emitente
+    NF-e Entrada          X = baixar as NF-e em que a empresa é destinatária
+    NFC-e                 X = baixar as NFC-e emitidas
+O modelo já vem com todos os "X" marcados nas linhas livres; o cliente preenche só os dados das
+empresas (e apaga o X do que não quiser).
 As demais colunas (CT-e, faturas, certidões...) são de outros serviços e ficam de fora deste robô.
 """
 from __future__ import annotations
@@ -24,6 +26,7 @@ MODELO = Path(__file__).resolve().parent.parent / "modelos" / "modelo_empresas_s
 
 # coluna da planilha -> tipo de XML do robô
 COLUNAS_TIPOS = {"nfe saida": "nfe_saida", "nfe entrada": "nfe_entrada", "nfce": "nfce"}
+_CAMPOS_EMPRESA = ("id", "id filial", "cnpj", "inscricao estadual", "nome fantasia", "login", "senha")
 _SIM = {"s", "sim", "x", "1", "true", "verdadeiro", "v", "ok", "ativa", "ativo", "✓", "✔"}
 _NAO = {"n", "nao", "0", "false", "falso", "f", "inativa", "inativo"}
 
@@ -197,7 +200,8 @@ def interpretar(linhas) -> Leitura:
 
     vistas: set[str] = set()
     for n, valores in linhas:
-        if not any(_texto(v) for v in valores):
+        # o modelo já vem com os "X" marcados: linha sem nenhum dado da empresa é linha livre
+        if not any(_texto(campo(valores, c)) for c in _CAMPOS_EMPRESA):
             continue
         nome = _texto(campo(valores, "nome fantasia"))
         rotulo = nome or f"linha {n}"

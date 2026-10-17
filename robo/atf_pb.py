@@ -1,19 +1,23 @@
-"""ATF da SEFAZ-PB: login do contador, consulta das notas pela inscrição estadual e download dos XML.
+"""ATF da SEFAZ-PB: login do contador, consulta das notas pela inscrição estadual e recebimento
+dos XML em "Minhas Mensagens".
 
 Roteiro (telas do ATF em produção, out/2026):
 - Login com o LOGIN e a SENHA do contador (planilha). Um login atende várias empresas: o robô
-  entra uma vez e percorre todas as empresas daquele login.
+  entra uma vez e faz todas as empresas daquele login.
 - NF-e Saída e NF-e Entrada: menu "NF-e" > "Consulta NF-e por Emitentes/Destinatários" (FIS_1322).
-  Preenche "Data de Emissão" (do 1º ao último dia da competência) e a inscrição estadual no bloco
-  "Emitente" (saída) ou "Destinatário" (entrada); o "Tipo de Identificação" já vem em
-  "Inscrição Estadual".
-- NFC-e: menu "NFC-e" > "Consulta por Emitente" (FIS_1484, "Consulta Genérica da NFC-e").
-  "Data Emissão Inicial", "Data Emissão Final" e a inscrição estadual no bloco "Emitente".
+  "Data de Emissão" do 1º ao último dia da competência; a inscrição estadual vai no bloco
+  "Emitente" (saída) OU no "Destinatário" (entrada), nunca nos dois; "Pesquisar" do bloco confere a
+  IE e traz o nome; "Tipo de Exibição" = XML; "Consultar".
+- NFC-e: menu "NFC-e" > "Consulta por Emitente" (FIS_1484): "Data Emissão Inicial/Final", IE no
+  bloco "Emitente", Tipo de Exibição XML, Consultar.
+- O ATF processa e entrega o XML como anexo em "Minhas Mensagens" (sino do topo; SEG_064), numa
+  mensagem do remetente "FIS_1322 - Consulta Genérica NF-e" ou "FIS_1484 - Consulta de NFC-e por
+  Emitente". O robô envia todas as consultas do login, depois acompanha as mensagens novas e baixa
+  os anexos. Quem diz de qual empresa é cada XML é o próprio XML (arquivos.distribuir).
 
-Se o menu não responder, o robô abre a tela pelo campo "Função" do topo (código FIS_...).
-Toda etapa não reconhecida gera um pacote de diagnóstico (tela.png, campos.txt, texto.txt, log.txt)
-e passa para o modo assistido: você conclui no Chrome e o robô captura o XML/ZIP baixado.
-Senhas nunca entram no diagnóstico.
+Se o menu não responder, o robô abre a tela pelo campo "Função" do topo (código FIS_/SEG_).
+Etapa não reconhecida gera um pacote de diagnóstico (tela.png, campos.txt, texto.txt, log.txt) e
+passa para o modo assistido. Senhas nunca entram no diagnóstico.
 """
 from __future__ import annotations
 
@@ -21,7 +25,7 @@ import random
 import re
 import time
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Callable
 
@@ -48,13 +52,29 @@ _CAMPOS_LOGIN = ['input[name*="login" i]', 'input[id*="login" i]', 'input[name*=
 _BOTOES_ENTRAR = ['button[type="submit"]', 'input[type="submit"]', 'input[type="image"]',
                   'button:has-text("Entrar")', 'button:has-text("Acessar")', 'a:has-text("Entrar")',
                   'input[value*="Entrar" i]', 'input[value*="Acessar" i]', 'input[value*="OK" i]']
-# Depois da pesquisa: marcar todas as notas e baixar
-_MARCAR_TODOS = ['th input[type="checkbox"]', 'input[type="checkbox"][id*="todos" i]',
-                 'input[type="checkbox"][name*="todos" i]', 'input[type="checkbox"][title*="todos" i]']
-_BAIXAR = re.compile(r"^\s*(download|baixar|gerar\s+xml|exportar\s+xml|xml|download\s+xml|baixar\s+xml|"
-                     r"download\s+(dos\s+)?xmls?|baixar\s+(todos\s+)?(os\s+)?xmls?)\s*$", re.I)
+_ERRO_CONSULTA = re.compile(r"\berro\b|inv[aá]lid|obrigat[oó]ri|n[aã]o\s+(foi\s+)?(encontrad|localizad|cadastrad)|"
+                            r"informe\s+|preencha|n[aã]o\s+permitid|sem\s+permiss", re.I)
+_INPUT_TEXTO = "input[not(@type='hidden') and not(@type='checkbox') and not(@type='radio') and not(@type='button') and not(@type='submit')]"
+# Anexos dentro de uma mensagem aberta
+_SELETOR_ANEXOS = ('a[href*=".zip" i], a[href*=".xml" i], a[href*="anexo" i], a[href*="download" i], '
+                   'a[href*="arquivo" i], a[download], a:has-text(".zip"), a:has-text(".xml"), '
+                   'a[title*="anexo" i], a[title*="download" i], button[title*="download" i], button:has-text("Download")')
 
-# Tipo de XML -> tela e bloco onde vai a inscrição estadual
+# Lê as linhas de Minhas Mensagens; marca cada uma (data-robo) para poder clicar depois
+_JS_MENSAGENS = """() => Array.from(document.querySelectorAll('tr')).map((tr, i) => {
+    if (tr.querySelector('tr')) return null;  // tabela de layout com outra dentro
+    const celulas = Array.from(tr.querySelectorAll('td')).map(td => td.innerText.trim());
+    const texto = celulas.join(' | ');
+    const codigo = (texto.match(/\\b(FIS|SEG)_\\d+/) || [''])[0];
+    if (!codigo) return null;
+    const data = (texto.match(/\\d{2}\\/\\d{2}\\/\\d{4}\\s+\\d{2}:\\d{2}:\\d{2}/) || [null])[0];
+    tr.setAttribute('data-robo', String(i));
+    const anexo = !!tr.querySelector('img[src*="clip" i], img[src*="anexo" i], [class*="clip" i], [title*="anexo" i], [alt*="anexo" i]');
+    return {marca: String(i), codigo, data, remetente: celulas.find(c => c.includes(codigo)) || codigo,
+            enviada: data || '', anexo, chave: codigo + '|' + (data || texto)};
+}).filter(Boolean)"""
+
+# Tipo de XML -> tela e bloco onde vai a inscrição estadual (um bloco por consulta)
 TIPO_TELA = {
     "nfe_saida": ("nfe", "Emitente"),
     "nfe_entrada": ("nfe", "Destinatário"),
@@ -79,11 +99,23 @@ class EtapaNaoConcluida(Exception):
 
 
 @dataclass
-class Download:
-    arquivos: list[tuple[str, bytes]] = field(default_factory=list)
+class Envio:
+    """Uma consulta enviada (empresa + tipo). A resposta chega depois, em Minhas Mensagens."""
+    ie: str
+    tipo: str
+    ok: bool = True
     sem_notas: bool = False
     assistido: bool = False
-    mensagem: str = ""
+    resposta: str = ""
+
+
+@dataclass
+class Recolha:
+    """O que veio de Minhas Mensagens nesta rodada."""
+    arquivos: list[tuple[str, bytes]] = field(default_factory=list)
+    textos: list[tuple[str, str]] = field(default_factory=list)   # (código FIS, texto da mensagem)
+    recebidas: dict[str, int] = field(default_factory=dict)       # código FIS -> mensagens lidas
+    tempo_esgotado: bool = False
 
 
 class Diagnostico:
@@ -148,6 +180,10 @@ def _texto_da_pagina(page) -> str:
     return "\n".join(partes)
 
 
+def _data_br(texto: str) -> datetime:
+    return datetime.strptime(texto, "%d/%m/%Y %H:%M:%S")
+
+
 def _xpath_texto(texto: str) -> str:
     """Condição XPath: texto exato do elemento, sem diferenciar maiúsculas nem acentos."""
     de, para = "ABCDEFGHIJKLMNOPQRSTUVWXYZÁÀÂÃÉÊÍÓÔÕÚÇáàâãéêíóôõúç", "abcdefghijklmnopqrstuvwxyzaaaaeeiooouc" + "aaaaeeiooouc"
@@ -167,6 +203,10 @@ class AtfPB:
         self.login_atual = ""
         self.ultimo_uso = 0.0
         self._url_tela: dict[str, str] = {}
+        self._respostas: list[str] = []
+        self._mensagens_lidas: set[str] = set()
+        self._diag_mensagem_salvo = False
+        self.page.on("dialog", self._dialogo)
 
     # ------------------------------------------------------------------ utilidades
     def _log(self, texto: str):
@@ -303,26 +343,33 @@ class AtfPB:
         pausa(self.page, 0.8, 1.5)
         return True
 
-    def abrir_tela(self, nome: str):
-        """Abre a tela de consulta: pelo endereço já visitado, pelo menu ou pelo campo Função."""
+    def abrir_tela(self, nome: str, recarregar: bool = True):
+        """Abre uma tela do ATF: pelo endereço já visitado, pelo botão (sino das mensagens), pelo
+        menu lateral ou pelo campo Função do topo."""
         tela = self.atf["telas"][nome]
         if self._senha_na_tela() is not None:
             raise SessaoExpirada("o ATF voltou para a tela de login.")
         url = self._url_tela.get(nome)
-        if url:
-            self._abrir(url)  # recarrega: formulário limpo para a próxima empresa
+        if url and (recarregar or not self._tela_aberta(tela)):
+            self._abrir(url)  # recarrega: formulário limpo / lista de mensagens atualizada
             if self._tela_aberta(tela):
                 return
+        if tela.get("botao") and not self._tela_aberta(tela):
+            botao = self._achar("", tela["botao"])
+            if botao is not None:
+                botao.click()
+                pausa(self.page, 1.0, 2.0)
         # menu lateral: volta à raiz (/ MEN), entra no módulo e escolhe a consulta
-        for _ in range(2):
-            self._clicar_texto("/ MEN") or self._clicar_texto("MEN")
-            if self._clicar_texto(tela["menu"][0]) and self._clicar_texto(tela["menu"][1]):
-                break
-            menu = self._achar("", ['button:has-text("☰")', 'button[aria-label*="menu" i]', '.navbar-toggler',
-                                    'button[title*="menu" i]'])
-            if menu is not None:
-                menu.click()
-                pausa(self.page, 0.5, 1.0)
+        if tela.get("menu") and not self._tela_aberta(tela):
+            for _ in range(2):
+                self._clicar_texto("/ MEN") or self._clicar_texto("MEN")
+                if self._clicar_texto(tela["menu"][0]) and self._clicar_texto(tela["menu"][1]):
+                    break
+                menu = self._achar("", ['button:has-text("☰")', 'button[aria-label*="menu" i]', '.navbar-toggler',
+                                        'button[title*="menu" i]'])
+                if menu is not None:
+                    menu.click()
+                    pausa(self.page, 0.5, 1.0)
         if not self._tela_aberta(tela):
             # campo "Função" do topo, com o código da tela
             campo = self._achar("", ['input[placeholder="Função" i]', 'input[placeholder*="Fun" i]'])
@@ -340,35 +387,88 @@ class AtfPB:
         self._url_tela[nome] = self.page.url
         self._log(f"Tela aberta: {tela['titulo']}")
 
-    # ------------------------------------------------------------------ consulta e download
-    def baixar(self, tipo: str, ie: str, inicio: date, fim: date, nome_tipo: str) -> Download:
-        periodo = f"{inicio:%d/%m/%Y} a {fim:%d/%m/%Y}"
-        capt = CapturadorArquivos(self.contexto, self.cfg["chrome"]["pasta_downloads"])
-        resultado = Download()
+    # ------------------------------------------------------------------ consulta (envio)
+    def _dialogo(self, dialogo):
+        self._respostas.append(dialogo.message)
         try:
-            if self.atf["tentar_automatico"]:
-                try:
-                    self._consultar(tipo, ie, inicio, fim)
-                    resultado = self._esperar(capt, self.atf["segundos_automatico"], baixar=True)
-                except (SiteForaDoAr, SessaoExpirada):
-                    raise
-                except Exception as e:
-                    self._log(f"{nome_tipo}: automático parou: {e}")
-            if not resultado.arquivos and not resultado.sem_notas:
-                self.diag.salvar(self.page, f"download-{tipo}")
-                self.aviso(f"Aguardando você baixar no Chrome: {nome_tipo} da IE {ie}, período {periodo}.")
-                resultado = self._esperar(capt, self.segundos_assistido, baixar=False)
-                resultado.assistido = True
-        finally:
-            capt.encerrar()
-            self.ultimo_uso = time.time()
-        self._log(f"{nome_tipo}: {len(resultado.arquivos)} arquivo(s)" + (" — sem notas no período" if resultado.sem_notas else ""))
-        return resultado
+            dialogo.accept()
+        except Exception:
+            pass
 
-    def _consultar(self, tipo: str, ie: str, inicio: date, fim: date):
+    def _avisos_na_tela(self) -> str:
+        """Textos de alerta/modal/toast visíveis (a resposta do ATF ao clicar em Consultar)."""
+        partes = list(self._respostas)
+        for frame in self.page.frames:
+            try:
+                partes.extend(frame.evaluate("""() => Array.from(document.querySelectorAll(
+                    '.alert, .toast, .modal.show, .modal[style*="block"], [role=alert], .swal2-popup, .notification, .msg, .mensagem'))
+                    .filter(e => e.offsetParent !== null).map(e => e.innerText.trim()).filter(Boolean)"""))
+            except Exception:
+                continue
+        return "\n".join(partes)
+
+    def hora_servidor(self) -> datetime | None:
+        """Data e hora do ATF (quadro da sessão no topo): base para reconhecer as mensagens novas."""
+        m = re.search(r"(\d{2}/\d{2}/\d{4})\s+(\d{2}:\d{2}:\d{2})", _texto_da_pagina(self.page))
+        if not m:
+            return None
+        try:
+            return datetime.strptime(f"{m.group(1)} {m.group(2)}", "%d/%m/%Y %H:%M:%S")
+        except ValueError:
+            return None
+
+    def solicitar(self, tipo: str, ie: str, inicio: date, fim: date, nome_tipo: str) -> Envio:
+        """Preenche a consulta de UMA empresa e UM bloco (Emitente ou Destinatário, nunca os dois),
+        escolhe Tipo de Exibição = XML e clica em Consultar. O ATF entrega o XML depois, em
+        Minhas Mensagens."""
+        self._respostas = []
+        envio = Envio(ie=ie, tipo=tipo)
+        try:
+            if not self.atf["tentar_automatico"]:
+                raise EtapaNaoConcluida("modo automático desligado")
+            self._preencher_consulta(tipo, ie, inicio, fim)
+            resposta = self._esperar_resposta(self.atf["segundos_resposta"])
+        except (SiteForaDoAr, SessaoExpirada):
+            raise
+        except Exception as e:
+            self._log(f"{nome_tipo} IE {ie}: automático parou: {e}")
+            self.diag.salvar(self.page, f"consulta-{tipo}")
+            self.aviso(f"Faça no Chrome a consulta {nome_tipo} da IE {ie} ({inicio:%d/%m/%Y} a {fim:%d/%m/%Y}), "
+                       "Tipo de Exibição XML, e clique em Consultar.")
+            resposta = self._esperar_resposta(self.segundos_assistido)
+            envio.assistido = True
+        finally:
+            self.ultimo_uso = time.time()
+        envio.resposta = resposta[:300]
+        if _SEM_NOTAS.search(resposta):
+            envio.sem_notas = True
+        elif _ERRO_CONSULTA.search(resposta):
+            envio.ok = False
+        self._log(f"{nome_tipo} IE {ie}: consulta enviada" + (f" — ATF: {resposta[:120]}" if resposta else ""))
+        return envio
+
+    def _esperar_resposta(self, segundos: int) -> str:
+        limite = time.time() + segundos
+        while time.time() < limite:
+            pausa(self.page, 0.8, 1.2)
+            texto = self._avisos_na_tela()
+            if texto:
+                pausa(self.page, 0.5, 1.0)
+                botao = self._achar("", ['.modal.show button:has-text("OK")', '.modal.show button:has-text("Fechar")',
+                                         '.swal2-confirm', '[role=dialog] button:has-text("OK")'])
+                if botao is not None:
+                    botao.click()
+                return texto
+        return ""
+
+    def _preencher_consulta(self, tipo: str, ie: str, inicio: date, fim: date):
         nome_tela, bloco = TIPO_TELA[tipo]
         tela = self.atf["telas"][nome_tela]
         self.abrir_tela(nome_tela)
+        limpar = self._achar("", ['button:has-text("Limpar")', 'input[value="Limpar" i]'])
+        if limpar is not None:
+            limpar.click()
+            pausa(self.page, 0.5, 1.0)
 
         # período: do 1º ao último dia da competência
         rotulos = tela["rotulos_data"]
@@ -382,92 +482,171 @@ class AtfPB:
             self._digitar(campo, f"{data:%d/%m/%Y}")
             campo.press("Tab")
 
-        # bloco Emitente/Destinatário: Tipo de Identificação = Inscrição Estadual, Número = IE
-        nomes_bloco = [bloco, bloco.replace("á", "a")]
-        tipo_id = numero = None
-        for nb in nomes_bloco:
-            tipo_id = tipo_id or self._apos_rotulo(nb, "select", 1)
-            numero = numero or self._apos_rotulo(nb, "input[not(@type='hidden') and not(@type='checkbox') and not(@type='radio')]", 1)
+        # só um bloco preenchido: o outro fica com o Número vazio
+        outro = {"Emitente": "Destinatário", "Destinatário": "Emitente"}[bloco]
+        numero_outro = self._campo_do_bloco(outro, _INPUT_TEXTO)
+        if numero_outro is not None and numero_outro.input_value():
+            numero_outro.fill("")
+
+        tipo_id = self._campo_do_bloco(bloco, "select")
+        numero = self._campo_do_bloco(bloco, _INPUT_TEXTO)
         if numero is None:
             raise EtapaNaoConcluida(f"campo Número do bloco {bloco} não encontrado")
         if tipo_id is not None:
-            try:
-                opcoes = tipo_id.locator("option").all_inner_texts()
-                ie_op = next((o for o in opcoes if re.search(r"inscri[cç][aã]o\s+estadual", o, re.I)), None)
-                if ie_op and not re.search(r"inscri", tipo_id.evaluate("s => s.options[s.selectedIndex].text"), re.I):
-                    tipo_id.select_option(label=ie_op)
-                    pausa(self.page, 0.3, 0.6)
-            except Exception as e:
-                self._log(f"Tipo de Identificação: {e}")
+            self._escolher(tipo_id, r"inscri[cç][aã]o\s+estadual")
         self._digitar(numero, ie)
-        self._log(f"Período {inicio:%d/%m/%Y} a {fim:%d/%m/%Y}, {bloco} IE {ie}")
+        numero.press("Tab")
 
-        botao = None
-        for nb in nomes_bloco:
-            botao = botao or self._apos_rotulo(nb, f"*[self::button or self::input][{_xpath_texto('Pesquisar')} or "
-                                                   f"translate(@value,'PESQUISAR','pesquisar')='pesquisar']", 1)
-        botao = botao or self._achar("", ['button:has-text("Pesquisar")', 'button:has-text("Consultar")'])
-        if botao is None:
-            raise EtapaNaoConcluida("botão Pesquisar não encontrado")
-        botao.click()
-
-    def _resultado_na_tela(self) -> bool:
-        return self._achar("", ["table tbody tr td", ".table tbody tr"]) is not None
-
-    def _tentar_baixar(self) -> bool:
-        """Na lista de notas: marca todas (se houver a caixa) e clica no botão de download."""
-        marcar = self._achar("", _MARCAR_TODOS)
-        if marcar is not None:
-            try:
-                if not marcar.is_checked():
-                    marcar.check()
-            except Exception:
-                pass
-        for frame in self.page.frames:
-            for papel in ("button", "link"):
+        # "Pesquisar" do bloco: confere a IE e traz o Nome/Razão Social
+        pesquisar = self._campo_do_bloco(bloco, f"*[self::button or self::input][{_xpath_texto('Pesquisar')} or "
+                                                f"translate(@value,'PESQUISAR','pesquisar')='pesquisar']")
+        if pesquisar is not None:
+            pesquisar.click()
+            nome = self._campo_do_bloco(bloco, _INPUT_TEXTO, 2)
+            for _ in range(10):
+                pausa(self.page, 0.5, 0.8)
                 try:
-                    alvo = self._primeiro_visivel(frame.get_by_role(papel, name=_BAIXAR))
+                    if nome is None or nome.input_value().strip():
+                        break
                 except Exception:
-                    alvo = None
-                if alvo is not None:
-                    self._log(f"Clicando em '{(alvo.inner_text() or '').strip()[:40]}'")
-                    alvo.click()
-                    return True
-        alvo = self._achar("", ['a[href*=".zip" i]', 'a[href*="download" i]', 'a[href*="xml" i]',
-                                'input[value*="Download" i]', 'input[value*="XML" i]', '[title*="download" i]',
-                                '[title*="XML" i]'])
-        if alvo is not None:
-            alvo.click()
-            return True
-        return False
+                    break
+            erro = self._avisos_na_tela()
+            if erro and _ERRO_CONSULTA.search(erro):
+                raise EtapaNaoConcluida(f"ATF não aceitou a IE {ie}: {erro[:150]}")
+            self._respostas = []
 
-    def _esperar(self, capt: CapturadorArquivos, segundos: int, baixar: bool) -> Download:
-        r = Download()
-        limite = time.time() + segundos
-        ultimo_novo = 0.0
-        clicou = False
+        # Tipo de Exibição = XML e Consultar
+        exibicao = self._apos_rotulo("Tipo de Exibição", "select", 1) or self._apos_rotulo("Tipo de Exibicao", "select", 1)
+        if exibicao is None:
+            raise EtapaNaoConcluida("campo Tipo de Exibição não encontrado")
+        if not self._escolher(exibicao, r"^\s*xml\s*$"):
+            raise EtapaNaoConcluida("opção XML não encontrada em Tipo de Exibição")
+        consultar = None
+        for frame in self.page.frames:
+            try:
+                consultar = self._primeiro_visivel(frame.get_by_role("button", name=re.compile(r"^\W*consultar\s*$", re.I)))
+            except Exception:
+                consultar = None
+            if consultar is not None:
+                break
+        consultar = consultar or self._achar("", ['input[value="Consultar" i]', 'button:has-text("Consultar")'])
+        if consultar is None:
+            raise EtapaNaoConcluida("botão Consultar não encontrado")
+        self._log(f"Consultando {bloco} IE {ie}, {inicio:%d/%m/%Y} a {fim:%d/%m/%Y}, exibição XML")
+        consultar.click()
+
+    def _campo_do_bloco(self, bloco: str, alvo: str, ordem: int = 1):
+        for nome in dict.fromkeys([bloco, bloco.replace("á", "a")]):
+            campo = self._apos_rotulo(nome, alvo, ordem)
+            if campo is not None:
+                return campo
+        return None
+
+    def _escolher(self, select, padrao: str) -> bool:
+        try:
+            opcoes = select.locator("option").all_inner_texts()
+            alvo = next((o for o in opcoes if re.search(padrao, o, re.I)), None)
+            if alvo is None:
+                return False
+            atual = select.evaluate("s => s.selectedIndex >= 0 ? s.options[s.selectedIndex].text : ''")
+            if not re.search(padrao, atual or "", re.I):
+                select.select_option(label=alvo)
+                pausa(self.page, 0.3, 0.6)
+            return True
+        except Exception as e:
+            self._log(f"Não escolhi '{padrao}': {e}")
+            return False
+
+    # ------------------------------------------------------------------ Minhas Mensagens (recebimento)
+    def listar_mensagens(self) -> list[dict]:
+        """Linhas de Minhas Mensagens: remetente (FIS_...), enviada, se tem anexo. Cada linha recebe
+        uma marca (data-robo) para ser aberta depois."""
+        self.abrir_tela("mensagens", recarregar=True)
+        linhas: list[dict] = []
+        for i, frame in enumerate(self.page.frames):
+            try:
+                linhas.extend(dict(l, quadro=i) for l in frame.evaluate(_JS_MENSAGENS))
+            except Exception:
+                continue
+        return linhas
+
+    def abrir_mensagem(self, linha: dict, capt: CapturadorArquivos) -> str:
+        """Abre a mensagem, baixa os anexos (o capturador recolhe) e devolve o texto dela."""
+        frame = self.page.frames[linha["quadro"]] if linha["quadro"] < len(self.page.frames) else self.page.main_frame
+        tr = frame.locator(f'tr[data-robo="{linha["marca"]}"]')
+        link = self._primeiro_visivel(tr.locator("a"))
+        (link or tr).click()
+        pausa(self.page, 1.5, 2.5)
+        antes = len(capt.recebidos)
+        clicados = 0
+        for frame in self.page.frames:
+            try:
+                anexos = frame.locator(_SELETOR_ANEXOS)
+                for i in range(min(anexos.count(), 20)):
+                    a = anexos.nth(i)
+                    if a.is_visible():
+                        a.click()
+                        clicados += 1
+                        pausa(self.page, 1.0, 1.5)
+            except Exception:
+                continue
+        limite = time.time() + 40
         while time.time() < limite:
             pausa(self.page, 0.8, 1.2)
-            if capt.verificar():
-                ultimo_novo = time.time()
-            if capt.recebidos:
-                if time.time() - ultimo_novo > 6:
-                    break  # parou de chegar arquivo
-                continue
-            texto = _texto_da_pagina(self.page)
-            if _SEM_NOTAS.search(texto):
-                r.sem_notas = True
-                r.mensagem = "nenhuma nota no período"
+            capt.verificar()
+            if len(capt.recebidos) > antes and capt.parado(4):
                 break
-            if _FORA_DO_AR.search(texto[:3000]):
-                raise SiteForaDoAr("o ATF informou que o serviço está indisponível.")
-            if baixar and not clicou and self._resultado_na_tela():
-                clicou = self._tentar_baixar()
-                if clicou:
-                    limite = max(limite, time.time() + 60)  # o ZIP pode demorar a ser gerado
-        capt.verificar()
-        r.arquivos = list(capt.recebidos)
-        return r
+            if not clicados and time.time() > limite - 30:
+                break
+        texto = _texto_da_pagina(self.page)
+        if len(capt.recebidos) == antes and not self._diag_mensagem_salvo:
+            self._diag_mensagem_salvo = True  # uma vez por rodada: para calibrar a tela da mensagem
+            self.diag.salvar(self.page, "mensagem-sem-anexo")
+        self._log(f"Mensagem {linha['remetente'][:40]} de {linha['enviada']}: {len(capt.recebidos) - antes} arquivo(s)")
+        self.ultimo_uso = time.time()
+        return texto
+
+    def recolher(self, esperadas: dict[str, int], desde: datetime, minutos: int,
+                 relevante: Callable[[list, str], bool] | None = None) -> Recolha:
+        """Acompanha Minhas Mensagens até chegarem as respostas esperadas ({código FIS: quantas}),
+        enviadas a partir de 'desde' (hora do ATF), ou até o tempo acabar. 'relevante(anexos, texto)'
+        diz se a mensagem é resposta desta rodada (uma consulta feita à mão no mesmo login não conta)."""
+        recolha = Recolha()
+        capt = CapturadorArquivos(self.contexto, self.cfg["chrome"]["pasta_downloads"])
+        limite = time.time() + minutos * 60
+        try:
+            while True:
+                if self._senha_na_tela() is not None:
+                    raise SessaoExpirada("o ATF voltou para a tela de login.")
+                novas = [l for l in self.listar_mensagens()
+                         if l["codigo"] in esperadas and l["chave"] not in self._mensagens_lidas
+                         and (l["data"] is None or _data_br(l["data"]) >= desde - timedelta(minutes=1))]
+                if novas:
+                    # uma por vez: ao voltar para a lista as linhas são lidas (e marcadas) de novo
+                    linha = novas[0]
+                    self._mensagens_lidas.add(linha["chave"])
+                    antes = len(capt.recebidos)
+                    texto = self.abrir_mensagem(linha, capt)
+                    recolha.textos.append((linha["codigo"], texto))
+                    if relevante is None or relevante(capt.recebidos[antes:], texto):
+                        recolha.recebidas[linha["codigo"]] = recolha.recebidas.get(linha["codigo"], 0) + 1
+                    else:
+                        self._log("Mensagem de outra consulta (empresa fora da rodada): não conta")
+                    continue
+                if all(recolha.recebidas.get(c, 0) >= n for c, n in esperadas.items()):
+                    break
+                if time.time() >= limite:
+                    recolha.tempo_esgotado = True
+                    self._log(f"Tempo esgotado esperando mensagens: {recolha.recebidas} de {esperadas}")
+                    break
+                faltam = {c: n - recolha.recebidas.get(c, 0) for c, n in esperadas.items()}
+                self.aviso(f"Aguardando o ATF entregar os XML em Minhas Mensagens ({faltam})...")
+                pausa(self.page, self.atf["segundos_entre_verificacoes"], self.atf["segundos_entre_verificacoes"] + 5)
+        finally:
+            capt.verificar()
+            capt.encerrar()
+            recolha.arquivos = list(capt.recebidos)
+        return recolha
 
     # ------------------------------------------------------------------ saída
     def sair(self, silencioso: bool = False):

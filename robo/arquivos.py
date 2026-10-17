@@ -204,3 +204,83 @@ def salvar(arquivos: list[tuple[str, bytes]], destino: str | Path, nome: str, ie
 
 def _sufixo(nome: str) -> str:
     return re.sub(r"[^A-Za-z0-9]+", "", Path(nome).stem)[-20:] or "1"
+
+
+# ---------------------------------------------------------------------- distribuição por conteúdo
+# O ATF entrega os XML como anexos em "Minhas Mensagens", todas com o mesmo assunto e sem ordem
+# garantida. Por isso cada XML é encaminhado pelo que está DENTRO dele (IE/CNPJ de emitente e
+# destinatário, modelo 55/65), e não pela mensagem de onde veio.
+
+@dataclass
+class Alvo:
+    """Empresa consultada nesta rodada e os XML que ela pediu."""
+    ie: str
+    cnpj: str
+    tipos: list[str]
+
+
+def _destinos(info: InfoXml, alvos: list[Alvo]) -> list[tuple[str, str]]:
+    emit_chave = info.chave[6:20]
+    saida: list[tuple[str, str]] = []
+    for a in alvos:
+        emitente = _mesmo_ie(info.ie_emit, a.ie) or (bool(a.cnpj) and a.cnpj in (info.cnpj_emit, emit_chave))
+        if info.modelo == "65":
+            if "nfce" in a.tipos and emitente:
+                saida.append((a.ie, "nfce"))
+            continue
+        if "nfe_saida" in a.tipos and emitente:
+            saida.append((a.ie, "nfe_saida"))
+        if "nfe_entrada" in a.tipos and (_mesmo_ie(info.ie_dest, a.ie) or (bool(a.cnpj) and info.cnpj_dest == a.cnpj)):
+            saida.append((a.ie, "nfe_entrada"))
+    return saida
+
+
+def distribuir(arquivos: list[tuple[str, bytes]], alvos: list[Alvo]):
+    """Separa os XML recebidos por (IE, tipo). Uma nota entre duas empresas da rodada vai para as
+    duas (saída de uma, entrada da outra). Eventos seguem a nota da mesma chave. Devolve
+    ({(ie, tipo): [(nome, dados)]}, sobras): sobras são XML de nenhuma empresa da rodada."""
+    por_destino: dict[tuple[str, str], list[tuple[str, bytes]]] = {}
+    sobras: list[tuple[str, bytes]] = []
+    destinos_da_chave: dict[str, list[tuple[str, str]]] = {}
+    eventos = []
+    for nome, dados in arquivos:
+        info = ler_xml(dados)
+        if not info:
+            continue
+        if info.evento:
+            eventos.append((nome, dados, info))
+            continue
+        destinos = _destinos(info, alvos)
+        da_chave = destinos_da_chave.setdefault(info.chave, [])
+        da_chave.extend(d for d in destinos if d not in da_chave)
+        for d in destinos:
+            por_destino.setdefault(d, []).append((nome, dados))
+        if not destinos:
+            sobras.append((nome, dados))
+    for nome, dados, info in eventos:
+        destinos = destinos_da_chave.get(info.chave)
+        if destinos is None:  # nota não veio nesta rodada: pelo CNPJ do emitente na chave
+            destinos = [(a.ie, "nfce" if info.modelo == "65" else "nfe_saida") for a in alvos
+                        if a.cnpj and a.cnpj == info.chave[6:20]
+                        and ("nfce" if info.modelo == "65" else "nfe_saida") in a.tipos]
+        for d in destinos:
+            por_destino.setdefault(d, []).append((nome, dados))
+        if not destinos:
+            sobras.append((nome, dados))
+    return por_destino, sobras
+
+
+def salvar_sobras(arquivos: list[tuple[str, bytes]], destino: str | Path) -> int:
+    """XML que não é de nenhuma empresa da rodada (ex.: consulta feita à mão no mesmo login)."""
+    n = 0
+    for nome, dados in arquivos:
+        info = ler_xml(dados)
+        if not info:
+            continue
+        pasta = Path(destino) / "_sem_empresa" / info.emissao[:7]
+        arquivo = pasta / (f"{info.chave}-evento-{_sufixo(nome)}.xml" if info.evento else f"{info.chave}.xml")
+        if not arquivo.exists():
+            pasta.mkdir(parents=True, exist_ok=True)
+            arquivo.write_bytes(dados)
+            n += 1
+    return n

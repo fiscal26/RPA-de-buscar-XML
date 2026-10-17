@@ -62,3 +62,13 @@ def test_cabecalho_errado(tmp_path):
     arq = tmp_path / "e.csv"
     arq.write_text("CNPJ;Apelido\n1;2\n")
     assert "Cabeçalho" in planilha.ler(arq).erros[0]
+
+
+def test_modelo_vem_com_x_e_linhas_livres_sao_ignoradas():
+    from openpyxl import load_workbook
+
+    ws = load_workbook(planilha.MODELO).worksheets[0]
+    cab = [c.value for c in ws[1]]
+    assert ws.cell(2, cab.index("NF-e Saida") + 1).value == "X" and ws.cell(2, 1).value == "X"
+    leitura = planilha.ler(planilha.MODELO)
+    assert (leitura.empresas, leitura.erros, leitura.avisos) == ([], [], [])

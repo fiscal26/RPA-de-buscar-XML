@@ -129,43 +129,58 @@ create table if not exists public.xml_robos (
 );
 
 -- ------------------------------------------------------------------------- fila do robô
--- Próxima tarefa liberada (executar_em já chegou), com o login e a senha cifrada do contador.
+-- Lote de tarefas liberadas (executar_em já chegou) de UM login do contador e UMA competência:
+-- o robô envia todas as consultas desse login e depois recolhe os XML em "Minhas Mensagens".
 -- Prefere o login que o robô já está usando (p_login): aproveita a sessão aberta no ATF.
--- Vários robôs podem rodar juntos: "for update skip locked" evita que dois peguem a mesma.
+-- Vários robôs podem rodar juntos: "for update skip locked" evita que dois peguem a mesma tarefa.
 drop function if exists public.xml_pegar_tarefa(text);
 drop function if exists public.xml_pegar_tarefa(text, text);
-create or replace function public.xml_pegar_tarefa(p_robo text, p_login text default '')
+drop function if exists public.xml_pegar_lote(text, text, integer);
+create or replace function public.xml_pegar_lote(p_robo text, p_login text default '', p_max integer default 15)
 returns table (id uuid, ie text, cnpj text, nome text, codigo text, tipos text[], data_inicio date, data_fim date,
                login_atf text, senha_cifrada text)
 language plpgsql security definer set search_path = public as $$
 #variable_conflict use_column
 declare
-  t_id uuid;
+  v_acesso uuid;
+  v_competencia date;
+  v_ids uuid[];
 begin
-  -- tarefa "presa" (o robô caiu no meio) volta para a fila depois de 60 min
+  -- tarefa "presa" (o robô caiu no meio) volta para a fila depois de 90 min
   update public.xml_tarefas set status = 'pendente', iniciado_em = null, robo = null
-   where xml_tarefas.status = 'processando' and xml_tarefas.iniciado_em < now() - interval '60 minutes';
+   where xml_tarefas.status = 'processando' and xml_tarefas.iniciado_em < now() - interval '90 minutes';
 
-  select t.id into t_id
+  -- empresa ou login apagado depois do agendamento: encerra com aviso
+  update public.xml_tarefas t set status = 'erro', concluido_em = now(),
+         mensagem = 'Empresa ou login do ATF removido do cadastro; envie a planilha de novo.'
+   where t.status = 'pendente'
+     and not exists (select 1 from public.xml_empresas e join public.xml_acessos c on c.id = e.acesso_id
+                      where e.id = t.empresa_id);
+
+  -- qual login e competência atender agora
+  select e.acesso_id, a.competencia into v_acesso, v_competencia
     from public.xml_tarefas t
     join public.xml_agendamentos a on a.id = t.agendamento_id
-    left join public.xml_empresas e on e.id = t.empresa_id
-    left join public.xml_acessos c on c.id = e.acesso_id
+    join public.xml_empresas e on e.id = t.empresa_id
+    join public.xml_acessos c on c.id = e.acesso_id
    where t.status = 'pendente' and a.executar_em <= now()
-   order by (c.login is not distinct from nullif(p_login, '')) desc, a.executar_em, c.login, t.criado_em
-   limit 1
-   for update of t skip locked;
-  if t_id is null then return; end if;
+   order by (c.login is not distinct from nullif(p_login, '')) desc, a.executar_em, t.criado_em
+   limit 1;
+  if v_acesso is null then return; end if;
 
-  update public.xml_tarefas set status = 'processando', iniciado_em = now(), robo = p_robo where xml_tarefas.id = t_id;
+  select array_agg(x.id) into v_ids from (
+    select t.id
+      from public.xml_tarefas t
+      join public.xml_agendamentos a on a.id = t.agendamento_id
+      join public.xml_empresas e on e.id = t.empresa_id
+     where t.status = 'pendente' and a.executar_em <= now()
+       and e.acesso_id = v_acesso and a.competencia = v_competencia
+     order by a.executar_em, t.criado_em
+     limit greatest(1, least(p_max, 50))
+     for update of t skip locked) x;
+  if v_ids is null then return; end if;
 
-  -- empresa ou acesso apagado depois do agendamento: encerra a tarefa com aviso
-  if not exists (select 1 from public.xml_tarefas t join public.xml_empresas e on e.id = t.empresa_id
-                   join public.xml_acessos c on c.id = e.acesso_id where t.id = t_id) then
-    update public.xml_tarefas set status = 'erro', concluido_em = now(),
-           mensagem = 'Empresa ou login do ATF removido do cadastro; envie a planilha de novo.' where xml_tarefas.id = t_id;
-    return;
-  end if;
+  update public.xml_tarefas set status = 'processando', iniciado_em = now(), robo = p_robo where xml_tarefas.id = any(v_ids);
 
   return query
   select t.id, t.ie, e.cnpj, t.nome, t.codigo, t.tipos, a.data_inicio, a.data_fim, c.login, c.senha_cifrada
@@ -173,7 +188,8 @@ begin
     join public.xml_agendamentos a on a.id = t.agendamento_id
     join public.xml_empresas e on e.id = t.empresa_id
     join public.xml_acessos c on c.id = e.acesso_id
-   where t.id = t_id;
+   where t.id = any(v_ids)
+   order by t.criado_em;
 end $$;
 
 -- Cancelar as tarefas de um agendamento que ainda não começaram
@@ -231,8 +247,8 @@ drop policy if exists xml_robos_ler on public.xml_robos;
 create policy xml_robos_ler on public.xml_robos for select to authenticated using (true);
 
 -- funções: quem pode chamar
-revoke all on function public.xml_pegar_tarefa(text, text) from public, anon, authenticated;
-grant execute on function public.xml_pegar_tarefa(text, text) to service_role;
+revoke all on function public.xml_pegar_lote(text, text, integer) from public, anon, authenticated;
+grant execute on function public.xml_pegar_lote(text, text, integer) to service_role;
 revoke all on function public.xml_cancelar_agendamento(uuid) from public, anon;
 grant execute on function public.xml_cancelar_agendamento(uuid) to authenticated;
 

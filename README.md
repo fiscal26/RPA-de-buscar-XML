@@ -27,34 +27,45 @@ Passo a passo de implantação: **[web/IMPLANTACAO.md](web/IMPLANTACAO.md)**.
 
 ## Planilha modelo
 
-As colunas são achadas pelo nome do cabeçalho. O robô de XML usa:
+O modelo já vem com **X** em todas as opções (ATIVA e serviços) nas linhas 2 a 101: o cliente
+preenche só os dados das empresas. Linha sem dados de empresa é ignorada. As colunas são achadas
+pelo nome do cabeçalho. O robô de XML usa:
 
 | Coluna | Uso |
 |---|---|
-| ATIVA | em branco ou S = ativa; N = ignorada |
+| ATIVA | X (ou S, ou em branco) = ativa; N = ignorada |
 | ID, ID_FILIAL | códigos do escritório; o ID entra no nome da pasta |
 | CNPJ | opcional; ajuda a conferir os XML |
 | INSCRICAO ESTADUAL | **obrigatória**: é por ela que o ATF pesquisa (dígito verificador da PB conferido) |
 | NOME FANTASIA | nome da pasta |
 | LOGIN, SENHA | acesso do contador ao ATF. A senha só precisa vir uma vez por login |
-| NF-e Saida, NF-e Entrada, NFC-e | **S** (ou X, SIM) = baixar esse XML |
+| NF-e Saida, NF-e Entrada, NFC-e | **X** (ou S, SIM) = baixar esse XML; apagar o X = não baixar |
 
 CT-e, Download Faturas, Extrato de Pagamentos, Omissão e Inadimplência, Certidão de Débitos,
 Conferência Cartão de Crédito e Dossiê MEI ficam para outros serviços: este robô não usa essas colunas.
 
 ## Roteiro no ATF
 
-1. Login com LOGIN e SENHA do contador. **Um login, uma sessão:** todas as empresas daquele login
-   são feitas em sequência, sem sair e entrar de novo. Se a sessão expirar (15 min), o robô entra de novo.
-2. **NF-e Saída / Entrada:** menu *NF-e* > *Consulta NF-e por Emitentes/Destinatários* (FIS_1322).
-   *Data de Emissão* do 1º ao último dia da competência; inscrição estadual no bloco **Emitente** (saída)
-   ou **Destinatário** (entrada), com *Tipo de Identificação* = Inscrição Estadual; *Pesquisar*.
-3. **NFC-e:** menu *NFC-e* > *Consulta por Emitente* (FIS_1484). *Data Emissão Inicial/Final* e a
-   inscrição no bloco **Emitente**; *Pesquisar*.
-4. Na lista de notas: marca todas e baixa o XML/ZIP. Se o menu não responder, abre a tela pelo campo
-   *Função* do topo (FIS_1322 / FIS_1484).
-5. Abre ZIP, confere cada XML pela IE/CNPJ (emitente na saída e NFC-e, destinatário na entrada) e salva
-   sem duplicar: rodar de novo a mesma competência não repete arquivos.
+O ATF **não entrega o XML na hora**: a consulta com *Tipo de Exibição = XML* gera, minutos depois,
+uma mensagem com o anexo em **Minhas Mensagens** (sino do topo; SEG_064). Por isso o robô trabalha
+em **rodadas de um login** (até 15 empresas):
+
+1. **Login** com LOGIN e SENHA do contador, uma vez para a rodada inteira.
+2. **Envia as consultas**, uma por empresa e por XML marcado:
+   - *NF-e Saída / Entrada:* menu *NF-e* > *Consulta NF-e por Emitentes/Destinatários* (FIS_1322).
+     *Data de Emissão* do 1º ao último dia da competência; IE no bloco **Emitente** (saída) **ou**
+     **Destinatário** (entrada), nunca nos dois; *Pesquisar* do bloco (traz o nome);
+     *Tipo de Exibição* = XML; *Consultar*.
+   - *NFC-e:* menu *NFC-e* > *Consulta por Emitente* (FIS_1484), IE no bloco **Emitente**, mesmo final.
+3. **Recolhe as mensagens:** abre Minhas Mensagens, lê as mensagens novas dos remetentes FIS_1322 e
+   FIS_1484 (enviadas depois do início da rodada, pela hora do próprio ATF) e baixa os anexos. Repete a
+   cada 30 s, por até 30 min, até chegarem todas as respostas.
+4. **Distribui pelo conteúdo:** as mensagens têm todas o mesmo assunto e chegam fora de ordem, então cada
+   XML vai para a empresa pela IE/CNPJ de dentro dele (emitente → NF-e Saída/NFC-e; destinatário →
+   NF-e Entrada). Uma venda entre duas empresas da rodada vai para as duas. XML de empresa fora da
+   rodada (consulta feita à mão no mesmo login) vai para `_sem_empresa` e não conta como resposta.
+5. Empresa/tipo sem XML: **Sem notas** se todas as respostas chegaram; **Erro** ("o ATF não entregou em
+   30 min") se o tempo acabou.
 
 **Proteção do login do contador:** se o ATF recusar um login, o robô não tenta de novo com a mesma
 senha nas outras empresas (tentativas repetidas podem bloquear o acesso). Elas ficam como
@@ -104,7 +115,8 @@ e `log.txt`. É com esse pacote que ajustamos o roteiro.
 - [x] Portal: login, agendamento por competência e horário, acompanhamento, cancelamento, empresas e logins
 - [x] Banco próprio: fila com agendamento futuro, agrupamento por login, regras de acesso por cliente
 - [x] Robô: login do contador, telas FIS_1322 e FIS_1484, blocos Emitente/Destinatário, captura do download, modo assistido
-- [ ] **Validar no ATF real**: tela de login e o que aparece depois do *Pesquisar* (lista de notas e botão de download)
+- [x] Fluxo de Minhas Mensagens: consulta com Tipo de Exibição XML, recolha dos anexos, distribuição pelo conteúdo
+- [ ] **Validar no ATF real**: tela de login, resposta ao clicar em Consultar e a tela da mensagem aberta (link do anexo)
 
 ## Testes
 
@@ -112,6 +124,7 @@ e `log.txt`. É com esse pacote que ajustamos o roteiro.
 cd robo && python -m pytest -q tests
 ```
 
-Inclui um **ATF simulado** com o menu, as telas FIS_1322/FIS_1484 e os blocos Emitente/Destinatário,
-num Chrome de verdade: prova que duas empresas do mesmo login usam uma sessão só e que uma senha
-recusada não é tentada de novo.
+Inclui um **ATF simulado** num Chrome de verdade, com o menu, as telas FIS_1322/FIS_1484, os blocos
+Emitente/Destinatário (recusa os dois juntos) e a entrega atrasada em Minhas Mensagens, fora de ordem,
+com mensagem antiga e consulta manual de outra empresa no meio. Prova também que a rodada usa um login
+só e que uma senha recusada não é tentada de novo.

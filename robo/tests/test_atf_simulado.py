@@ -1,10 +1,12 @@
-"""Ponta a ponta contra um ATF de mentira que imita as telas reais (out/2026):
+"""Ponta a ponta contra um ATF de mentira que imita o fluxo real (out/2026):
 
 - login (dentro de quadro) com o login do contador;
-- menu lateral "/ MEN" > "NF-e" > "Consulta NF-e por Emitentes/Destinatários" (blocos Emitente e
-  Destinatário, "Tipo de Identificação" = Inscrição Estadual, botão Pesquisar de cada bloco);
-- "NFC-e" > "Consulta por Emitente" ("Data Emissão Inicial/Final");
-- lista de notas com "marcar todos" e botão "Download XML" que devolve um ZIP.
+- menu "/ MEN" > "NF-e" > "Consulta NF-e por Emitentes/Destinatários": Data de Emissão, blocos
+  Emitente e Destinatário (o ATF recusa os dois juntos), "Pesquisar" do bloco traz o nome,
+  "Tipo de Exibição" = XML e "Consultar";
+- "NFC-e" > "Consulta por Emitente";
+- o XML NÃO vem na hora: chega segundos depois em "Minhas Mensagens" (sino), fora de ordem, como
+  anexo ZIP; consulta sem notas gera mensagem sem anexo; há mensagens antigas e de outra empresa.
 
 Os nomes dos campos são propositalmente estranhos: o robô precisa achá-los pelos textos da tela.
 Precisa do Chromium (CHROME_TESTE ou o do Playwright).
@@ -19,7 +21,7 @@ import threading
 import time
 import urllib.request
 import zipfile
-from datetime import date
+from datetime import date, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -32,10 +34,11 @@ from util import IE_EMPRESA, IE_OUTRA, nfe
 
 EMPRESA = "11222333000181"
 FORNECEDOR = "45723174000110"
+IE_ESTRANHA = "161112226"  # empresa fora da rodada (consulta feita à mão no mesmo login)
 CHROME = os.environ.get("CHROME_TESTE") or next(
     (str(p) for p in Path("/opt/pw-browsers").glob("chromium-*/chrome-linux/chrome")), shutil.which("chromium") or "")
-LOGINS: list[str] = []
-CONSULTAS: list[dict] = []
+
+ESTADO = {"logins": [], "consultas": [], "mensagens": [], "recusas": []}
 
 
 def _zip(itens: dict[str, bytes]) -> bytes:
@@ -46,41 +49,93 @@ def _zip(itens: dict[str, bytes]) -> bytes:
     return buf.getvalue()
 
 
-TOPO = ('<header><b>Sistema ATF</b> <input placeholder="Função" id="f1"> '
-        '<a href="/atf/sair" title="Sair">⎋</a></header>'
-        '<nav><a href="/atf/home">/ MEN</a> <a href="/atf/menu/nfe">NF-e</a> <a href="/atf/menu/nfce">NFC-e</a></nav>')
+def _agora() -> str:
+    return datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+
+
+def topo():
+    return ('<header><b>Sistema ATF</b> <input placeholder="Função" id="f1"> '
+            '<a href="/atf/mensagens" title="Mensagens">🔔</a> <a href="/atf/sair" title="Sair">⎋</a></header>'
+            f'<div class="sessao">Login: mar00134 · Sessão expira em: 14 min · {_agora()} Produção</div>'
+            '<nav><a href="/atf/home">/ MEN</a> <a href="/atf/menu/nfe">NF-e</a> <a href="/atf/menu/nfce">NFC-e</a></nav>')
+
 
 BLOCO = """<div class="secao">{nome}</div>
 <div class="form-floating"><select id="s{n}"><option>CPF</option><option>CNPJ</option>
 <option selected>Inscrição Estadual</option></select><label>Tipo de Identificação</label></div>
 <div class="form-floating"><input id="x{n}" class="form-control"><label>Número</label></div>
-<button type="button" onclick="pesquisar('{nome}', 'x{n}', 's{n}')">Pesquisar</button>
-<div class="form-floating"><input id="r{n}"><label>Nome/Razão Social</label></div>"""
+<button type="button" onclick="document.getElementById('r{n}').value = 'EMPRESA ' + document.getElementById('x{n}').value">Pesquisar</button>
+<div class="form-floating"><input id="r{n}"><label>Nome/Razão Social</label></div>
+<label>UF</label><select><option>---</option></select>"""
 
-SCRIPT = """<script>function pesquisar(bloco, campo, sel) {
-  const q = new URLSearchParams({tela: TELA, bloco: bloco, ini: document.getElementById('d1').value,
-    fim: document.getElementById('d2').value, ie: document.getElementById(campo).value,
-    tipo: document.getElementById(sel).value});
-  location.href = '/atf/resultado?' + q.toString();
-}</script>"""
+RODAPE = """<label>Tipo de Exibição</label><select id="te"><option>HTML</option><option>PDF</option><option>XML</option></select>
+<button type="button" onclick="consultar()"><i class="bi-search"></i> Consultar</button>
+<button type="button" onclick="limpar()">Limpar</button>
+<div id="aviso"></div>
+<script>
+function v(id) { const e = document.getElementById(id); return e ? e.value : ''; }
+function limpar() { document.querySelectorAll('input').forEach(e => { if (e.id !== 'f1') e.value = ''; }); }
+async function consultar() {
+  const q = new URLSearchParams({tela: TELA, ini: v('d1'), fim: v('d2'), emit: v('x1'), dest: v('x2'),
+                                 exib: v('te'), tipo1: v('s1'), tipo2: v('s2'), nome1: v('r1'), nome2: v('r2')});
+  const r = await fetch('/atf/consultar?' + q.toString());
+  const a = document.getElementById('aviso');
+  a.className = 'alert'; a.innerText = await r.text();
+}
+</script>"""
 
 
 def tela_nfe():
-    return (TOPO + '<h4>Consulta NF-e por Emitentes/Destinatários</h4><h5>Consulta NF-e</h5>'
+    return (topo() + '<h4>Consulta NF-e por Emitentes/Destinatários</h4><h5>Consulta NF-e</h5>'
             '<label>Data de Emissão</label><input id="d1"> - <input id="d2">'
             '<label>Número</label><input id="n1"> a <input id="n2">'
             '<label>Situação</label><select><option>---</option></select>'
             '<label>Operação</label><select><option>---</option></select>'
             + BLOCO.format(nome="Emitente", n=1) + BLOCO.format(nome="Destinatário", n=2)
-            + "<script>const TELA='nfe'</script>" + SCRIPT)
+            + "<script>const TELA='nfe'</script>" + RODAPE)
 
 
 def tela_nfce():
-    return (TOPO + '<h4>Consulta Genérica da NFC-e</h4><h5>Filtros de Consulta</h5>'
+    return (topo() + '<h4>Consulta Genérica da NFC-e</h4><h5>Filtros de Consulta</h5>'
             '<label>Data Emissão Inicial</label><input id="d1"><label>Data Emissão Final</label><input id="d2">'
             '<label>Número</label><input id="n1"><label>Situação</label><select><option>---</option></select>'
             '<label>Chave Acesso</label><input id="ch"><button type="button">Adicionar</button>'
-            + BLOCO.format(nome="Emitente", n=1) + "<script>const TELA='nfce'</script>" + SCRIPT)
+            + BLOCO.format(nome="Emitente", n=1) + BLOCO.format(nome="Destinatário", n=2)
+            + "<script>const TELA='nfce'</script>" + RODAPE)
+
+
+def _nova_mensagem(codigo: str, assunto: str, atraso: float, anexo: bytes | None, texto: str):
+    pronta = datetime.now() + timedelta(seconds=atraso)
+    ESTADO["mensagens"].append({"id": len(ESTADO["mensagens"]) + 1, "codigo": codigo, "assunto": assunto,
+                                "pronta": pronta, "anexo": anexo, "texto": texto})
+
+
+def _responder(q: dict) -> str:
+    """O que o ATF faria com a consulta: gera (com atraso) a mensagem com o ZIP."""
+    ESTADO["consultas"].append(q)
+    if q["emit"] and q["dest"]:
+        ESTADO["recusas"].append(q)
+        return "Erro: informe apenas o Emitente ou o Destinatário."
+    assert (q["ini"], q["fim"], q["exib"]) == ("01/09/2026", "30/09/2026", "XML"), q
+    assert q["tipo1"] == "Inscrição Estadual" and q["tipo2"] == "Inscrição Estadual", q
+    ie = q["emit"] or q["dest"]
+    assert q["nome1" if q["emit"] else "nome2"] == f"EMPRESA {ie}", "Pesquisar do bloco não foi clicado"
+    if q["tela"] == "nfce":
+        _nova_mensagem("FIS_1484", "NFCe: Consulta Genérica da NFC-e", 2,
+                       _zip({"c1.xml": nfe(EMPRESA, "", 5, modelo="65", ie_emit=ie)}), f"Consulta NFC-e emitente {ie}")
+    elif q["emit"]:
+        _nova_mensagem("FIS_1322", "NFe: Consulta Genérica (Ano 2026)", 4,
+                       _zip({"s1.xml": nfe(EMPRESA, FORNECEDOR, 1, ie_emit=ie, ie_dest=IE_OUTRA),
+                             "s2.xml": nfe(EMPRESA, FORNECEDOR, 2, ie_emit=ie)}), f"Consulta emitente {ie}")
+    elif ie == IE_OUTRA:
+        # a Mercado comprou da Padaria (nota s1): mesma nota é saída de uma e entrada da outra
+        _nova_mensagem("FIS_1322", "NFe: Consulta Genérica (Ano 2026)", 1,
+                       _zip({"e1.xml": nfe(EMPRESA, FORNECEDOR, 1, ie_emit=IE_EMPRESA, ie_dest=IE_OUTRA)}),
+                       f"Consulta destinatário {ie}")
+    else:
+        _nova_mensagem("FIS_1322", "NFe: Consulta Genérica (Ano 2026)", 1, None,
+                       f"Consulta destinatário {ie}: nenhum registro encontrado.")
+    return "Solicitação registrada. O resultado será enviado para Minhas Mensagens."
 
 
 class AtfFalso(BaseHTTPRequestHandler):
@@ -96,20 +151,13 @@ class AtfFalso(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(dados)
 
-    def _arquivo(self, dados: bytes):
-        self.send_response(200)
-        self.send_header("Content-Type", "application/zip")
-        self.send_header("Content-Disposition", 'attachment; filename="xml.zip"')
-        self.end_headers()
-        self.wfile.write(dados)
-
     def do_GET(self):
         u = urlparse(self.path)
-        q = {k: v[0] for k, v in parse_qs(u.query).items()}
+        q = {k: v[0] for k, v in parse_qs(u.query, keep_blank_values=True).items()}
         logado = "sessao=ok" in (self.headers.get("Cookie") or "")
         if u.path == "/atf/":
             if logado:
-                self._html(TOPO + "Bem-vindo")
+                self._html(topo() + "Bem-vindo")
             else:
                 self._html('<iframe name="principal" src="/atf/login" width="600" height="300"></iframe>')
         elif u.path == "/atf/login":
@@ -118,47 +166,56 @@ class AtfFalso(BaseHTTPRequestHandler):
         elif not logado:
             self._html("Sessão expirada. Faça login.")
         elif u.path == "/atf/home":
-            self._html(TOPO + "Menu principal")
+            self._html(topo() + "Menu principal")
         elif u.path == "/atf/menu/nfe":
-            self._html(TOPO + '<a href="#">NF-E ↲</a><a href="/atf/x">Consulta Completa</a>'
+            self._html(topo() + '<a href="#">NF-E ↲</a><a href="/atf/x">Consulta Completa</a>'
                        '<a href="/atf/fis1322">Consulta NF-e por Emitentes/Destinatários</a><a href="#">Gerar XML NF-e</a>')
         elif u.path == "/atf/menu/nfce":
-            self._html(TOPO + '<a href="#">NFC-E ↲</a><a href="/atf/x">Consulta por CPF</a>'
+            self._html(topo() + '<a href="#">NFC-E ↲</a><a href="/atf/x">Consulta por CPF</a>'
                        '<a href="/atf/fis1484">Consulta por Emitente</a><a href="/atf/x">Consultar</a>')
         elif u.path == "/atf/fis1322":
             self._html(tela_nfe())
         elif u.path == "/atf/fis1484":
             self._html(tela_nfce())
-        elif u.path == "/atf/resultado":
-            CONSULTAS.append(q)
-            assert (q["ini"], q["fim"], q["tipo"]) == ("01/09/2026", "30/09/2026", "Inscrição Estadual"), q
-            if q["ie"] == IE_OUTRA and q["bloco"] == "Destinatário":
-                self._html(TOPO + "Nenhum registro encontrado para os filtros informados.")
-                return
-            self._html(TOPO + '<table><thead><tr><th><input type="checkbox" id="tds"></th><th>Chave</th></tr></thead>'
-                       '<tbody><tr><td><input type="checkbox"></td><td>2526...</td></tr></tbody></table>'
-                       f'<button onclick="if(document.getElementById(\'tds\').checked)location.href=\'/atf/arquivo?'
-                       f'{u.query}\'">Download XML</button>')
-        elif u.path == "/atf/arquivo":
-            ie, bloco, tela = q["ie"], q["bloco"], q["tela"]
-            if tela == "nfce":
-                itens = {"c1.xml": nfe(EMPRESA, "", 5, modelo="65", ie_emit=ie)}
-            elif bloco == "Emitente":
-                itens = {"s1.xml": nfe(EMPRESA, FORNECEDOR, 1, ie_emit=ie), "s2.xml": nfe(EMPRESA, FORNECEDOR, 2, ie_emit=ie)}
-            else:
-                itens = {"e1.xml": nfe(FORNECEDOR, EMPRESA, 3, ie_dest=ie)}
-            self._arquivo(_zip(itens))
+        elif u.path == "/atf/consultar":
+            dados = _responder(q).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(dados)
+        elif u.path == "/atf/mensagens":
+            agora = datetime.now()
+            linhas = "".join(
+                f'<tr><td><input type="checkbox"></td><td>✉ {"<img src=/clip.png alt=anexo>" if m["anexo"] else ""}</td>'
+                f'<td><a href="/atf/mensagem?id={m["id"]}">{m["codigo"]} - Consulta Genérica ({m["id"]} Mensagens )</a></td>'
+                f'<td><a href="/atf/mensagem?id={m["id"]}">{m["assunto"]}</a></td>'
+                f'<td>{m["pronta"]:%d/%m/%Y %H:%M:%S}</td><td>{m["pronta"] + timedelta(days=5):%d/%m/%Y}</td></tr>'
+                for m in sorted(ESTADO["mensagens"], key=lambda m: m["pronta"], reverse=True) if m["pronta"] <= agora)
+            self._html(topo() + '<h4>Minhas Mensagens</h4><table><thead><tr><th></th><th></th><th>Remetente</th>'
+                       f'<th>Assunto</th><th>Enviada</th><th>Validade</th></tr></thead><tbody>{linhas}</tbody></table>')
+        elif u.path == "/atf/mensagem":
+            m = ESTADO["mensagens"][int(q["id"]) - 1]
+            anexo = f'<a href="/atf/anexo?id={m["id"]}">xml_{m["id"]}.zip</a>' if m["anexo"] else ""
+            self._html(topo() + f'<h4>Minhas Mensagens</h4><h5>{m["assunto"]}</h5><p>{m["texto"]}</p>{anexo}'
+                       '<a href="/atf/mensagens">Voltar</a>')
+        elif u.path == "/atf/anexo":
+            dados = ESTADO["mensagens"][int(q["id"]) - 1]["anexo"]
+            self.send_response(200)
+            self.send_header("Content-Type", "application/zip")
+            self.send_header("Content-Disposition", f'attachment; filename="xml_{q["id"]}.zip"')
+            self.end_headers()
+            self.wfile.write(dados)
         elif u.path == "/atf/sair":
             self._html("Sessão encerrada", cookie="sessao=; Max-Age=0; Path=/")
         else:
-            self._html(TOPO + "Página")
+            self._html(topo() + "Página")
 
     def do_POST(self):
         tamanho = int(self.headers.get("Content-Length") or 0)
         campos = {k: v[0] for k, v in parse_qs(self.rfile.read(tamanho).decode()).items()}
-        LOGINS.append(campos.get("u_a1", ""))
+        ESTADO["logins"].append(campos.get("u_a1", ""))
         if campos.get("u_a1") == "mar00134" and campos.get("p_b2") == "certa":
-            self._html(TOPO + "Bem-vindo ao ATF", cookie="sessao=ok; Path=/")
+            self._html(topo() + "Bem-vindo ao ATF", cookie="sessao=ok; Path=/")
         else:
             self._html("Usuário ou senha inválidos.")
 
@@ -190,49 +247,60 @@ def ambiente(tmp_path_factory):
     cfg["chrome"].update(porta=porta_cdp, pasta_downloads=str(pasta / "downloads"))
     cfg["pastas"].update(destino=str(pasta / "xml"), diagnostico=str(pasta / "diag"))
     cfg["atf"].update(url_login=f"http://127.0.0.1:{servidor.server_port}/atf/", segundos_login=15,
-                      segundos_automatico=20, segundos_assistido=2)
+                      segundos_resposta=5, segundos_assistido=2, minutos_espera_mensagens=1,
+                      segundos_entre_verificacoes=2)
     yield cfg, pasta
     chrome.terminate()
     servidor.shutdown()
 
 
-def _trabalho(ie, nome, tipos, senha="certa", codigo=""):
+def _trabalho(ie, nome, tipos, senha="certa", codigo="", cnpj=""):
     return robo_xml.Trabalho(ie=ie, nome=nome, login="mar00134", senha=senha, tipos=tipos,
-                             inicio=date(2026, 9, 1), fim=date(2026, 9, 30), cnpj="", codigo=codigo)
+                             inicio=date(2026, 9, 1), fim=date(2026, 9, 30), cnpj=cnpj, codigo=codigo)
 
 
-def test_duas_empresas_um_login(ambiente):
+def test_rodada_um_login_xml_pelas_mensagens(ambiente):
     cfg, pasta = ambiente
-    LOGINS.clear()
+    ESTADO["logins"].clear()
+    # mensagem antiga (de antes da rodada) e uma de empresa fora da rodada: não podem atrapalhar
+    _nova_mensagem("FIS_1322", "NFe: Consulta Genérica (Ano 2026)", -3600,
+                   _zip({"velha.xml": nfe(EMPRESA, FORNECEDOR, 99, ie_emit=IE_EMPRESA)}), "antiga")
     executor = robo_xml.Executor(cfg)
     try:
-        r1 = executor.executar(_trabalho(IE_EMPRESA, "Padaria", ["nfe_saida", "nfe_entrada"], codigo="015"))
-        r2 = executor.executar(_trabalho(IE_OUTRA, "Mercado", ["nfe_entrada", "nfce"], codigo="016"))
+        threading.Timer(3, lambda: _nova_mensagem(
+            "FIS_1322", "NFe: Consulta Genérica (Ano 2026)", 0,
+            _zip({"x.xml": nfe(FORNECEDOR, "", 7, ie_emit=IE_ESTRANHA)}), "consulta manual")).start()
+        r1, r2 = executor.executar_rodada([
+            _trabalho(IE_EMPRESA, "Padaria", ["nfe_saida", "nfe_entrada"], codigo="015"),
+            _trabalho(IE_OUTRA, "Mercado", ["nfe_entrada", "nfce"], codigo="016"),
+        ])
     finally:
         executor.fechar()
+
+    assert ESTADO["logins"] == ["mar00134"]  # uma sessão só para a rodada
+    assert not ESTADO["recusas"]  # nunca Emitente e Destinatário juntos
+    blocos = [("E" if c["emit"] else "D", c["emit"] or c["dest"], c["tela"]) for c in ESTADO["consultas"][-4:]]
+    assert blocos == [("E", IE_EMPRESA, "nfe"), ("D", IE_EMPRESA, "nfe"), ("D", IE_OUTRA, "nfe"), ("E", IE_OUTRA, "nfce")]
+
     assert r1.status == "concluido", r1
-    assert r1.qtd_xml == 3 and r1.detalhes["nfe_saida"]["salvos"] == 2 and r1.detalhes["nfe_entrada"]["salvos"] == 1
+    assert r1.detalhes["nfe_saida"]["salvos"] == 2 and r1.detalhes["nfe_entrada"]["sem_notas"], r1
     assert r2.status == "concluido", r2
-    assert r2.detalhes["nfe_entrada"]["sem_notas"] is True and r2.detalhes["nfce"]["salvos"] == 1
-    assert "assistido" not in r1.mensagem + r2.mensagem  # tudo no automático
-    assert LOGINS == ["mar00134"]  # uma sessão só para as duas empresas
+    assert r2.detalhes["nfe_entrada"]["salvos"] == 1 and r2.detalhes["nfce"]["salvos"] == 1, r2
     base = pasta / "xml"
-    assert len(list(base.glob("015 - Padaria/2026-09/NF-e Saida/*.xml"))) == 2
-    assert len(list(base.glob("015 - Padaria/2026-09/NF-e Entrada/*.xml"))) == 1
+    assert len(list(base.glob("015 - Padaria/2026-09/NF-e Saida/*.xml"))) == 2  # a antiga (nº 99) não entrou
+    assert len(list(base.glob("016 - Mercado/2026-09/NF-e Entrada/*.xml"))) == 1
     assert len(list(base.glob("016 - Mercado/2026-09/NFC-e/*.xml"))) == 1
-    blocos = [(c["tela"], c["bloco"], c["ie"]) for c in CONSULTAS[-4:]]
-    assert blocos == [("nfe", "Emitente", IE_EMPRESA), ("nfe", "Destinatário", IE_EMPRESA),
-                      ("nfe", "Destinatário", IE_OUTRA), ("nfce", "Emitente", IE_OUTRA)]
+    assert len(list(base.glob("_sem_empresa/2026-09/*.xml"))) == 1  # a da consulta manual
 
 
 def test_senha_errada_nao_insiste(ambiente):
     cfg, _ = ambiente
-    LOGINS.clear()
+    ESTADO["logins"].clear()
     executor = robo_xml.Executor(cfg)
     try:
-        r1 = executor.executar(_trabalho(IE_EMPRESA, "Padaria", ["nfe_saida"], senha="errada"))
-        r2 = executor.executar(_trabalho(IE_OUTRA, "Mercado", ["nfe_saida"], senha="errada"))
+        r1 = executor.executar_rodada([_trabalho(IE_EMPRESA, "Padaria", ["nfe_saida"], senha="errada")])
+        r2 = executor.executar_rodada([_trabalho(IE_OUTRA, "Mercado", ["nfe_saida"], senha="errada")])
     finally:
         executor.fechar()
-    assert r1.status == r2.status == "senha_invalida", (r1, r2)
-    assert LOGINS == ["mar00134"]  # a segunda empresa não tentou de novo
+    assert r1[0].status == r2[0].status == "senha_invalida", (r1, r2)
+    assert ESTADO["logins"] == ["mar00134"]  # a segunda rodada não tentou de novo
