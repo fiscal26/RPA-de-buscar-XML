@@ -110,7 +110,7 @@ class CapturadorArquivos:
     - arquivo .xml/.zip novo na pasta Downloads do Chrome (caso você baixe à mão).
     """
 
-    def __init__(self, contexto, pasta_downloads: str):
+    def __init__(self, contexto, pasta_downloads: str, log=None):
         self.contexto = contexto
         self.pasta = Path(pasta_downloads)
         self.inicio = time.time()
@@ -120,6 +120,7 @@ class CapturadorArquivos:
         self._vistos: set[Path] = set()
         self._assinaturas: set[int] = set()
         self.ultimo_novo = 0.0
+        self.log = log or (lambda texto: None)
 
         for page in contexto.pages:
             page.on("download", self._novo_download)
@@ -151,14 +152,21 @@ class CapturadorArquivos:
         except Exception:
             pass
 
-    def _guardar(self, nome: str, dados: Optional[bytes]) -> bool:
-        if not dados or not eh_xml_ou_zip(dados):
+    def _guardar(self, nome: str, dados: Optional[bytes], download: bool = False) -> bool:
+        """Download (o usuário/robô pediu o arquivo) é guardado seja qual for o tipo; resposta do site
+        só se for XML/ZIP."""
+        if not dados:
+            if download:
+                self.log(f"Download '{nome}' chegou vazio ou não pôde ser lido")
+            return False
+        if not download and not eh_xml_ou_zip(dados):
             return False
         assinatura = hash(dados)
         if assinatura in self._assinaturas:
             return False  # o mesmo arquivo pode chegar como download e como resposta
         self._assinaturas.add(assinatura)
         self.recebidos.append((nome, dados))
+        self.log(f"Arquivo recebido: {nome} ({len(dados):,} bytes)".replace(",", "."))
         return True
 
     def verificar(self) -> int:
@@ -166,7 +174,7 @@ class CapturadorArquivos:
         novos = 0
         while self._downloads:
             d = self._downloads.pop(0)
-            novos += self._guardar(d.suggested_filename or "download", self._ler_download(d))
+            novos += self._guardar(d.suggested_filename or "download", self._ler_download(d), download=True)
         while self._respostas:
             r = self._respostas.pop(0)
             try:

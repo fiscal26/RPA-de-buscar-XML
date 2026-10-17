@@ -40,7 +40,7 @@ import arquivos
 import config
 import cripto
 import planilha
-from atf_pb import (TIPO_TELA, AtfPB, Diagnostico, EtapaNaoConcluida, Recolha,
+from atf_pb import (TIPO_TELA, MensagensIndisponiveis, AtfPB, Diagnostico, EtapaNaoConcluida, Recolha,
                     SenhaInvalida, SessaoExpirada, SiteForaDoAr)
 from navegador import Chrome, ChromeIndisponivel
 
@@ -129,7 +129,7 @@ class Executor:
         except EtapaNaoConcluida as e:
             log.info("   motivo: %s", e)
             return [Resultado("erro", FALHA_NO_RETORNO)] * len(trabalhos)
-        except ChromeIndisponivel:
+        except (ChromeIndisponivel, MensagensIndisponiveis):
             raise
         except Exception:
             log.exception("   falha inesperada")
@@ -190,6 +190,10 @@ class Executor:
                 try:
                     recolha = atf.recolher(esperadas, desde, self.cfg["atf"]["minutos_espera_mensagens"], relevante)
                     break
+                except MensagensIndisponiveis as e:
+                    if e.recolha is not None:  # salva o que já foi baixado antes de parar
+                        self._salvar_recolha(trabalhos, alvos, e.recolha)
+                    raise
                 except SessaoExpirada:
                     atf.login_atual = ""
                     self._entrar(t0)
@@ -197,13 +201,35 @@ class Executor:
                         raise EtapaNaoConcluida("a sessão do ATF expirou duas vezes")
 
         # 3) distribui os XML pelo conteúdo e salva
-        xmls = [x for nome, dados in recolha.arquivos for x in arquivos.extrair(dados, nome)]
-        por_destino, sobras = arquivos.distribuir(xmls, alvos)
-        if sobras:
-            n = arquivos.salvar_sobras(sobras, self.cfg["pastas"]["destino"])
-            log.info("   %d XML de empresas fora desta rodada salvos em _sem_empresa", n)
+        por_destino = self._salvar_recolha(trabalhos, alvos, recolha, salvar_empresas=False)
         completas = not recolha.tempo_esgotado
         return [self._resultado(t, envios, por_destino, recolha, completas) for t in trabalhos]
+
+    def _salvar_recolha(self, trabalhos: list[Trabalho], alvos, recolha: Recolha, salvar_empresas: bool = True):
+        """Distribui os arquivos baixados pelo conteúdo. Nada se perde: XML de empresa fora da rodada vai
+        para _sem_empresa e arquivo que não é XML/ZIP vai para _nao_identificados."""
+        destino = self.cfg["pastas"]["destino"]
+        xmls, brutos = [], []
+        for nome, dados in recolha.arquivos:
+            extraidos = arquivos.extrair(dados, nome)
+            if extraidos:
+                xmls.extend(extraidos)
+            else:
+                brutos.append((nome, dados))
+        if brutos:
+            for caminho, (nome, dados) in zip(arquivos.salvar_nao_identificados(brutos, destino), brutos):
+                log.warning("   ATENÇÃO: o arquivo baixado '%s' (%s, %d bytes) não é XML nem ZIP de XML; guardado em %s",
+                            nome, arquivos.tipo_de_arquivo(dados), len(dados), caminho)
+        por_destino, sobras = arquivos.distribuir(xmls, alvos)
+        if sobras:
+            n = arquivos.salvar_sobras(sobras, destino)
+            log.info("   %d XML de empresas fora desta rodada salvos em %s/_sem_empresa", n, arquivos.PASTA_BAIXADOS)
+        if salvar_empresas:
+            for t in trabalhos:
+                for tipo in t.tipos:
+                    if por_destino.get((t.ie, tipo)):
+                        arquivos.salvar(por_destino[(t.ie, tipo)], destino, t.nome, t.ie, t.cnpj, tipo, t.codigo)
+        return por_destino
 
     def _resultado(self, t: Trabalho, envios, por_destino, recolha: Recolha, completas: bool) -> Resultado:
         total = arquivos.Resumo()
@@ -364,6 +390,13 @@ class Robo:
             self.tarefas_atuais = lote
             try:
                 self.processar(lote)
+            except MensagensIndisponiveis as e:
+                log.error("ERRO: %s O robô vai parar; as tarefas voltam para a fila.", e)
+                for t in lote:
+                    self.portal.atualizar_tarefa(t["id"], {"status": "pendente", "iniciado_em": None, "robo": None})
+                self.tarefas_atuais = []
+                self.executor.fechar()
+                sys.exit(f"ERRO: {e} Confira o ATF no Chrome e ligue o robô de novo.")
             except ChromeIndisponivel as e:
                 self.chrome_ok = False
                 log.error("%s — as tarefas voltam para a fila; nova tentativa em 60 s.", e)
@@ -441,6 +474,7 @@ def rodar_local(cfg: dict, arquivo: str, inicio: date, fim: date):
             senhas.setdefault(emp.login.lower(), emp.senha)
     executor = Executor(cfg)
     resultados = []
+    parada = ""
     try:
         prontos = []
         for emp in leitura.empresas:
@@ -456,12 +490,20 @@ def rodar_local(cfg: dict, arquivo: str, inicio: date, fim: date):
                 rs = executor.executar_rodada([t for _, t in grupo])
             except ChromeIndisponivel as e:
                 sys.exit(str(e))
+            except MensagensIndisponiveis as e:
+                parada = str(e)
+                for emp, _ in grupo:
+                    resultados.append((emp, Resultado("erro", f"Parado: {e}")))
+                break
             for (emp, _), r in zip(grupo, rs):
                 log.info("   %s -> %s: %s", emp.nome, r.status, r.mensagem)
                 resultados.append((emp, r))
     finally:
         executor.fechar()
     log.info("Relatório: %s", salvar_relatorio(cfg, resultados, inicio))
+    if parada:
+        log.error("ERRO: %s O robô parou. O que já tinha sido baixado foi salvo; rode de novo mais tarde.", parada)
+        sys.exit(1)
 
 
 def salvar_relatorio(cfg, resultados, inicio: date) -> Path:

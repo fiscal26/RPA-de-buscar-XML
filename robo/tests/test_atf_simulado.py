@@ -44,7 +44,7 @@ CHROME = os.environ.get("CHROME_TESTE") or next(
     (str(p) for p in Path("/opt/pw-browsers").glob("chromium-*/chrome-linux/chrome")), shutil.which("chromium") or "")
 
 ESTADO = {"logins": [], "consultas": [], "mensagens": [], "recusas": [], "ultima_lista": 0.0, "lista_cedo": 0,
-          "blocos": {}, "abertas": []}
+          "blocos": {}, "abertas": [], "caixa_fora": 0}
 
 
 def _zip(itens: dict[str, bytes]) -> bytes:
@@ -246,6 +246,10 @@ class AtfFalso(BaseHTTPRequestHandler):
 
     def _mensagens(self, q: dict):
         agora = datetime.now()
+        if ESTADO["caixa_fora"] > 0 and q.get("limparSessao") == "true":  # ATF lento: a caixa não abre
+            ESTADO["caixa_fora"] -= 1
+            self._html("Aguarde...")
+            return
         if q.get("limparSessao") == "true":
             if time.time() - ESTADO["ultima_lista"] < INTERVALO_CAIXA:
                 ESTADO["lista_cedo"] += 1
@@ -325,7 +329,8 @@ def ambiente(tmp_path_factory):
     cfg["pastas"].update(destino=str(pasta / "xml"), diagnostico=str(pasta / "diag"))
     cfg["atf"].update(url_login=f"http://127.0.0.1:{servidor.server_port}/atf/", segundos_login=15,
                       segundos_resposta=5, segundos_assistido=2, minutos_espera_mensagens=1,
-                      segundos_entre_verificacoes=INTERVALO_CAIXA + 1)
+                      segundos_entre_verificacoes=INTERVALO_CAIXA + 1, segundos_carregar=3,
+                      segundos_nova_tentativa_mensagens=1)
     yield cfg, pasta
     chrome.terminate()
     servidor.shutdown()
@@ -367,11 +372,11 @@ def test_rodada_um_login_xml_pelas_mensagens(ambiente):
     assert r2.detalhes["nfe_entrada"]["salvos"] == 1 and r2.detalhes["nfce"]["salvos"] == 1, r2
     assert r3.status == "erro" and "não encontrou a IE" in r3.mensagem, r3
     base = pasta / "xml"
-    assert len(list(base.glob("015 - Padaria/2026-09/NF-e Saida/*.xml"))) == 2  # a antiga (nº 99) não entrou
-    assert not list(base.glob("015 - Padaria/2026-08"))  # resposta de outra competência não entrou
-    assert len(list(base.glob("016 - Mercado/2026-09/NF-e Entrada/*.xml"))) == 1
-    assert len(list(base.glob("016 - Mercado/2026-09/NFC-e/*.xml"))) == 1
-    assert len(list(base.glob("_sem_empresa/2026-09/*.xml"))) == 1  # a da consulta manual
+    assert len(list(base.glob("Arquivos baixados/015-Padaria/2026-09/NF-e Saida/*.xml"))) == 2  # a antiga (nº 99) não
+    assert not list(base.glob("Arquivos baixados/015-Padaria/2026-08"))  # resposta de outra competência não entrou
+    assert len(list(base.glob("Arquivos baixados/016-Mercado/2026-09/NF-e Entrada/*.xml"))) == 1
+    assert len(list(base.glob("Arquivos baixados/016-Mercado/2026-09/NFC-e/*.xml"))) == 1
+    assert len(list(base.glob("Arquivos baixados/_sem_empresa/2026-09/*.xml"))) == 1  # a da consulta manual
     assert ESTADO["lista_cedo"] == 0  # respeitou o intervalo da caixa de mensagens
     # só abre o necessário: com anexo, só a filha do clipe; sem anexo, para no "Nenhum registro satisfaz"
     por_mae: dict = {}
@@ -398,3 +403,30 @@ def test_senha_errada_nao_insiste(ambiente):
         executor.fechar()
     assert r1[0].status == r2[0].status == "senha_invalida", (r1, r2)
     assert ESTADO["logins"] == ["mar00134"]  # a segunda rodada não tentou de novo
+
+
+def test_caixa_lenta_tenta_de_novo(ambiente):
+    """Minhas Mensagens não abre 2 vezes: o robô espera e na 3ª tentativa consegue."""
+    cfg, pasta = ambiente
+    ESTADO["caixa_fora"] = 2
+    executor = robo_xml.Executor(cfg)
+    try:
+        (r,) = executor.executar_rodada([_trabalho(IE_EMPRESA, "Lenta", ["nfe_saida"], codigo="020")])
+    finally:
+        executor.fechar()
+    assert ESTADO["caixa_fora"] == 0
+    assert r.status == "concluido", r
+    assert list((pasta / "xml" / "Arquivos baixados" / "020-Lenta").glob("2026-09/NF-e Saida/*.xml"))
+
+
+def test_caixa_nao_abre_e_o_robo_para(ambiente):
+    """3 tentativas sem abrir Minhas Mensagens: o robô anuncia o erro e para (exceção sobe)."""
+    cfg, _ = ambiente
+    ESTADO["caixa_fora"] = 99
+    executor = robo_xml.Executor(cfg)
+    try:
+        with pytest.raises(robo_xml.MensagensIndisponiveis, match="3 tentativas"):
+            executor.executar_rodada([_trabalho(IE_EMPRESA, "Parada", ["nfe_saida"], codigo="021")])
+    finally:
+        executor.fechar()
+        ESTADO["caixa_fora"] = 0

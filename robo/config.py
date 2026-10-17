@@ -36,6 +36,7 @@ PADRAO = {
                 "menu": ["NF-e", "Consulta NF-e por Emitentes/Destinatários"],
                 "funcao": "FIS_1322",
                 "pagina": "FISf_ConsultarNFeXml2.do",
+                "pronta": 'input[name="edtDtInicial"]',  # a tela só está pronta com este campo
                 "titulo": "Consulta NF-e por Emitentes/Destinat",
                 "rotulos_data": ["Data de Emissão"],
             },
@@ -50,6 +51,7 @@ PADRAO = {
             "mensagens": {
                 "funcao": "SEG_064",
                 "pagina": "SEGf_MinhasMensagens.do",
+                "pronta": 'a[href*="abrirFilhas"], button[name="btnAtualizarMensagens"], button[name="btnVoltar"]',
                 "titulo": "Minhas Mensagens",
                 "botao": ['[title*="Mensage" i]', '[aria-label*="Mensage" i]', '[title*="Notifica" i]',
                           '[aria-label*="Notifica" i]', 'button:has(.bi-bell)', 'a:has(.bi-bell)',
@@ -70,6 +72,11 @@ PADRAO = {
         "minutos_espera_mensagens": 30,
         # O ATF só deixa consultar a caixa de mensagens de 1 em 1 minuto
         "segundos_entre_verificacoes": 65,
+        # O ATF às vezes é lento: quanto esperar uma tela carregar depois de um clique
+        "segundos_carregar": 20,
+        # Minhas Mensagens não abriu: espera e tenta de novo; depois de N tentativas o robô para
+        "tentativas_mensagens": 3,
+        "segundos_nova_tentativa_mensagens": 30,
         # Empresas por rodada (um login): envia todas as consultas e depois recolhe as mensagens
         "empresas_por_rodada": 15,
         # Tempo que o modo assistido espera você concluir no Chrome.

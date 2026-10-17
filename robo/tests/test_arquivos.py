@@ -39,7 +39,7 @@ def test_saida_organizada_e_separa_outra_empresa(tmp_path):
             ("2.xml", nfe(EMPRESA, OUTRA, 2, "2026-10-01", ie_emit=IE_EMPRESA)),
             ("3.xml", nfe(OUTRA, EMPRESA, 3, ie_emit=IE_OUTRA)), ("ruim.xml", b"<a/>")]
     r = arquivos.salvar(xmls, tmp_path, "Padaria: Centro", IE_EMPRESA, EMPRESA, "nfe_saida", codigo="015")
-    base = tmp_path / "015 - Padaria Centro"
+    base = tmp_path / "Arquivos baixados" / "015-Padaria Centro"
     assert (base / "2026-09" / "NF-e Saida" / f"{chave(EMPRESA, numero=1)}.xml").exists()
     assert (base / "2026-10" / "NF-e Saida" / f"{chave(EMPRESA, '2610', numero=2)}.xml").exists()
     assert len(list((base / "_conferir").iterdir())) == 1
@@ -53,20 +53,20 @@ def test_entrada_confere_destinatario_pela_ie_sem_cnpj(tmp_path):
     r = arquivos.salvar([("x.xml", nfe(OUTRA, EMPRESA, 9, ie_dest=IE_EMPRESA))], tmp_path, "Loja", IE_EMPRESA, "",
                         "nfe_entrada")
     assert r.salvos == 1 and r.conferir == 0
-    assert list(tmp_path.glob("Loja - IE 16.012.345-3/2026-09/NF-e Entrada/*.xml"))
+    assert list(tmp_path.glob("Arquivos baixados/Loja/2026-09/NF-e Entrada/*.xml"))
 
 
 def test_nfce(tmp_path):
     r = arquivos.salvar([("c.xml", nfe(EMPRESA, "", 4, modelo="65", ie_emit=IE_EMPRESA))], tmp_path, "Loja",
                         IE_EMPRESA, EMPRESA, "nfce")
-    assert r.salvos == 1 and list(tmp_path.glob("*/2026-09/NFC-e/*.xml"))
+    assert r.salvos == 1 and list(tmp_path.glob("Arquivos baixados/*/2026-09/NFC-e/*.xml"))
 
 
 def test_evento_vai_para_subpasta(tmp_path):
     ch = chave(EMPRESA, numero=1)
     r = arquivos.salvar([("ev.xml", evento(EMPRESA, ch))], tmp_path, "Loja", IE_EMPRESA, EMPRESA, "nfe_saida")
     assert r.salvos == 1
-    assert list(tmp_path.glob("*/2026-09/NF-e Saida/Eventos/*.xml"))
+    assert list(tmp_path.glob("Arquivos baixados/*/2026-09/NF-e Saida/Eventos/*.xml"))
 
 
 def test_distribuir_pelo_conteudo():
@@ -83,3 +83,20 @@ def test_distribuir_pelo_conteudo():
     assert [n for n, _ in por[(IE_OUTRA, "nfce")]] == ["c"]
     assert (IE_EMPRESA, "nfe_entrada") not in por
     assert [n for n, _ in sobras] == ["e"]
+
+
+def test_pasta_id_nome(tmp_path):
+    assert arquivos.pasta_empresa(tmp_path, "joao", IE_EMPRESA, "5") == tmp_path / "Arquivos baixados" / "5-joao"
+    assert arquivos.pasta_empresa(tmp_path, "joao", IE_EMPRESA).name == "joao"
+
+
+def test_arquivo_que_nao_e_xml_nao_se_perde(tmp_path):
+    salvos = arquivos.salvar_nao_identificados([("relatorio.pdf", b"%PDF-1.4 teste")], tmp_path)
+    assert salvos[0].parent == tmp_path / "Arquivos baixados" / "_nao_identificados"
+    assert salvos[0].read_bytes() == b"%PDF-1.4 teste" and salvos[0].suffix == ".pdf"
+    assert arquivos.tipo_de_arquivo(b"%PDF-1.4") == "PDF"
+
+
+def test_gzip(tmp_path):
+    import gzip
+    assert [n for n, _ in arquivos.extrair(gzip.compress(nfe(EMPRESA, OUTRA, 1)), "nota.xml.gz")] == ["nota.xml"]

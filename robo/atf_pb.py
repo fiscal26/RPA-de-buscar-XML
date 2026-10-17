@@ -145,6 +145,14 @@ class IeNaoEncontrada(Exception):
     pass
 
 
+class MensagensIndisponiveis(Exception):
+    """Minhas Mensagens não abriu depois de todas as tentativas: o robô para."""
+
+    def __init__(self, texto: str, recolha=None):
+        super().__init__(texto)
+        self.recolha = recolha  # o que já tinha sido baixado antes (é salvo antes de parar)
+
+
 @dataclass
 class Envio:
     """Uma consulta enviada (empresa + tipo). A resposta chega depois, em Minhas Mensagens."""
@@ -406,7 +414,12 @@ class AtfPB:
         if tela.get("pagina"):
             for frame in self.page.frames:
                 if tela["pagina"].lower() in (frame.url or "").lower():
-                    return frame
+                    # o endereço certo não basta: o ATF lento mostra a página ainda vazia ("Aguarde...")
+                    try:
+                        if not tela.get("pronta") or frame.locator(tela["pronta"]).count():
+                            return frame
+                    except Exception:
+                        continue
         for frame in self.page.frames:
             try:
                 if re.search(re.escape(tela["titulo"]), frame.evaluate("() => document.body ? document.body.innerText : ''"), re.I):
@@ -436,6 +449,15 @@ class AtfPB:
             raise
         pausa(self.page, 1.0, 1.8)
 
+    def _esperar_tela(self, tela: dict) -> bool:
+        """O ATF às vezes demora: espera a tela aparecer por até 'segundos_carregar'."""
+        limite = time.time() + self.atf["segundos_carregar"]
+        while time.time() < limite:
+            pausa(self.page, 0.8, 1.2)
+            if self._tela_aberta(tela):
+                return True
+        return False
+
     def abrir_tela(self, nome: str, recarregar: bool = True):
         """Abre uma tela do ATF: pelo endereço já visitado (no mesmo quadro), pelo link do menu, pelo
         botão (sino das mensagens), pelo texto do menu ou pelo campo Função do topo."""
@@ -458,12 +480,12 @@ class AtfPB:
             link = self._achar("", [f'a[href*="{tela["pagina"]}"]'])
             if link is not None:
                 link.click()
-                pausa(self.page, 1.5, 2.5)
+                self._esperar_tela(tela)
         if tela.get("botao") and not self._tela_aberta(tela):
             botao = self._achar("", tela["botao"])
             if botao is not None:
                 botao.click()
-                pausa(self.page, 1.5, 2.5)
+                self._esperar_tela(tela)
         # menu lateral: volta à raiz (/ MEN), entra no módulo e escolhe a consulta
         if tela.get("menu") and not self._tela_aberta(tela):
             for _ in range(2):
@@ -726,13 +748,35 @@ class AtfPB:
         espera = self.atf["segundos_entre_verificacoes"] - (time.time() - self._ultima_lista)
         if espera > 0:
             pausa(self.page, espera, espera + 2)
-        self.abrir_tela("mensagens", recarregar=True)
+        self._abrir_mensagens()
         self._ultima_lista = time.time()
         quadro = self._quadro_da_tela(self.atf["telas"]["mensagens"])
         try:
             return quadro.evaluate(_JS_MENSAGENS) if quadro is not None else []
         except Exception:
             return []
+
+    def _abrir_mensagens(self):
+        """Abre Minhas Mensagens. O ATF é lento às vezes: se não abrir, espera 30 s e tenta de novo;
+        depois de 3 tentativas, desiste e o robô para (MensagensIndisponiveis)."""
+        tentativas = self.atf["tentativas_mensagens"]
+        for tentativa in range(1, tentativas + 1):
+            try:
+                self.abrir_tela("mensagens", recarregar=True)
+                return
+            except SessaoExpirada:
+                raise
+            except Exception as e:
+                motivo = str(e) or e.__class__.__name__
+                if tentativa == tentativas:
+                    self.diag.salvar(self.page, "mensagens-nao-abriu")
+                    raise MensagensIndisponiveis(
+                        f"Minhas Mensagens não abriu depois de {tentativas} tentativas ({motivo}).") from e
+                espera = self.atf["segundos_nova_tentativa_mensagens"]
+                self.aviso(f"Minhas Mensagens não abriu ({motivo}). Tentativa {tentativa} de {tentativas}: "
+                           f"nova tentativa em {espera} s.")
+                self._url_tela.pop("mensagens", None)  # na próxima, abre do zero (sino)
+                pausa(self.page, espera, espera + 1)
 
     def _quadro_mensagens(self):
         """O quadro de conteúdo onde Minhas Mensagens foi aberta (continua sendo ele ao abrir as mensagens)."""
@@ -806,7 +850,7 @@ class AtfPB:
         anexo, ou vem sem anexo quando não há dados. Só conta se 'relevante(anexos, texto)' disser que é
         desta rodada (outra competência ou outra empresa não contam)."""
         recolha = Recolha()
-        capt = CapturadorArquivos(self.contexto, self.cfg["chrome"]["pasta_downloads"])
+        capt = CapturadorArquivos(self.contexto, self.cfg["chrome"]["pasta_downloads"], log=self.aviso)
         limite = time.time() + minutos * 60
         try:
             while True:
@@ -833,6 +877,11 @@ class AtfPB:
                     break
                 faltam = {c: n - recolha.recebidas.get(c, 0) for c, n in esperadas.items()}
                 self.aviso(f"Aguardando o ATF entregar os XML em Minhas Mensagens (faltam {faltam})...")
+        except MensagensIndisponiveis as e:
+            capt.verificar()
+            recolha.arquivos = list(capt.recebidos)
+            e.recolha = recolha  # o que já foi baixado é salvo antes de parar
+            raise
         finally:
             capt.verificar()
             capt.encerrar()

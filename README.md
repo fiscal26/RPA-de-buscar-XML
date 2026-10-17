@@ -4,14 +4,19 @@ Robô que entra no **ATF da SEFAZ-PB com o login do contador**, pesquisa as nota
 pela **inscrição estadual** e salva os XML da competência numa pasta do seu computador:
 
 ```
-<pasta destino>/
-  015 - Padaria Centro/            (ID - NOME FANTASIA; sem ID: "Nome - IE 16.012.345-3")
-    2026-09/
-      NF-e Saida/      <chave>.xml ...     empresa como emitente
-      NF-e Entrada/    <chave>.xml ...     empresa como destinatária
-      NFC-e/           <chave>.xml ...
-        Eventos/       cancelamentos, cartas de correção
-    _conferir/         XML que veio de outra empresa (nunca vai para a pasta errada)
+<pasta destino>/                   (padrão: Documentos\XML SEFAZ-PB)
+  Arquivos baixados/
+    5-joao/                        (ID-NOME FANTASIA da planilha; sem ID, só o nome)
+      2026-09/
+        NF-e Saida/      <chave>.xml ...     empresa como emitente
+        NF-e Entrada/    <chave>.xml ...     empresa como destinatária
+        NFC-e/           <chave>.xml ...
+          Eventos/       cancelamentos, cartas de correção
+      _conferir/         XML que veio de outra empresa (nunca vai para a pasta errada)
+    _sem_empresa/        XML de empresa fora da rodada (ex.: consulta feita à mão no mesmo login)
+    _nao_identificados/  arquivo baixado que não é XML/ZIP (guardado como veio, para conferir)
+  _relatorios/           relatório de cada rodada
+  _diagnostico/          telas e campos quando algo não é reconhecido
 ```
 
 O robô é ativado pelo **portal web**: o cliente envia a planilha modelo na área de agendamento,
@@ -69,7 +74,10 @@ em **rodadas de um login** (até 15 empresas):
    NF-e Entrada). Uma venda entre duas empresas da rodada vai para as duas. Resposta de outra
    competência ("Período solicitado") é ignorada; XML de empresa fora da rodada (consulta feita à mão
    no mesmo login) vai para `_sem_empresa` e não conta como resposta.
-5. Empresa/tipo sem XML: **Sem notas** se todas as respostas chegaram; **Erro** ("o ATF não entregou em
+5. **ATF lento:** se Minhas Mensagens não abrir, o robô espera 30 s e tenta de novo; depois de
+   **3 tentativas** ele anuncia o erro e **para**, salvando antes o que já tinha sido baixado
+   (no portal, as tarefas voltam para a fila).
+6. Empresa/tipo sem XML: **Sem notas** se todas as respostas chegaram; **Erro** ("o ATF não entregou em
    30 min") se o tempo acabou.
 
 **Proteção do login do contador:** se o ATF recusar um login, o robô não tenta de novo com a mesma

@@ -1,7 +1,9 @@
 """XML baixados: abre ZIP, lê cada documento, confere se é da empresa e salva organizado.
 
-Pasta final:  <destino>/<ID> - <Nome fantasia>/<AAAA-MM>/<NF-e Saida | NF-e Entrada | NFC-e>/<chave>.xml
-(sem ID na planilha: <Nome fantasia> - IE <inscrição>). O mês é o da emissão de cada nota.
+Pasta final:  <destino>/Arquivos baixados/<ID>-<Nome fantasia>/<AAAA-MM>/<NF-e Saida | NF-e Entrada | NFC-e>/<chave>.xml
+(ex.: ID 5 e nome "joao" -> "5-joao"; sem ID na planilha, só o nome). O mês é o da emissão de cada nota.
+Arquivo baixado que não é XML/ZIP (ou não é de nenhuma empresa) fica em "Arquivos baixados/_nao_identificados"
+e "_sem_empresa": nada do que foi baixado é descartado.
 XML que não é da empresa consultada (IE/CNPJ do emitente ou destinatário diferente) vai para a
 subpasta "_conferir", nunca para a de outra empresa.
 """
@@ -23,6 +25,7 @@ TIPOS = {
     "nfe_entrada": "NF-e Entrada",
     "nfce": "NFC-e",
 }
+PASTA_BAIXADOS = "Arquivos baixados"
 _MAX_ARQUIVOS_ZIP = 50_000
 _MAX_TAMANHO_XML = 20 * 1024 * 1024
 
@@ -60,7 +63,13 @@ class Resumo:
 
 
 def extrair(dados: bytes, nome: str = "") -> list[tuple[str, bytes]]:
-    """Devolve (nome, conteúdo) de cada XML, abrindo ZIP (inclusive ZIP dentro de ZIP)."""
+    """Devolve (nome, conteúdo) de cada XML, abrindo ZIP (inclusive ZIP dentro de ZIP) e GZIP."""
+    if dados[:2] == b"\x1f\x8b":
+        import gzip
+        try:
+            return extrair(gzip.decompress(dados), Path(nome).stem)
+        except Exception:
+            return []
     if dados[:4] == b"PK\x03\x04":
         saida: list[tuple[str, bytes]] = []
         with zipfile.ZipFile(io.BytesIO(dados)) as z:
@@ -147,9 +156,9 @@ def nome_de_pasta(texto: str) -> str:
 
 
 def pasta_empresa(destino: str | Path, nome: str, ie: str, codigo: str = "") -> Path:
-    if codigo:
-        return Path(destino) / nome_de_pasta(f"{codigo} - {nome}")
-    return Path(destino) / f"{nome_de_pasta(nome)} - IE {formatar_ie(ie)}"
+    """<destino>/Arquivos baixados/<ID>-<Nome> (ex.: "5-joao"); sem ID, só o nome."""
+    base = Path(destino) / PASTA_BAIXADOS
+    return base / nome_de_pasta(f"{codigo}-{nome}" if codigo else nome)
 
 
 def _mesmo_ie(a: str, b: str) -> bool:
@@ -277,10 +286,41 @@ def salvar_sobras(arquivos: list[tuple[str, bytes]], destino: str | Path) -> int
         info = ler_xml(dados)
         if not info:
             continue
-        pasta = Path(destino) / "_sem_empresa" / info.emissao[:7]
+        pasta = Path(destino) / PASTA_BAIXADOS / "_sem_empresa" / info.emissao[:7]
         arquivo = pasta / (f"{info.chave}-evento-{_sufixo(nome)}.xml" if info.evento else f"{info.chave}.xml")
         if not arquivo.exists():
             pasta.mkdir(parents=True, exist_ok=True)
             arquivo.write_bytes(dados)
             n += 1
     return n
+
+
+def salvar_nao_identificados(arquivos: list[tuple[str, bytes]], destino: str | Path) -> list[Path]:
+    """Arquivo baixado que não é XML nem ZIP de XML: guarda como veio, para conferir (nada se perde)."""
+    import hashlib
+
+    pasta = Path(destino) / PASTA_BAIXADOS / "_nao_identificados"
+    salvos = []
+    for nome, dados in arquivos:
+        base = Path(nome_de_pasta(Path(nome).name) or "arquivo")
+        arquivo = pasta / f"{base.stem}_{hashlib.sha1(dados).hexdigest()[:8]}{base.suffix}"
+        if not arquivo.exists():
+            pasta.mkdir(parents=True, exist_ok=True)
+            arquivo.write_bytes(dados)
+        salvos.append(arquivo)
+    return salvos
+
+
+def tipo_de_arquivo(dados: bytes) -> str:
+    if dados[:4] == b"PK\x03\x04":
+        return "ZIP"
+    if dados[:2] == b"\x1f\x8b":
+        return "GZIP"
+    inicio = dados[:300].lstrip(b"\xef\xbb\xbf \r\n\t").lower()
+    if inicio.startswith(b"<?xml") or inicio.startswith(b"<nfeproc") or inicio.startswith(b"<nfe"):
+        return "XML"
+    if inicio.startswith(b"<!doctype html") or inicio.startswith(b"<html"):
+        return "HTML"
+    if dados[:4] == b"%PDF":
+        return "PDF"
+    return "outro"
