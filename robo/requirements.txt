@@ -1,0 +1,4 @@
+playwright
+requests
+openpyxl
+cryptography
