@@ -14,7 +14,8 @@ type Linha = { n: number; valores: unknown[] };
 
 /** Lê a planilha modelo (.xlsx, primeira aba) ou um .csv com os mesmos cabeçalhos.
  *  As colunas são achadas pelo nome (ATIVA, ID, ID_FILIAL, CNPJ, INSCRICAO ESTADUAL, NOME FANTASIA,
- *  LOGIN, SENHA, NF-e Saida, NF-e Entrada, NFC-e); as outras colunas são de outros serviços. */
+ *  LOGIN, SENHA e os serviços: NF-e Saida, NF-e Entrada, NFC-e, Download Faturas, Extrato de Pagamentos,
+ *  Omissão e Inadimplência, Certidão de Débitos); CT-e, cartão e Dossiê MEI ainda não são usadas. */
 export async function lerPlanilha(arquivo: File): Promise<Leitura> {
   const nome = arquivo.name.toLowerCase();
   const bytes = Buffer.from(await arquivo.arrayBuffer());
@@ -101,7 +102,7 @@ function interpretar(linhas: Linha[]): Leitura {
     if (!login) { leitura.erros.push(`Linha ${n}: ${nome}: informe o LOGIN do ATF`); continue; }
     const tipos = TIPOS.filter((t) => marcado(campo(valores, t.coluna))).map((t) => t.id as string);
     if (!tipos.length) {
-      leitura.avisos.push(`Linha ${n}: ${nome}: nenhum XML marcado (NF-e Saida, NF-e Entrada, NFC-e); ignorada`);
+      leitura.avisos.push(`Linha ${n}: ${nome}: nenhum serviço marcado com X; ignorada`);
       continue;
     }
     if (vistas.has(ie)) { leitura.avisos.push(`Linha ${n}: IE ${formatarIe(ie)} repetida; usada só uma vez`); continue; }

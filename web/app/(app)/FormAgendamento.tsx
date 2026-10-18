@@ -22,7 +22,7 @@ export default function FormAgendamento({ organizacoes, competencia }: { organiz
   if (resultado?.ok) {
     return (
       <div>
-        <div className="faixa ok">{resultado.ok} O robô salva os XML na pasta configurada no computador dele.</div>
+        <div className="faixa ok">{resultado.ok} O robô salva os arquivos na pasta configurada no computador dele.</div>
         <Link className="botao" href={`/agendamentos/${resultado.agendamentoId}`}>Acompanhar este agendamento</Link>{" "}
         <button className="secundario" onClick={() => location.reload()}>Novo agendamento</button>
       </div>
@@ -99,7 +99,7 @@ export default function FormAgendamento({ organizacoes, competencia }: { organiz
             <summary>Ver empresas</summary>
             <div className="tabela-rolagem">
               <table>
-                <thead><tr><th>Linha</th><th>ID</th><th>Nome fantasia</th><th>Inscrição estadual</th><th>Login</th><th>XML</th></tr></thead>
+                <thead><tr><th>Linha</th><th>ID</th><th>Nome fantasia</th><th>Inscrição estadual</th><th>Login</th><th>Serviços</th></tr></thead>
                 <tbody>
                   {previa.itens.map((i) => (
                     <tr key={i.ie}>

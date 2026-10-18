@@ -38,11 +38,15 @@ def test_planilha_modelo_do_escritorio(tmp_path):
     for i, valores in enumerate(linhas, start=2):
         for j, v in enumerate(valores, start=1):
             ws.cell(i, j, v)
+        if i > 2:  # só a primeira empresa fica com o X que o modelo traz nas outras colunas
+            for j in range(len(valores) + 1, ws.max_column + 1):
+                ws.cell(i, j).value = None
     wb.save(arq)
 
     leitura = planilha.ler(arq)
     assert [(e.codigo, e.ie, e.nome, e.login, e.tipos) for e in leitura.empresas] == [
-        ("015", IE_EMPRESA, "Padaria Centro", "mar00134", ["nfe_saida", "nfe_entrada"]),
+        ("015", IE_EMPRESA, "Padaria Centro", "mar00134",
+         ["nfe_saida", "nfe_entrada", "faturas", "extrato", "omissao", "certidao"]),
         ("016", IE_OUTRA, "Mercado", "mar00134", ["nfe_saida", "nfce"]),
     ]
     assert leitura.empresas[0].cnpj == "11222333000181" and leitura.empresas[0].filial == "1"

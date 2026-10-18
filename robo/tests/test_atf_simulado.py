@@ -12,10 +12,16 @@
   javascript:abrirFilhas('id',3)) que abre 3 filhas; a final ("Tarefa executada com sucesso") tem o
   anexo javascript:mostrarArquivo(0) com o ZIP; sem dados = final sem anexo; a caixa só pode ser lida de
   tempos em tempos (no ATF real, 1 minuto); mensagens de outra competência e consulta manual no meio.
+- serviços com PDF na hora (gravações de 18/10/2026), abertos pelo campo "Função" do topo, com o
+  Número/Pesquisar/Nome em componentes/CodDescLst.jsp?id=<função>_<componente>:
+  faturas (ARR_278: Avançar, lista de lançamentos com DIFERIDO - VALOR MINIMO que o ATF recusa, Emitir
+  abre o PDF numa janela nova), extrato (ARR_087: período, Consultar, PDF depois de um redirecionamento),
+  omissão (COB_187: Consultar, PDF no quadro de conteúdo) e certidão (DIA_061: Submeter, o PDF toma a aba inteira).
 Precisa do Chromium (CHROME_TESTE ou o do Playwright).
 """
 import copy
 import io
+import json
 import os
 import shutil
 import socket
@@ -44,7 +50,7 @@ CHROME = os.environ.get("CHROME_TESTE") or next(
     (str(p) for p in Path("/opt/pw-browsers").glob("chromium-*/chrome-linux/chrome")), shutil.which("chromium") or "")
 
 ESTADO = {"logins": [], "consultas": [], "mensagens": [], "recusas": [], "ultima_lista": 0.0, "lista_cedo": 0,
-          "blocos": {}, "abertas": [], "caixa_fora": 0}
+          "blocos": {}, "abertas": [], "caixa_fora": 0, "servicos": [], "telas_servico": [], "faturas_emitidas": []}
 
 
 def _zip(itens: dict[str, bytes]) -> bytes:
@@ -124,6 +130,50 @@ def _responder(tela: str, campos: dict) -> str:
     return "O resultado será enviado para sua caixa de mensagens do ATF"
 
 
+def _pdf(texto: str) -> bytes:
+    return f"%PDF-1.4\n% {texto}\n1 0 obj << /Type /Catalog >> endobj\ntrailer << /Root 1 0 R >>\n%%EOF\n".encode()
+
+
+FUNCOES = {"ARR_278": "/atf/arr/ARRf_LancamentoEmitirDarContribuinte.do?limparSessao=true",
+           "ARR_087": "/atf/arr/ARRf_ConsultarExtrPgtoCont.do?limparSessao=true",
+           "COB_187": "/atf/cob/COBf_OmiGeralConsGenericaContribuinte.do?limparSessao=true",
+           "DIA_061": "/atf/dia/DIAf_EmitirCertidaoDebitoIntranet.do?limparSessao=true"}
+# Lançamentos de cada IE na tela de faturas: (id, operação)
+LANCAMENTOS = {IE_EMPRESA: [("34988404", "DIFERIDO - VALOR MINIMO"), ("60700321", ""), ("61128022", "")]}
+
+
+def _identificacao(funcao: str, comp: str) -> str:
+    return ('<tr><td>- Tipo de Identificação:</td><td><select name="cmbTpDoc{0}" class="caixas"><option value="IE">'
+            'Inscrição Estadual</option><option value="CNPJ">CNPJ</option></select></td></tr>'
+            '<tr><td colspan=2><iframe src="/atf/componentes/CodDescLst.jsp?id={1}_{0}" height="70"></iframe></td></tr>'
+            ).format(comp, funcao)
+
+
+def form_servico(nome: str) -> str:
+    if nome == "faturas":
+        return (sessao() + '<b>Emitir DAR/FC/PIX</b><form method="post" action="/atf/arr/ARRf_LancamentoEmitirDarContribuinte2.do">'
+                '<table>' + _identificacao("ARRf_LancamentoEmitirDarContribuinte", "cmpContribuinte") + '</table>'
+                '<input type="submit" name="btnSubmeter" value="Avançar" class="botoes"></form>')
+    if nome == "extrato":
+        return (sessao() + '<b>Extratos de Pagamento por Contribuinte</b><form method="post" action="/atf/arr/ARRf_ConsultarExtrPgtoCont.do">'
+                '- Período de Pagamento: <input name="edtDataInicial"> a <input name="edtDataFinal">'
+                + "".join(f'<input type="radio" name="rdbGrpReceita" value="{v}"{" checked" if v == "T" else ""}>{v}'
+                          for v in ("ICMS", "IPVA", "ITCD", "TAXAS", "T"))
+                + '<table>' + _identificacao("ARRf_ConsultarExtrPgtoCont", "cmpContribuinte") + '</table>'
+                '<input type="submit" name="Submit" value="Consultar" class="botoes"></form>')
+    if nome == "omissao":
+        return (sessao() + '<b>Consulta de Omissos/Inadimplentes - Internet</b><form method="post" '
+                'action="/atf/cob/COBf_OmiGeralConsGenericaContribuinte.do"><table>'
+                + _identificacao("COBf_OmiGeralConsGenericaContribuinte", "cmpHumanoInst") + '</table>'
+                '<input type="submit" name="btnConsultar" value="Consultar"><input type="button" name="btnLimpar" value="Limpar">'
+                '<input type="button" name="btnGerarArquivo" value="Gerar Arquivo"></form>')
+    return (sessao() + '<b>Emitir Certidão de Débito</b><form name="f" method="post" target="_top" '
+            'action="/atf/dia/DIAf_EmitirCertidaoDebitoIntranet.do"><table>'
+            + _identificacao("DIAf_EmitirCertidaoDebitoIntranet", "Contribuinte") + '</table>'
+            '<input type="button" name="btnEmitirCertidao" value="Submeter" onclick="document.f.submit()">'
+            '<input type="button" name="btnLimpar" value="Limpar"></form>')
+
+
 def form_consulta(tela: str, aviso: str = "") -> str:
     titulo = "Consulta NF-e por Emitentes/Destinatários" if tela == "nfe" else "Consulta Genérica da NFC-e"
     datas = ('<label>Data de Emissão</label><input name="edtDtInicial" class="form-control"> - '
@@ -162,7 +212,8 @@ class AtfFalso(BaseHTTPRequestHandler):
 
     def _campos(self) -> dict:
         tamanho = int(self.headers.get("Content-Length") or 0)
-        return {k: v[0] for k, v in parse_qs(self.rfile.read(tamanho).decode(), keep_blank_values=True).items()}
+        self._corpo = self.rfile.read(tamanho).decode()
+        return {k: v[0] for k, v in parse_qs(self._corpo, keep_blank_values=True).items()}
 
     def do_GET(self):
         u = urlparse(self.path)
@@ -185,7 +236,9 @@ class AtfFalso(BaseHTTPRequestHandler):
         elif not logado:
             self._html("Sessão expirada. Faça login.")
         elif p == "/atf/cabecalho.htm":
-            self._html('<header>Sistema ATF <input placeholder="Função"><button id="toggleMenuHeader" aria-label="Menu">☰</button>'
+            self._html('<header>Sistema ATF <input placeholder="Função" onkeydown="if (event.key === \'Enter\' && FUNCOES[this.value]) '
+                       'parent.frames[\'conteudo\'].location = FUNCOES[this.value]"><script>const FUNCOES = '
+                       + json.dumps(FUNCOES) + '</script><button id="toggleMenuHeader" aria-label="Menu">☰</button>'
                        '<button type="button" aria-label="Mensagens" onclick="parent.frames[\'conteudo\'].location='
                        '\'/atf/seg/SEGf_MinhasMensagens.do?limparSessao=true\'">🔔</button>'
                        '<button aria-label="Encerrar Sessão" onclick="top.location=\'/atf/sair\'">⎋</button></header>')
@@ -214,6 +267,17 @@ class AtfFalso(BaseHTTPRequestHandler):
             self._html(form_consulta(tela))
         elif p == "/atf/componentes/CodDescLstBS.jsp":
             self._html(self._componente(q["id"], ESTADO["blocos"].get(q["id"], "")))
+        elif p == "/atf/componentes/CodDescLst.jsp":
+            self._html(self._componente_simples(q["id"], ESTADO["blocos"].get(q["id"], "")))
+        elif p in [u.split("?")[0] for u in FUNCOES.values()]:
+            nome = {"ARRf_Lanc": "faturas", "ARRf_Cons": "extrato", "COBf_OmiG": "omissao"}.get(p.rsplit("/", 1)[1][:9], "certidao")
+            if q.get("limparSessao") == "true":
+                for k in [k for k in ESTADO["blocos"] if k.startswith(p.rsplit("/", 1)[1].split(".")[0] + "_")]:
+                    ESTADO["blocos"].pop(k)
+            ESTADO["telas_servico"].append(nome)
+            self._html(form_servico(nome))
+        elif p == "/atf/servicos/EmitirPdf":
+            self._pdf_resposta(ESTADO.pop("pdf_extrato"))
         elif p == "/atf/seg/SEGf_MinhasMensagens.do":
             self._mensagens(q)
         elif p == "/atf/seg/SEGf_LerMensagem.do":
@@ -247,6 +311,64 @@ class AtfFalso(BaseHTTPRequestHandler):
                 '<button type="submit" name="btnPesquisar" class="btn btn-primary">Pesquisar</button>'
                 f'<div class="form-floating"><input type="text" name="hidNoHumanoInstcmp{suf}" id="hidNoHumanoInstcmp{suf}" '
                 f'class="form-control" value="{nome}"><label>Nome/Razão Social</label></div></form>')
+
+    def _componente_simples(self, cid: str, ie: str) -> str:
+        """componentes/CodDescLst.jsp (sem o BS) das telas de faturas, extrato, omissão e certidão."""
+        comp = cid.rsplit("_", 1)[1]
+        nome = "" if not ie or ie == IE_INEXISTENTE else f"EMPRESA {ie}"
+        return (f'<form method="post" action="/atf/componentes/CodDescLst.jsp"><input type="hidden" name="id" value="{cid}">'
+                f'- Número: <input type="text" name="hidNrDocumento{comp}" class="caixas" value="{ie}">'
+                '<input type="submit" name="btnPesquisar" value="Pesquisar" class="botoes">'
+                f'- Nome/Razão Social: <input type="text" name="hidNoHumanoInst{comp}" class="caixas" value="{nome}"></form>')
+
+    def _pdf_resposta(self, dados: bytes):
+        self.send_response(200)
+        self.send_header("Content-Type", "application/pdf")
+        self.send_header("Content-Disposition", 'inline; filename="Saida.pdf"')
+        self.send_header("Content-Length", str(len(dados)))
+        self.end_headers()
+        self.wfile.write(dados)
+
+    def _servico(self, p: str, campos: dict):
+        """Resposta das telas de serviço: o ATF sabe a empresa pelo Pesquisar (guardado no servidor)."""
+        funcao = p.rsplit("/", 1)[1].split(".")[0]
+        ie = ESTADO["ultima_ie_faturas"] if funcao == "emitir" else \
+            next((v for k, v in ESTADO["blocos"].items() if k.startswith(funcao.rstrip("2") + "_")), "")
+        assert ie, f"Pesquisar não foi clicado em {funcao}"
+        assert campos.get(next(k for k in campos if k.startswith("cmbTpDoc")) if any(k.startswith("cmbTpDoc") for k in campos)
+                          else "x", "IE") == "IE", campos
+        ESTADO["servicos"].append((funcao, ie, {k: v for k, v in campos.items() if k.startswith("edtData")}))
+        if funcao == "ARRf_LancamentoEmitirDarContribuinte2":
+            lancs = LANCAMENTOS.get(ie, [])
+            if not lancs:
+                self._html(sessao() + "<b>Lançamentos para Emissão de DAR/FC/PIX</b><br>Nenhum lançamento encontrado.")
+                return
+            linhas = "".join(f'<tr><td><input type="checkbox" name="chbChavePrimaria" value="{i}"></td><td>30{i}</td>'
+                             f'<td>08/2026</td><td>{"NOTA FISCAL ELETRONICA - NFE" if op else "FATURA"}</td><td>{op}</td>'
+                             f'<td><input name="edtDtVencimentoPag{i}" value="30/10/2026"></td></tr>' for i, op in lancs)
+            self._html(sessao() + '<b>Lançamentos para Emissão de DAR/FC/PIX</b><form name="f" method="post" target="_blank" '
+                       'action="/atf/arr/emitir.do"><input type="radio" name="rdbTipoEmissao" id="rdbDAR" value="D">DAR'
+                       '<input type="radio" name="rdbTipoEmissao" id="rdbPIX" value="P" checked>PIX<table>'
+                       f'<tr><th>Nosso Número</th><th>Referência</th><th>Nome Origem</th><th>Operação</th></tr>{linhas}</table>'
+                       '<input type="checkbox" name="chbSelecionarTodas">Selecionar todos lançamentos.'
+                       f'<br>{len(lancs)} Registros Encontrados<br>'
+                       '<input type="button" name="btnEmitir" value="Emitir" onclick="document.f.submit()"></form>')
+        elif funcao == "emitir":
+            escolhidos = parse_qs(self._corpo).get("chbChavePrimaria", [])
+            ESTADO["faturas_emitidas"].append(escolhidos)
+            diferidos = {i for i, op in LANCAMENTOS.get(ESTADO["ultima_ie_faturas"], []) if op}
+            if set(escolhidos) & diferidos or not escolhidos:
+                self._html("Não é permitida a emissão do DAR/FC de um lançamento que esteja com a operação de "
+                           "DIFERIDO - VALOR MINIMO")
+                return
+            self._pdf_resposta(_pdf("fatura " + ",".join(escolhidos)))
+        elif funcao == "ARRf_ConsultarExtrPgtoCont":
+            ESTADO["pdf_extrato"] = _pdf(f"extrato {ie} {campos.get('edtDataInicial')} {campos.get('edtDataFinal')}")
+            self._html("", status=302, local="/atf/servicos/EmitirPdf")
+        elif funcao == "COBf_OmiGeralConsGenericaContribuinte":
+            self._pdf_resposta(_pdf(f"omissos {ie} pagina 1 pagina 2"))
+        else:
+            self._pdf_resposta(_pdf(f"certidao {ie}"))
 
     def _mensagens(self, q: dict):
         agora = datetime.now()
@@ -298,6 +420,24 @@ class AtfFalso(BaseHTTPRequestHandler):
             suf = cid.rsplit("_cmp", 1)[1]
             ESTADO["blocos"][cid] = campos.get(f"hidNrDocumentocmp{suf}", "")
             self._html(self._componente(cid, ESTADO["blocos"][cid]))
+        elif p == "/atf/componentes/CodDescLst.jsp":
+            cid = campos["id"]
+            ESTADO["blocos"][cid] = campos.get(f"hidNrDocumento{cid.rsplit('_', 1)[1]}", "")
+            self._html(self._componente_simples(cid, ESTADO["blocos"][cid]))
+        elif p == "/atf/arr/ARRf_LancamentoEmitirDarContribuinte2.do":
+            ESTADO["ultima_ie_faturas"] = ESTADO["blocos"].get(
+                "ARRf_LancamentoEmitirDarContribuinte_cmpContribuinte", "")
+            self._servico(p, campos)
+        elif p == "/atf/arr/emitir.do":
+            if "sessao=ok" not in (self.headers.get("Cookie") or ""):
+                self._html("Sessão expirada. Faça login.")
+                return
+            self._servico(p, campos)
+        elif p in [u.split("?")[0] for u in FUNCOES.values()]:
+            if "sessao=ok" not in (self.headers.get("Cookie") or ""):
+                self._html("Sessão expirada. Faça login.")  # a rota do robô tem de levar o cookie
+                return
+            self._servico(p, campos)
         elif p.startswith("/atf/fis/consultar_"):
             tela = p.rsplit("_", 1)[1].split(".")[0]
             self._html(form_consulta(tela, _responder(tela, campos)))
@@ -434,3 +574,51 @@ def test_caixa_nao_abre_e_o_robo_para(ambiente):
     finally:
         executor.fechar()
         ESTADO["caixa_fora"] = 0
+
+
+def test_faturas_extrato_omissao_certidao(ambiente):
+    """Os 4 serviços com PDF na hora, junto com um XML na mesma rodada (o PDF sai enquanto o ATF prepara o XML)."""
+    cfg, pasta = ambiente
+    ESTADO["servicos"].clear()
+    ESTADO["logins"].clear()
+    executor = robo_xml.Executor(cfg)
+    servicos = ["faturas", "extrato", "omissao", "certidao"]
+    try:
+        r1, r2 = executor.executar_rodada([
+            _trabalho(IE_EMPRESA, "Padaria", ["nfe_saida"] + servicos, codigo="030"),
+            _trabalho(IE_OUTRA, "Mercado", ["faturas", "certidao"], codigo="031"),
+        ])
+    finally:
+        if executor.atf:
+            print("\n".join(executor.atf.diag.linhas))  # aparece se o teste falhar
+        executor.fechar()
+
+    assert ESTADO["logins"] == ["mar00134"]
+    assert set(ESTADO["telas_servico"]) >= {"faturas", "extrato", "omissao", "certidao"}
+    # extrato com o período da competência
+    extrato = next(c for f, ie, c in ESTADO["servicos"] if f == "ARRf_ConsultarExtrPgtoCont")
+    assert extrato == {"edtDataInicial": "01/09/2026", "edtDataFinal": "30/09/2026"}, extrato
+    # faturas: só os lançamentos que o ATF emite (o DIFERIDO - VALOR MINIMO fica de fora)
+    assert ESTADO["faturas_emitidas"] == [["60700321", "61128022"]], ESTADO["faturas_emitidas"]
+
+    assert r1.status == "concluido", r1
+    for s in servicos:
+        assert r1.detalhes[s]["arquivos"] == 1, (s, r1)
+    assert r1.detalhes["nfe_saida"]["notas"] == 2, r1
+    base = pasta / "xml" / "Arquivos baixados"
+    pdfs = {s: list((base / "030-Padaria" / "2026-09" / arquivos_nome(s)).glob("*.pdf")) for s in servicos}
+    for s, achados in pdfs.items():
+        assert len(achados) == 1 and achados[0].read_bytes()[:5] == b"%PDF-", (s, achados)
+        assert achados[0].name == f"{arquivos_nome(s)} 2026-09.pdf"
+    assert b"omissos" in pdfs["omissao"][0].read_bytes()
+    assert list((base / "030-Padaria" / "2026-09").glob("NF-e Saida - R$ 200,00/*.zip"))
+
+    assert r2.status == "concluido", r2
+    assert r2.detalhes["faturas"]["sem_notas"] and r2.detalhes["faturas"]["arquivos"] == 0, r2
+    assert "nenhum lançamento" in r2.mensagem.lower(), r2
+    assert (base / "031-Mercado" / "2026-09" / "Certidão de Débitos" / "Certidão de Débitos 2026-09.pdf").exists()
+
+
+def arquivos_nome(tipo: str) -> str:
+    import arquivos
+    return arquivos.TIPOS[tipo]

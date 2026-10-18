@@ -10,9 +10,13 @@ As colunas são achadas pelo nome do cabeçalho (linha 1), não pela posição:
     NF-e Saida            X = baixar as NF-e em que a empresa é emitente
     NF-e Entrada          X = baixar as NF-e em que a empresa é destinatária
     NFC-e                 X = baixar as NFC-e emitidas
+    Download Faturas      X = emitir o DAR/PIX dos lançamentos em aberto (PDF)
+    Extrato de Pagamentos X = extrato de pagamentos da competência (PDF)
+    Omissão e Inadimplência  X = relatório completo de omissos/inadimplentes (PDF)
+    Certidão de Débitos   X = certidão de débitos (PDF)
 O modelo já vem com todos os "X" marcados nas linhas livres; o cliente preenche só os dados das
 empresas (e apaga o X do que não quiser).
-As demais colunas (CT-e, faturas, certidões...) são de outros serviços e ficam de fora deste robô.
+As demais colunas (CT-e, Conferência Cartão de Crédito, Dossiê MEI) ainda não são feitas pelo robô.
 """
 from __future__ import annotations
 
@@ -25,7 +29,9 @@ from pathlib import Path
 MODELO = Path(__file__).resolve().parent.parent / "modelos" / "modelo_empresas_sefaz_pb.xlsx"
 
 # coluna da planilha -> tipo de XML do robô
-COLUNAS_TIPOS = {"nfe saida": "nfe_saida", "nfe entrada": "nfe_entrada", "nfce": "nfce"}
+COLUNAS_TIPOS = {"nfe saida": "nfe_saida", "nfe entrada": "nfe_entrada", "nfce": "nfce",
+                 "download faturas": "faturas", "extrato de pagamentos": "extrato",
+                 "omissao e inadimplencia": "omissao", "certidao de debitos": "certidao"}
 _CAMPOS_EMPRESA = ("id", "id filial", "cnpj", "inscricao estadual", "nome fantasia", "login", "senha")
 _SIM = {"s", "sim", "x", "1", "true", "verdadeiro", "v", "ok", "ativa", "ativo", "✓", "✔"}
 _NAO = {"n", "nao", "0", "false", "falso", "f", "inativa", "inativo"}
@@ -225,7 +231,7 @@ def interpretar(linhas) -> Leitura:
             continue
         tipos = [tipo for col, tipo in COLUNAS_TIPOS.items() if marcado(campo(valores, col))]
         if not tipos:
-            leitura.avisos.append(f"Linha {n}: {nome}: nenhum XML marcado (NF-e Saida, NF-e Entrada, NFC-e); ignorada")
+            leitura.avisos.append(f"Linha {n}: {nome}: nenhum serviço marcado com X; ignorada")
             continue
         if ie in vistas:
             leitura.avisos.append(f"Linha {n}: IE {formatar_ie(ie)} repetida; usada só uma vez")

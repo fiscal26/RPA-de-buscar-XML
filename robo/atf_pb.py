@@ -15,6 +15,14 @@ Roteiro (telas do ATF em produção, out/2026):
   Emitente". O robô envia todas as consultas do login, depois acompanha as mensagens novas e baixa
   os anexos. Quem diz de qual empresa é cada XML é o próprio XML (arquivos.distribuir).
 
+Serviços que o ATF responde na hora com um PDF (gravações de 18/10/2026), sem Minhas Mensagens:
+- Faturas (ARR_278, "Emissão de DAR > Lançamentos Espontâneos"): IE, Pesquisar, Avançar; marca todos os
+  lançamentos menos os "DIFERIDO - VALOR MINIMO" (o ATF não emite esses) e clica em Emitir.
+- Extrato de Pagamentos (ARR_087): período de pagamento do 1º ao último dia da competência, IE,
+  Pesquisar, Consultar.
+- Omissão e Inadimplência (COB_187): IE, Pesquisar, Consultar (o PDF completo).
+- Certidão de Débitos (DIA_061): IE, Pesquisar, Submeter (com o login, como em todo o robô).
+
 Se o menu não responder, o robô abre a tela pelo campo "Função" do topo (código FIS_/SEG_).
 Etapa não reconhecida gera um pacote de diagnóstico (tela.png, campos.txt, texto.txt, log.txt) e
 passa para o modo assistido. Senhas nunca entram no diagnóstico.
@@ -125,6 +133,15 @@ TIPO_TELA = {
 }
 
 
+# Serviços com resposta na hora (PDF): tipo -> tela em config.atf.telas
+SERVICOS = ("faturas", "extrato", "omissao", "certidao")
+_NAO_EMITE = re.compile(r"diferido\s*-\s*valor\s+m[ií]nimo", re.I)
+_SEM_DOCUMENTO = re.compile(r"nenhum(a)?\s+(registro|lan[cç]amento|pagamento|d[eé]bito|resultado)|n[aã]o\s+(foram\s+)?encontrad|"
+                            r"n[aã]o\s+(h[aá]|existe[mn]?)\s+(registro|lan[cç]amento|pagamento|d[eé]bito|dado)|"
+                            r"0\s+registros?\s+encontrad", re.I)
+_ERRO_DOCUMENTO = re.compile(r"n[aã]o\s+[eé]\s+permitid|\berro\b|inv[aá]lid|obrigat[oó]ri|informe\s+|n[aã]o\s+foi\s+poss[ií]vel", re.I)
+
+
 class SenhaInvalida(Exception):
     pass
 
@@ -163,6 +180,17 @@ class Envio:
     assistido: bool = False
     resposta: str = ""
     hora: datetime | None = None   # hora do ATF ao clicar em Consultar (as mensagens chegam depois dela)
+
+
+@dataclass
+class Emissao:
+    """Um serviço com resposta na hora (faturas, extrato, omissão, certidão) de uma empresa."""
+    ie: str
+    tipo: str
+    arquivos: list[tuple[str, bytes]] = field(default_factory=list)
+    ok: bool = True
+    sem_dados: bool = False
+    resposta: str = ""
 
 
 @dataclass
@@ -326,6 +354,7 @@ class AtfPB:
         try:
             self.page.goto(url, wait_until="domcontentloaded", timeout=60_000)
         except Exception as e:
+            self._log(f"Não abri {url[:100]}: {str(e).splitlines()[0][:150]}")
             if "net::ERR" in str(e) or "Timeout" in type(e).__name__:
                 raise SiteForaDoAr(f"não consegui abrir o ATF ({e.__class__.__name__}).") from e
             raise
@@ -445,6 +474,7 @@ class AtfPB:
         try:
             frame.goto(url, wait_until="domcontentloaded", timeout=60_000)
         except Exception as e:
+            self._log(f"Não abri {url[:100]}: {str(e).splitlines()[0][:150]}")
             if "net::ERR" in str(e) or "Timeout" in type(e).__name__:
                 raise SiteForaDoAr(f"não consegui abrir o ATF ({e.__class__.__name__}).") from e
             raise
@@ -516,14 +546,41 @@ class AtfPB:
                 if sugestao is not None and not self._tela_aberta(tela):
                     sugestao.click()
                     pausa(self.page, 1.5, 2.5)
+        if not self._tela_aberta(tela) and tela.get("endereco"):
+            conteudo = self._quadro_conteudo()
+            if conteudo is not None:
+                self._log(f"Abrindo pelo endereço {tela['endereco']}")
+                self._ir(conteudo, self._endereco(tela))
+                self._esperar_tela(tela)
         frame = self._quadro_da_tela(tela)
         if frame is None:
             raise EtapaNaoConcluida(f"não consegui abrir a tela '{tela['titulo']}'")
         url = frame.url
         if nome == "mensagens":  # sempre a lista principal, não a de uma mensagem aberta
             url = url.split("SEGf_")[0] + "SEGf_MinhasMensagens.do?limparSessao=true"
+        elif tela.get("endereco"):  # formulário limpo (não a tela de resultado)
+            url = self._endereco(tela)
         self._url_tela[nome] = (frame, url)
         self._log(f"Tela aberta: {tela['titulo']} ({frame.url[:90]})")
+
+    def _endereco(self, tela: dict) -> str:
+        return self.atf["url_login"].split("/atf/")[0] + "/atf/" + tela["endereco"]
+
+    def _quadro_conteudo(self):
+        """Quadro de conteúdo do ATF (nem o cabeçalho, nem o menu, nem um componente). None quando a aba
+        não está mais no ATF (ex.: o PDF da certidão tomou a aba inteira)."""
+        if not any("cabecalho" in (f.url or "") or "SEGf_Menu" in (f.url or "") for f in self.page.frames):
+            return None
+        candidatos = []
+        for frame in self.page.frames:
+            url = frame.url or ""
+            if frame == self.page.main_frame or not url.startswith("http"):
+                continue
+            if any(x in url for x in ("cabecalho", "SEGf_Menu", "componentes/", "recaptcha", "google")):
+                continue
+            candidatos.append(frame)
+        # de preferência o quadro do primeiro nível (não um quadro dentro de uma tela)
+        return next((f for f in candidatos if f.parent_frame == self.page.main_frame), candidatos[0] if candidatos else None)
 
     # ------------------------------------------------------------------ consulta (envio)
     def _dialogo(self, dialogo):
@@ -741,6 +798,218 @@ class AtfPB:
         except Exception as e:
             self._log(f"Não escolhi '{padrao}': {e}")
             return False
+
+    # ------------------------------------------------------------------ serviços com PDF na hora
+    def _quadro_componente(self, comp: str):
+        """Quadro do Número / Pesquisar / Nome (componentes/CodDescLst.jsp?id=<função>_<componente>)."""
+        for frame in self.page.frames:
+            try:
+                if frame.locator(f'input[name="hidNrDocumento{comp}"], input[id="hidNrDocumento{comp}"]').count():
+                    return frame
+            except Exception:
+                continue
+        return None
+
+    def _pesquisar_contribuinte(self, comp: str, ie: str):
+        """IE no Número do componente e Pesquisar: o nome tem de aparecer (senão a IE não existe no ATF)."""
+        quadro = self._quadro_componente(comp)
+        if quadro is None:
+            for _ in range(10):  # o quadro do componente carrega depois da tela
+                pausa(self.page, 0.5, 0.8)
+                quadro = self._quadro_componente(comp)
+                if quadro is not None:
+                    break
+        if quadro is None:
+            raise EtapaNaoConcluida("campo Número do contribuinte não encontrado")
+        tipo_id = self._no_quadro(quadro, 'select[name^="cmbTpDoc"]')
+        if tipo_id is not None:
+            self._escolher(tipo_id, r"inscri[cç][aã]o\s+estadual")
+        numero = self._no_quadro(quadro, f'input[name="hidNrDocumento{comp}"]')
+        if numero is None:
+            raise EtapaNaoConcluida("campo Número do contribuinte não encontrado")
+        self._digitar(numero, ie)
+        pesquisar = self._no_quadro(quadro, 'input[name="btnPesquisar"], button[name="btnPesquisar"]')
+        if pesquisar is None:
+            raise EtapaNaoConcluida("botão Pesquisar não encontrado")
+        self._respostas = []
+        pesquisar.click()
+        for _ in range(20):
+            pausa(self.page, 0.5, 0.8)
+            q = self._quadro_componente(comp)
+            nome = self._no_quadro(q, f'input[name="hidNoHumanoInst{comp}"]')
+            try:
+                if nome is not None and nome.input_value().strip():
+                    self._log(f"Pesquisar: {nome.input_value().strip()[:60]}")
+                    self._respostas = []
+                    return
+            except Exception:
+                continue
+        erro = self._avisos_na_tela()
+        raise IeNaoEncontrada(f"o ATF não encontrou a IE {ie}" + (f": {erro[:150]}" if erro else " (Pesquisar não trouxe o nome)"))
+
+    def _clicar(self, frame, css: str, nome: str):
+        botao = self._no_quadro(frame, css)
+        if botao is None:
+            raise EtapaNaoConcluida(f"botão {nome} não encontrado")
+        botao.click()
+
+    def emitir(self, tipo: str, ie: str, inicio: date, fim: date, nome_tipo: str) -> Emissao:
+        """Faturas, extrato, omissão ou certidão de UMA empresa: preenche, clica e captura o PDF (ou ZIP)
+        que o ATF devolve na hora."""
+        tela = self.atf["telas"][tipo]
+        emissao = Emissao(ie=ie, tipo=tipo)
+        self._respostas = []
+        antes = set(self.contexto.pages)
+        capt = None
+        try:
+            self.abrir_tela(tipo)
+            frame = self._quadro_da_tela(tela)
+            if tipo == "extrato":  # Período de Pagamento: do 1º ao último dia da competência
+                for css, data in (('input[name="edtDataInicial"]', inicio), ('input[name="edtDataFinal"]', fim)):
+                    campo = self._no_quadro(frame, css)
+                    if campo is None:
+                        raise EtapaNaoConcluida("campos do período não encontrados")
+                    self._digitar(campo, f"{data:%d/%m/%Y}")
+                    campo.press("Tab")
+                self._log(f"Período preenchido: {inicio:%d/%m/%Y} a {fim:%d/%m/%Y}")
+            tipo_id = self._no_quadro(frame, 'select[name^="cmbTpDoc"]')
+            if tipo_id is not None:
+                self._escolher(tipo_id, r"inscri[cç][aã]o\s+estadual")
+            self._pesquisar_contribuinte(tela["componente"], ie)
+            frame = self._quadro_da_tela(tela) or frame
+            if tipo == "faturas":
+                self._clicar(frame, tela["enviar"], "Avançar")
+                if not self._selecionar_faturas(emissao):
+                    return emissao
+                capt = CapturadorArquivos(self.contexto, self.cfg["chrome"]["pasta_downloads"], log=self.aviso, documentos=True)
+                self._clicar(self._quadro_da_tela(tela), 'input[name="btnEmitir"], button[name="btnEmitir"]', "Emitir")
+            else:
+                capt = CapturadorArquivos(self.contexto, self.cfg["chrome"]["pasta_downloads"], log=self.aviso, documentos=True)
+                self._clicar(frame, tela["enviar"], "Consultar")
+            self._log(f"{nome_tipo} IE {ie}: pedido enviado")
+            self._esperar_documento(capt, emissao)
+        except (SiteForaDoAr, SessaoExpirada):
+            raise
+        except IeNaoEncontrada as e:
+            emissao.ok, emissao.resposta = False, str(e)
+        except EtapaNaoConcluida as e:
+            self._log(f"{nome_tipo} IE {ie}: {e}")
+            pasta = self.diag.salvar(self.page, f"{tipo}-parou")
+            emissao.ok, emissao.resposta = False, f"{e}" + (f" (diagnóstico: {pasta.name})" if pasta else "")
+        finally:
+            if capt is not None:
+                capt.verificar()
+                capt.encerrar()
+                emissao.arquivos = list(capt.recebidos)
+            self._fechar_abas(antes)
+            self.ultimo_uso = time.time()
+            if self._quadro_conteudo() is None and not self.page.is_closed():
+                # o PDF tomou a aba inteira: volta para o ATF (a sessão continua aberta)
+                self._url_tela.clear()
+                try:
+                    self._abrir(self.atf["url_login"])
+                except Exception as e:
+                    self._log(f"Não voltei ao ATF depois do PDF: {e}")
+        if emissao.arquivos:
+            emissao.ok, emissao.sem_dados = True, False
+        self._log(f"{nome_tipo} IE {ie}: {len(emissao.arquivos)} arquivo(s)" + (f" — {emissao.resposta[:150]}" if emissao.resposta else ""))
+        return emissao
+
+    def _selecionar_faturas(self, emissao: Emissao) -> bool:
+        """Tela dos lançamentos: marca todos, menos os "DIFERIDO - VALOR MINIMO" (o ATF não emite).
+        Devolve False quando não há o que emitir."""
+        limite = time.time() + self.atf["segundos_carregar"]
+        frame = None
+        sem_lancamento = ""
+        while time.time() < limite and frame is None and not sem_lancamento:
+            pausa(self.page, 0.8, 1.2)
+            for f in self.page.frames:  # a tela da lista (ARRf_LancamentoEmitirDarContribuinte2.do)
+                if "componentes/" in (f.url or "") or "SEGf_Menu" in (f.url or ""):
+                    continue
+                try:
+                    if f.locator('input[name="chbChavePrimaria"]').count():
+                        frame = f
+                        break
+                except Exception:
+                    continue
+                m = _SEM_DOCUMENTO.search(self._texto_quadro(f))
+                if m:
+                    sem_lancamento = m.group(0)
+            if not sem_lancamento and frame is None:
+                m = _SEM_DOCUMENTO.search(self._avisos_na_tela())
+                sem_lancamento = m.group(0) if m else ""
+        if frame is None and sem_lancamento:
+            emissao.sem_dados = True
+            emissao.resposta = "nenhum lançamento em aberto"
+            return False
+        if frame is None:
+            raise EtapaNaoConcluida("a lista de lançamentos não abriu")
+        caixas = frame.locator('input[name="chbChavePrimaria"]')
+        marcadas = diferidas = 0
+        for i in range(caixas.count()):
+            caixa = caixas.nth(i)
+            linha = caixa.evaluate("e => (e.closest('tr') || e.parentElement).innerText")
+            quer = not _NAO_EMITE.search(linha or "")
+            diferidas += not quer
+            try:
+                if caixa.is_checked() != quer:
+                    caixa.click()
+                    pausa(self.page, 0.2, 0.5)
+                marcadas += quer
+            except Exception as e:
+                self._log(f"Não marquei o lançamento {i + 1}: {e}")
+        self._log(f"Faturas: {marcadas} lançamento(s) marcado(s), {diferidas} diferido(s) - valor mínimo deixado(s) de fora")
+        if not marcadas:
+            emissao.sem_dados = True
+            emissao.resposta = ("só há lançamentos DIFERIDO - VALOR MINIMO, que o ATF não emite" if diferidas
+                                else "nenhum lançamento em aberto")
+            return False
+        return True
+
+    def _texto_quadro(self, frame) -> str:
+        try:
+            return frame.evaluate("() => document.body ? document.body.innerText : ''")
+        except Exception:
+            return ""
+
+    def _esperar_documento(self, capt: CapturadorArquivos, emissao: Emissao):
+        """Espera o PDF chegar (download, resposta ou visualizador do Chrome) ou o ATF dizer que não há dados."""
+        limite = time.time() + self.atf["segundos_documento"]
+        while time.time() < limite:
+            pausa(self.page, 0.8, 1.2)
+            capt.verificar()
+            if capt.recebidos and capt.parado(3):
+                return
+            if capt.recebidos:
+                continue
+            texto = self._avisos_na_tela()
+            for pagina in self.contexto.pages:
+                if pagina.is_closed():
+                    continue
+                for frame in pagina.frames:
+                    if "componentes/" in (frame.url or "") or "SEGf_Menu" in (frame.url or ""):
+                        continue
+                    texto += "\n" + self._texto_quadro(frame)
+            if _SEM_DOCUMENTO.search(texto):
+                emissao.sem_dados = True
+                emissao.resposta = _SEM_DOCUMENTO.search(texto).group(0)
+                return
+            m = re.search(r"[^\n]*n[aã]o\s+[eé]\s+permitid[^\n]*", texto, re.I)
+            if m:
+                emissao.ok, emissao.resposta = False, m.group(0).strip()[:300]
+                return
+        emissao.ok = False
+        emissao.resposta = f"o ATF não devolveu o arquivo em {self.atf['segundos_documento']} s"
+        self.diag.salvar(self.page, f"{emissao.tipo}-sem-arquivo")
+
+    def _fechar_abas(self, antes: set):
+        """Fecha as abas abertas pelo ATF durante o serviço (o PDF pode abrir numa janela nova)."""
+        for pagina in list(self.contexto.pages):
+            if pagina not in antes and pagina is not self.page and not pagina.is_closed():
+                try:
+                    pagina.close()
+                except Exception:
+                    pass
 
     # ------------------------------------------------------------------ Minhas Mensagens (recebimento)
     def listar_mensagens(self) -> list[dict]:

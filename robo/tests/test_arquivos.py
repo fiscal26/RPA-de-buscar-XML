@@ -128,3 +128,15 @@ def test_distribuir_arquivos_inteiros():
     por, sem_empresa, nao = arquivos.distribuir_arquivos([("z.zip", venda), ("r.pdf", b"%PDF")], alvos)
     assert list(por) == [(IE_EMPRESA, "nfe_saida")] and por[(IE_EMPRESA, "nfe_saida")][0][1] == venda
     assert not sem_empresa and [n for n, _ in nao] == ["r.pdf"]
+
+
+def test_documento_pdf_na_pasta_do_servico(tmp_path):
+    pdf = b"%PDF-1.4\n% certidao\n%%EOF"
+    r = arquivos.salvar_documentos([("Saida.pdf", pdf)], tmp_path, "Padaria", "160123453", "certidao", "2026-09", "5")
+    assert r["novos"] == 1
+    arq = tmp_path / "Arquivos baixados" / "5-Padaria" / "2026-09" / "Certidão de Débitos" / "Certidão de Débitos 2026-09.pdf"
+    assert arq.read_bytes() == pdf
+    # de novo: o mesmo arquivo não repete; um novo fica ao lado
+    assert arquivos.salvar_documentos([("Saida.pdf", pdf)], tmp_path, "Padaria", "160123453", "certidao", "2026-09", "5")["repetidos"] == 1
+    arquivos.salvar_documentos([("Saida.pdf", pdf + b" ")], tmp_path, "Padaria", "160123453", "certidao", "2026-09", "5")
+    assert (arq.parent / "Certidão de Débitos 2026-09 (2).pdf").exists()

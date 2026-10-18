@@ -5,6 +5,8 @@ portal, entra no ATF com o login do contador, pesquisa as notas de cada empresa 
 estadual e salva os XML em pastas.destino:
     <destino>/Arquivos baixados/<ID>-<Nome>/<AAAA-MM>/<NF-e Saida | NF-e Entrada | NFC-e> - R$ <total>/
 (o ZIP baixado do ATF é guardado como veio, sem descompactar)
+Faturas, extrato de pagamentos, omissão e inadimplência e certidão de débitos saem na hora, em PDF:
+    <destino>/Arquivos baixados/<ID>-<Nome>/<AAAA-MM>/<Serviço>/<Serviço> <AAAA-MM>.pdf
 
 O ATF não entrega o XML na hora: a consulta (Tipo de Exibição XML) gera uma mensagem com o anexo em
 "Minhas Mensagens". Por isso o robô trabalha em rodadas de um login: envia as consultas de todas as
@@ -41,11 +43,11 @@ import arquivos
 import config
 import cripto
 import planilha
-from atf_pb import (TIPO_TELA, MensagensIndisponiveis, AtfPB, Diagnostico, EtapaNaoConcluida, Recolha,
+from atf_pb import (SERVICOS, TIPO_TELA, MensagensIndisponiveis, AtfPB, Diagnostico, EtapaNaoConcluida, Recolha,
                     SenhaInvalida, SessaoExpirada, SiteForaDoAr)
 from navegador import Chrome, ChromeIndisponivel
 
-VERSAO = "0.3-piloto"
+VERSAO = "0.4-piloto"
 FALHA_NO_RETORNO = "O ATF não devolveu os XML. Tente agendar novamente mais tarde."
 
 log = logging.getLogger("robo")
@@ -146,21 +148,35 @@ class Executor:
         t0 = trabalhos[0]
         self._entrar(t0)
 
-        # 1) envia as consultas (uma por empresa e tipo; Emitente OU Destinatário)
+        def com_sessao(funcao, *args):
+            for tentativa in (1, 2):
+                try:
+                    return funcao(*args)
+                except SessaoExpirada:
+                    log.info("   sessão do ATF expirou; entrando de novo")
+                    atf.login_atual = ""
+                    self._entrar(t0)
+                    if tentativa == 2:
+                        raise EtapaNaoConcluida("a sessão do ATF expirou duas vezes")
+
+        # 1) envia as consultas de XML (uma por empresa e tipo; Emitente OU Destinatário)
         envios: dict[tuple[str, str], object] = {}
         for t in trabalhos:
             log.info("%s — %s", t.rotulo, ", ".join(arquivos.TIPOS.get(x, x) for x in t.tipos))
             for tipo in t.tipos:
-                for tentativa in (1, 2):
-                    try:
-                        envios[(t.ie, tipo)] = atf.solicitar(tipo, t.ie, t.inicio, t.fim, arquivos.TIPOS.get(tipo, tipo))
-                        break
-                    except SessaoExpirada:
-                        log.info("   sessão do ATF expirou; entrando de novo")
-                        atf.login_atual = ""
-                        self._entrar(t0)
-                        if tentativa == 2:
-                            raise EtapaNaoConcluida("a sessão do ATF expirou duas vezes")
+                if tipo in TIPO_TELA:
+                    envios[(t.ie, tipo)] = com_sessao(atf.solicitar, tipo, t.ie, t.inicio, t.fim, arquivos.TIPOS.get(tipo, tipo))
+
+        # 1b) enquanto o ATF prepara os XML: faturas, extrato, omissão e certidão (o PDF vem na hora)
+        emissoes: dict[tuple[str, str], object] = {}
+        for t in trabalhos:
+            for tipo in t.tipos:
+                if tipo in SERVICOS:
+                    nome = arquivos.TIPOS.get(tipo, tipo)
+                    e = emissoes[(t.ie, tipo)] = com_sessao(atf.emitir, tipo, t.ie, t.inicio, t.fim, nome)
+                    if e.arquivos:
+                        arquivos.salvar_documentos(e.arquivos, self.cfg["pastas"]["destino"], t.nome, t.ie, tipo,
+                                                   f"{t.inicio:%Y-%m}", t.codigo)
 
         # 2) recolhe as respostas em Minhas Mensagens
         esperadas: dict[str, int] = {}
@@ -204,7 +220,7 @@ class Executor:
         # 3) distribui os XML pelo conteúdo e salva
         por_destino = self._salvar_recolha(trabalhos, alvos, recolha, salvar_empresas=False)
         completas = not recolha.tempo_esgotado
-        return [self._resultado(t, envios, por_destino, recolha, completas) for t in trabalhos]
+        return [self._resultado(t, envios, por_destino, recolha, completas, emissoes) for t in trabalhos]
 
     def _salvar_recolha(self, trabalhos: list[Trabalho], alvos, recolha: Recolha, salvar_empresas: bool = True):
         """Distribui os arquivos baixados pelo conteúdo, cada um INTEIRO (o ZIP continua ZIP). Nada se
@@ -228,12 +244,28 @@ class Executor:
                                                   f"{t.inicio:%Y-%m}", t.codigo)
         return por_destino
 
-    def _resultado(self, t: Trabalho, envios, por_destino, recolha: Recolha, completas: bool) -> Resultado:
+    def _resultado(self, t: Trabalho, envios, por_destino, recolha: Recolha, completas: bool,
+                   emissoes: dict | None = None) -> Resultado:
         detalhes: dict = {}
         sem_notas, faltando, falhas, partes = [], [], [], []
         total_notas = 0
         for tipo in t.tipos:
             nome = arquivos.TIPOS.get(tipo, tipo)
+            if tipo in SERVICOS:
+                e = (emissoes or {}).get((t.ie, tipo))
+                if e is None:
+                    continue
+                n = len(e.arquivos)
+                detalhes[tipo] = {"arquivos": n, "repetidos": 0, "notas": 0, "valor": 0.0, "sem_notas": e.sem_dados}
+                if n:
+                    partes.append(f"{nome}: {n} arquivo(s)")
+                    log.info("   %s %s: %d arquivo(s)", t.nome, nome, n)
+                elif e.sem_dados:
+                    partes.append(f"{nome}: {e.resposta or 'nada a emitir'}")
+                    log.info("   %s %s: %s", t.nome, nome, e.resposta or "nada a emitir")
+                else:
+                    falhas.append(f"{nome}: {e.resposta or 'o ATF não devolveu o arquivo'}")
+                continue
             envio = envios.get((t.ie, tipo))
             baixados = por_destino.get((t.ie, tipo), [])
             r = arquivos.salvar_originais(baixados, self.cfg["pastas"]["destino"], t.nome, t.ie, tipo,

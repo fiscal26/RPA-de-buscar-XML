@@ -6,6 +6,7 @@ abrir_chrome.bat, sem chromedriver. Cliques e digitação chegam como entrada re
 from __future__ import annotations
 
 import random
+import re
 import tempfile
 import time
 from contextlib import contextmanager
@@ -13,6 +14,7 @@ from pathlib import Path
 from typing import Optional
 
 EXTENSOES = (".xml", ".zip")
+EXTENSOES_DOCUMENTOS = (".pdf", ".zip")
 
 
 class ChromeIndisponivel(Exception):
@@ -102,15 +104,24 @@ def eh_xml_ou_zip(dados: bytes) -> bool:
         or inicio.startswith(b"<procEvento")
 
 
+def eh_pdf(dados: bytes) -> bool:
+    return bool(dados) and dados[:1024].lstrip()[:5] == b"%PDF-"
+
+
 class CapturadorArquivos:
     """Junta tudo o que chegar como XML ou ZIP enquanto estiver ligado:
 
     - download disparado pela página (evento do Playwright), em qualquer aba;
     - resposta do site com XML/ZIP (quando o ATF mostra o arquivo em vez de baixar);
     - arquivo .xml/.zip novo na pasta Downloads do Chrome (caso você baixe à mão).
+
+    Com documentos=True (faturas, extrato, omissão, certidão) aceita também PDF. O ATF mostra o PDF no
+    visualizador do Chrome, de onde o conteúdo nem sempre pode ser lido depois: por isso, enquanto
+    ligado, as páginas do ATF que chegam são buscadas pelo próprio robô (rota) e o PDF fica guardado
+    antes de ir para a tela.
     """
 
-    def __init__(self, contexto, pasta_downloads: str, log=None):
+    def __init__(self, contexto, pasta_downloads: str, log=None, documentos: bool = False):
         self.contexto = contexto
         self.pasta = Path(pasta_downloads)
         self.inicio = time.time()
@@ -121,12 +132,43 @@ class CapturadorArquivos:
         self._assinaturas: set[int] = set()
         self.ultimo_novo = 0.0
         self.log = log or (lambda texto: None)
+        self.documentos = documentos
+        self._interceptados: list[tuple[str, bytes]] = []
+        self._com_rota = False
 
         for page in contexto.pages:
             page.on("download", self._novo_download)
         contexto.on("page", self._nova_aba)
         contexto.on("response", self._nova_resposta)
+        if documentos:
+            try:
+                contexto.route("**/*", self._rota)
+                self._com_rota = True
+            except Exception as e:
+                self.log(f"Sem interceptação das respostas ({e}); fica a captura pelos downloads")
 
+    def _rota(self, route):
+        """Páginas (documentos) passam pelo robô: se for PDF/ZIP, o conteúdo é guardado e segue para a tela."""
+        req = route.request
+        if req.resource_type != "document" or not req.url.startswith("http"):
+            route.fallback()
+            return
+        try:
+            resposta = route.fetch()  # segue o redirecionamento (o extrato passa por servicos/EmitirPdf)
+        except Exception:
+            route.fallback()
+            return
+        try:
+            tipo = resposta.headers.get("content-type", "").lower()
+            disp = resposta.headers.get("content-disposition", "").lower()
+            if "pdf" in tipo or "zip" in tipo or "octet-stream" in tipo or "attachment" in disp:
+                corpo = resposta.body()
+                if corpo:
+                    nome = re.search(r'filename="?([^";]+)', disp)
+                    self._interceptados.append((nome.group(1) if nome else req.url.split("?")[0].rsplit("/", 1)[-1][:80], corpo))
+        except Exception:
+            pass
+        route.fulfill(response=resposta)
     def _nova_aba(self, page):
         page.on("download", self._novo_download)
 
@@ -138,7 +180,7 @@ class CapturadorArquivos:
             tipo = resposta.headers.get("content-type", "").lower()
             disp = resposta.headers.get("content-disposition", "").lower()
             if "zip" in tipo or "octet-stream" in tipo or "download" in tipo or "attachment" in disp or \
-                    ("xml" in tipo and "html" not in tipo):
+                    ("xml" in tipo and "html" not in tipo) or (self.documentos and "pdf" in tipo):
                 self._respostas.append(resposta)
         except Exception:
             pass
@@ -147,6 +189,9 @@ class CapturadorArquivos:
         try:
             self.contexto.remove_listener("page", self._nova_aba)
             self.contexto.remove_listener("response", self._nova_resposta)
+            if self._com_rota:
+                self.contexto.unroute("**/*", self._rota)
+                self._com_rota = False
             for page in self.contexto.pages:
                 page.remove_listener("download", self._novo_download)
         except Exception:
@@ -159,7 +204,7 @@ class CapturadorArquivos:
             if download:
                 self.log(f"Download '{nome}' chegou vazio ou não pôde ser lido")
             return False
-        if not download and not eh_xml_ou_zip(dados):
+        if not download and not eh_xml_ou_zip(dados) and not (self.documentos and eh_pdf(dados)):
             return False
         assinatura = hash(dados)
         if assinatura in self._assinaturas:
@@ -175,6 +220,9 @@ class CapturadorArquivos:
         while self._downloads:
             d = self._downloads.pop(0)
             novos += self._guardar(d.suggested_filename or "download", self._ler_download(d), download=True)
+        while self._interceptados:
+            nome, dados = self._interceptados.pop(0)
+            novos += self._guardar(nome, dados)
         while self._respostas:
             r = self._respostas.pop(0)
             try:
@@ -212,7 +260,7 @@ class CapturadorArquivos:
             return 0
         novos = 0
         for arq in self.pasta.iterdir():
-            if arq.suffix.lower() not in EXTENSOES or arq in self._vistos:
+            if arq.suffix.lower() not in (EXTENSOES_DOCUMENTOS if self.documentos else EXTENSOES) or arq in self._vistos:
                 continue
             try:
                 mtime = arq.stat().st_mtime

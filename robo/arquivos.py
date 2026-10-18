@@ -1,6 +1,7 @@
 """Arquivos baixados do ATF: guardados como vieram (ZIP continua ZIP) na pasta da empresa.
 
 Pasta final:  <destino>/Arquivos baixados/<ID>-<Nome>/<AAAA-MM>/<NF-e Saida | NF-e Entrada | NFC-e> - R$ <total>/
+(faturas, extrato, omissão e certidão: <AAAA-MM>/<Serviço>/, com o PDF como veio do ATF)
 (ex.: ID 5 e nome "joao" -> "5-joao"; sem ID na planilha, só o nome). O conteúdo de cada arquivo é
 lido só para saber de qual empresa e tipo ele é (IE/CNPJ do emitente ou destinatário dentro das
 notas), contar as notas e somar o valor (notas autorizadas, sem as canceladas) que vai no nome da pasta.
@@ -24,7 +25,13 @@ TIPOS = {
     "nfe_saida": "NF-e Saida",
     "nfe_entrada": "NF-e Entrada",
     "nfce": "NFC-e",
+    "faturas": "Faturas",
+    "extrato": "Extrato de Pagamentos",
+    "omissao": "Omissão e Inadimplência",
+    "certidao": "Certidão de Débitos",
 }
+# serviços que o ATF responde na hora com PDF (ou ZIP): o arquivo vai direto para a empresa
+SERVICOS_DOCUMENTO = ("faturas", "extrato", "omissao", "certidao")
 PASTA_BAIXADOS = "Arquivos baixados"
 _MAX_ARQUIVOS_ZIP = 50_000
 _MAX_TAMANHO_XML = 20 * 1024 * 1024
@@ -434,6 +441,45 @@ def salvar_originais(brutos: list[tuple[str, bytes]], destino: str | Path, nome:
     if pasta.name != novo_nome and not (pasta_mes / novo_nome).exists():
         pasta = pasta.rename(pasta_mes / novo_nome)
     return {"novos": novos, "repetidos": repetidos, "notas": notas, "valor": valor, "pasta": str(pasta)}
+
+
+def extensao(dados: bytes) -> str:
+    if dados[:4] == b"PK\x03\x04":
+        return ".zip"
+    if dados[:1024].lstrip()[:5] == b"%PDF-":
+        return ".pdf"
+    if dados[:2] == b"\x1f\x8b":
+        return ".gz"
+    return {"XML": ".xml", "HTML": ".html"}.get(tipo_de_arquivo(dados), ".bin")
+
+
+def salvar_documentos(brutos: list[tuple[str, bytes]], destino: str | Path, nome: str, ie: str, tipo: str,
+                      competencia: str, codigo: str = "") -> dict:
+    """Faturas, extrato, omissão e certidão: guarda o PDF (ou ZIP) como veio em
+    Arquivos baixados/<ID>-<Nome>/<AAAA-MM>/<Serviço>/<Serviço> <AAAA-MM>.pdf. Rodar de novo guarda o
+    novo ao lado ("(2)"), sem repetir arquivo igual. Devolve {novos, repetidos, pasta}."""
+    import hashlib
+
+    nome_tipo = TIPOS.get(tipo, tipo)
+    pasta = pasta_empresa(destino, nome, ie, codigo) / competencia / nome_tipo
+    existentes = {hashlib.sha1(a.read_bytes()).hexdigest() for a in pasta.iterdir() if a.is_file()} if pasta.is_dir() else set()
+    novos = repetidos = 0
+    for _, dados in brutos:
+        assinatura = hashlib.sha1(dados).hexdigest()
+        if assinatura in existentes:
+            repetidos += 1
+            continue
+        existentes.add(assinatura)
+        ext = extensao(dados)
+        pasta.mkdir(parents=True, exist_ok=True)
+        base = f"{nome_tipo} {competencia}"
+        arquivo, n = pasta / f"{base}{ext}", 1
+        while arquivo.exists():
+            n += 1
+            arquivo = pasta / f"{base} ({n}){ext}"
+        arquivo.write_bytes(dados)
+        novos += 1
+    return {"novos": novos, "repetidos": repetidos, "pasta": str(pasta) if pasta.is_dir() else ""}
 
 
 def salvar_sem_empresa(brutos: list[tuple[str, bytes]], destino: str | Path) -> int:

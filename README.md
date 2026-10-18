@@ -1,7 +1,8 @@
 # LotiVisse XML — robô de XML da SEFAZ-PB (piloto)
 
-Robô que entra no **ATF da SEFAZ-PB com o login do contador**, pesquisa as notas de cada empresa
-pela **inscrição estadual** e salva os XML da competência numa pasta do seu computador:
+Robô que entra no **ATF da SEFAZ-PB com o login do contador**, pesquisa cada empresa pela
+**inscrição estadual** e salva numa pasta do seu computador os XML da competência e os PDF de
+faturas, extrato de pagamentos, omissão e inadimplência e certidão de débitos:
 
 ```
 <pasta destino>/                   (padrão: Documentos\XML SEFAZ-PB)
@@ -11,6 +12,10 @@ pela **inscrição estadual** e salva os XML da competência numa pasta do seu c
         NF-e Saida - R$ 12.345,67/     NF-e Saida 2026-09.zip     (o ZIP do ATF, como veio)
         NF-e Entrada - R$ 8.900,00/    NF-e Entrada 2026-09.zip
         NFC-e - R$ 1.230,50/           NFC-e 2026-09.zip
+        Faturas/                       Faturas 2026-09.pdf               (DAR/PIX dos lançamentos em aberto)
+        Extrato de Pagamentos/         Extrato de Pagamentos 2026-09.pdf
+        Omissão e Inadimplência/       Omissão e Inadimplência 2026-09.pdf   (o relatório completo)
+        Certidão de Débitos/           Certidão de Débitos 2026-09.pdf
     _sem_empresa/        arquivo de empresa fora da rodada (ex.: consulta feita à mão no mesmo login)
     _nao_identificados/  arquivo baixado que não é XML/ZIP (guardado como veio, para conferir)
   _relatorios/           relatório de cada rodada
@@ -48,9 +53,26 @@ pelo nome do cabeçalho. O robô de XML usa:
 | NOME FANTASIA | nome da pasta |
 | LOGIN, SENHA | acesso do contador ao ATF. A senha só precisa vir uma vez por login |
 | NF-e Saida, NF-e Entrada, NFC-e | **X** (ou S, SIM) = baixar esse XML; apagar o X = não baixar |
+| Download Faturas, Extrato de Pagamentos, Omissão e Inadimplência, Certidão de Débitos | **X** = emitir o PDF desse serviço |
 
-CT-e, Download Faturas, Extrato de Pagamentos, Omissão e Inadimplência, Certidão de Débitos,
-Conferência Cartão de Crédito e Dossiê MEI ficam para outros serviços: este robô não usa essas colunas.
+CT-e, Conferência Cartão de Crédito e Dossiê MEI ainda não são feitos pelo robô.
+
+## Serviços com PDF na hora (gravações de 18/10/2026)
+
+Feitos na mesma sessão do login do contador, **enquanto o ATF prepara os XML** (não usam Minhas
+Mensagens). Cada tela é aberta pelo campo **Função** do topo (como na gravação) ou, se não der, pelo
+endereço direto; a IE vai no Número, **Pesquisar** confere a empresa (sem nome = IE não existe no ATF).
+
+| Serviço | Função | O que o robô faz |
+|---|---|---|
+| Faturas | ARR_278 (Emissão de DAR > Lançamentos Espontâneos) | *Avançar*; marca **todos** os lançamentos, menos os *DIFERIDO - VALOR MINIMO* (o ATF não emite); Tipo de Emissão como vier (PIX); *Emitir*. Sem lançamento: "nenhum lançamento em aberto" |
+| Extrato de Pagamentos | ARR_087 | Período de Pagamento do **1º ao último dia** da competência, Tipo de Imposto *Todos*, *Consultar* |
+| Omissão e Inadimplência | COB_187 | *Consultar*: o **PDF completo** (todas as páginas) |
+| Certidão de Débitos | DIA_061 | *Submeter* (com o login, como em todo o robô) |
+
+O ATF mostra o PDF no visualizador do Chrome; o robô guarda o arquivo antes de ele ir para a tela e
+fecha as janelas que o ATF abrir. Se vier ZIP, fica ZIP. Rodar de novo guarda o arquivo novo ao lado
+("(2)"), sem repetir arquivo igual.
 
 ## Roteiro no ATF
 
@@ -166,7 +188,9 @@ e `log.txt`. É com esse pacote que ajustamos o roteiro.
 - [x] Robô: login do contador, telas FIS_1322 e FIS_1484, blocos Emitente/Destinatário, captura do download, modo assistido
 - [x] Fluxo de Minhas Mensagens: consulta com Tipo de Exibição XML, recolha dos anexos, distribuição pelo conteúdo
 - [x] Roteiro conferido com as telas reais: login, consulta, aviso do Consultar, Minhas Mensagens e Ler Mensagem
-- [ ] **Primeira rodada no ATF real** (no seu PC, `--local`), para confirmar os cliques e o download do anexo
+- [x] Faturas, extrato de pagamentos, omissão e inadimplência e certidão de débitos (pelas gravações)
+- [ ] **Primeira rodada no ATF real** dos 4 serviços de PDF
+- [x] Primeira rodada no ATF real dos XML (NF-e e NFC-e)
 
 ## Testes
 

@@ -77,8 +77,14 @@ create table if not exists public.xml_empresas (
   criado_em      timestamptz not null default now(),
   atualizado_em  timestamptz not null default now(),
   unique (org_id, ie),
-  check (tipos <@ array['nfe_saida', 'nfe_entrada', 'nfce'])
+  constraint xml_empresas_tipos_check
+    check (tipos <@ array['nfe_saida', 'nfe_entrada', 'nfce', 'faturas', 'extrato', 'omissao', 'certidao'])
 );
+
+-- Banco criado antes dos serviços de PDF (faturas, extrato, omissão, certidão): troca a regra dos tipos
+alter table public.xml_empresas drop constraint if exists xml_empresas_tipos_check;
+alter table public.xml_empresas add constraint xml_empresas_tipos_check
+  check (tipos <@ array['nfe_saida', 'nfe_entrada', 'nfce', 'faturas', 'extrato', 'omissao', 'certidao']);
 
 -- Cada planilha enviada na área de agendamento (uma competência: do 1º ao último dia do mês)
 create table if not exists public.xml_agendamentos (

@@ -47,6 +47,45 @@ PADRAO = {
                 "titulo": "Consulta Genérica da NFC-e",
                 "rotulos_data": ["Data Emissão Inicial", "Data Emissão Final"],
             },
+            # Serviços que o ATF responde na hora com um PDF (gravações de 18/10/2026). Abertos pelo
+            # campo "Função" do topo (como na gravação) ou, se não der, pelo endereço direto no quadro de conteúdo.
+            "faturas": {  # Emissão de DAR > Lançamentos Espontâneos
+                "menu": ["Emissão de DAR", "Lançamentos Espontâneos"],
+                "funcao": "ARR_278",
+                "pagina": "ARRf_LancamentoEmitirDarContribuinte",
+                "endereco": "arr/ARRf_LancamentoEmitirDarContribuinte.do?limparSessao=true",
+                "pronta": 'input[name="btnSubmeter"], input[name="btnEmitir"]',
+                "titulo": "Emitir DAR/FC/PIX",
+                "componente": "cmpContribuinte",
+                "enviar": 'input[name="btnSubmeter"]',
+            },
+            "extrato": {  # Extratos de Pagamento por Contribuinte
+                "funcao": "ARR_087",
+                "pagina": "ARRf_ConsultarExtrPgtoCont.do",
+                "endereco": "arr/ARRf_ConsultarExtrPgtoCont.do?limparSessao=true",
+                "pronta": 'input[name="edtDataInicial"]',
+                "titulo": "Extratos de Pagamento por Contribuinte",
+                "componente": "cmpContribuinte",
+                "enviar": 'input[name="Submit"]',
+            },
+            "omissao": {  # Consultar Omissos/Inadimplentes (Consultar = o PDF completo)
+                "funcao": "COB_187",
+                "pagina": "COBf_OmiGeralConsGenericaContribuinte.do",
+                "endereco": "cob/COBf_OmiGeralConsGenericaContribuinte.do?limparSessao=true",
+                "pronta": 'input[name="btnConsultar"]',
+                "titulo": "Consulta de Omissos/Inadimplentes",
+                "componente": "cmpHumanoInst",
+                "enviar": 'input[name="btnConsultar"]',
+            },
+            "certidao": {  # Emitir Certidão de Débito
+                "funcao": "DIA_061",
+                "pagina": "DIAf_EmitirCertidaoDebitoIntranet.do",
+                "endereco": "dia/DIAf_EmitirCertidaoDebitoIntranet.do?limparSessao=true",
+                "pronta": 'input[name="btnEmitirCertidao"]',
+                "titulo": "Emitir Certidão de Débito",
+                "componente": "Contribuinte",
+                "enviar": 'input[name="btnEmitirCertidao"]',
+            },
             # onde o ATF entrega os XML (sino do topo)
             "mensagens": {
                 "funcao": "SEG_064",
@@ -77,6 +116,8 @@ PADRAO = {
         # Minhas Mensagens não abriu: espera e tenta de novo; depois de N tentativas o robô para
         "tentativas_mensagens": 3,
         "segundos_nova_tentativa_mensagens": 30,
+        # Faturas, extrato, omissão e certidão: quanto esperar o PDF depois do clique final
+        "segundos_documento": 90,
         # Empresas por rodada (um login): envia todas as consultas e depois recolhe as mensagens
         "empresas_por_rodada": 15,
         # Tempo que o modo assistido espera você concluir no Chrome.
