@@ -2,10 +2,11 @@
 REM Grava os passos que voce faz no Chrome do robo (a senha nao e gravada).
 REM Antes, abra o Chrome pelo abrir_chrome.bat. Para terminar, aperte Ctrl+C nesta janela.
 cd /d "%~dp0"
+set /p SERVICO=Nome do servico que vai gravar (ex.: faturas, extrato, omissao, certidao): 
 where py >nul 2>nul
 if %errorlevel%==0 (
-    py robo_xml.py --gravar
+    py robo_xml.py --gravar "%SERVICO%"
 ) else (
-    python robo_xml.py --gravar
+    python robo_xml.py --gravar "%SERVICO%"
 )
 pause

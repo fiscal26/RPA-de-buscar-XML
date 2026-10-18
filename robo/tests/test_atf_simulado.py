@@ -101,6 +101,10 @@ def _responder(tela: str, campos: dict) -> str:
     assert campos.get("cmbTpDoccmpEmit") == "IE" and campos.get("cmbTpDoccmpDest", "IE") == "IE", campos
     ie = emit or dest
     assert ie, "Pesquisar do bloco não foi clicado (o ATF não sabe a empresa)"
+    if ESTADO.pop("agosto", False):
+        _nova_mensagem("FIS_1322", "NFe: Consulta Genérica (Ano 2026)", 0,
+                       _zip({"agosto.xml": nfe(EMPRESA, FORNECEDOR, 98, "2026-08-10", ie_emit=ie)}),
+                       "outra competência", periodo="01/08/2026 a 31/08/2026")
     if ESTADO.pop("manual", False):
         _nova_mensagem("FIS_1322", "NFe: Consulta Genérica (Ano 2026)", 0,
                        _zip({"x.xml": nfe(FORNECEDOR, "", 7, ie_emit=IE_ESTRANHA)}), "consulta manual")
@@ -350,9 +354,7 @@ def test_rodada_um_login_xml_pelas_mensagens(ambiente):
     executor = robo_xml.Executor(cfg)
     try:
         ESTADO["manual"] = True  # alguém consulta outra empresa à mão no mesmo login, durante a rodada
-        _nova_mensagem("FIS_1322", "NFe: Consulta Genérica (Ano 2026)", 3,
-                       _zip({"agosto.xml": nfe(EMPRESA, FORNECEDOR, 98, "2026-08-10", ie_emit=IE_EMPRESA)}),
-                       "outra competência", periodo="01/08/2026 a 31/08/2026")
+        ESTADO["agosto"] = True  # resposta de outra competência chega no meio da rodada
         r1, r2, r3 = executor.executar_rodada([
             _trabalho(IE_EMPRESA, "Padaria", ["nfe_saida", "nfe_entrada"], codigo="015"),
             _trabalho(IE_OUTRA, "Mercado", ["nfe_entrada", "nfce"], codigo="016"),
@@ -378,7 +380,7 @@ def test_rodada_um_login_xml_pelas_mensagens(ambiente):
     assert not list(base.glob("Arquivos baixados/015-Padaria/2026-08"))  # resposta de outra competência não entrou
     assert len(list(base.glob("Arquivos baixados/016-Mercado/2026-09/NF-e Entrada - R$ 100,00/*.zip"))) == 1
     assert len(list(base.glob("Arquivos baixados/016-Mercado/2026-09/NFC-e - R$ 100,00/*.zip"))) == 1
-    assert len(list(base.glob("Arquivos baixados/_sem_empresa/*"))) == 1  # a da consulta manual
+    assert len(list(base.glob("Arquivos baixados/_sem_empresa/*"))) == 2  # a consulta manual e a de agosto
     assert ESTADO["lista_cedo"] == 0  # respeitou o intervalo da caixa de mensagens
     # só abre o necessário: com anexo, só a filha do clipe; sem anexo, para no "Nenhum registro satisfaz"
     por_mae: dict = {}

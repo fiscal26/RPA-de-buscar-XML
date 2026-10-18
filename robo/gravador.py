@@ -1,12 +1,14 @@
 """Gravador de passos: registra o que VOCÊ faz no Chrome do robô, para o robô repetir igual.
 
-Uso:  abra o Chrome pelo abrir_chrome.bat, rode  py robo_xml.py --gravar  (ou gravar_passos.bat),
+Uso:  abra o Chrome pelo abrir_chrome.bat, rode  py robo_xml.py --gravar faturas  (ou gravar_passos.bat),
 faça o caminho no ATF normalmente e, no fim, volte ao PowerShell e aperte Ctrl+C.
 
-O que fica gravado em robo/gravacoes/gravacao_<data>.json:
+Tudo vai num arquivo só, robo/gravacoes/gravacao_<serviço>_<data>.zip, com:
 - cada clique, campo alterado, opção escolhida e tecla Enter/Tab, com os dados do elemento
   (id, name, classe, rótulo, texto, caminho CSS e XPath, título da seção onde está);
-- a lista de campos e botões de cada tela visitada (sem valores digitados).
+- a lista de campos e botões de cada tela visitada (sem valores digitados);
+- um print de cada tela visitada (pasta telas/);
+- os arquivos baixados durante a gravação (pasta baixados/).
 A SENHA NUNCA É GRAVADA: campos de senha aparecem como "***".
 Arquivos baixados durante a gravação (o XML) são guardados na mesma pasta: com o Chrome ligado ao
 robô, o download vai para uma pasta temporária e sumiria ao terminar.
@@ -14,6 +16,7 @@ robô, o download vai para uma pasta temporária e sumiria ao terminar.
 from __future__ import annotations
 
 import json
+import re
 import time
 from datetime import datetime
 from pathlib import Path
@@ -90,8 +93,11 @@ JS_GRAVADOR = r"""(() => {
 
 
 class Gravador:
-    def __init__(self, cfg: dict):
+    def __init__(self, cfg: dict, servico: str = ""):
         self.cfg = cfg
+        self.servico = re.sub(r"[^A-Za-z0-9_-]+", "-", servico).strip("-")[:30]
+        self.prints: list[tuple[str, bytes]] = []
+        self.baixados: list[Path] = []
         self.eventos: list[dict] = []
         self.telas: list[dict] = []
         self._vistas: set[str] = set()
@@ -129,6 +135,7 @@ class Gravador:
             try:
                 d.save_as(str(destino))
                 self.arquivos.append(destino.name)
+                self.baixados.append(destino)
                 print(f"  arquivo baixado guardado em: {destino}")
             except Exception as e:
                 print(f"  não consegui guardar o download: {e}")
@@ -151,7 +158,17 @@ class Gravador:
             except Exception:
                 continue
             self._vistas.add(chave)
-            self.telas.append({"url": frame.url, "hora": datetime.now().strftime("%H:%M:%S"), "campos": campos})
+            tela = {"url": frame.url, "hora": datetime.now().strftime("%H:%M:%S"), "campos": campos}
+            if "google.com/recaptcha" not in chave and len(self.prints) < 80:
+                try:  # print da tela inteira (com todos os quadros) quando aparece uma tela nova
+                    pagina.wait_for_timeout(600)
+                    nome = f"{len(self.prints) + 1:02d}_{tela['hora'].replace(':', '')}_" \
+                           f"{re.sub(r'[^A-Za-z0-9]+', '-', chave.split('/')[-1].split('?')[0])[:40]}.png"
+                    self.prints.append((nome, pagina.screenshot(full_page=True)))
+                    tela["print"] = f"telas/{nome}"
+                except Exception:
+                    pass
+            self.telas.append(tela)
 
     def gravar(self, segundos: float | None = None) -> Path:
         chrome = Chrome(self.cfg["chrome"]["porta"], fechar_abas=False)
@@ -186,10 +203,23 @@ class Gravador:
         return arquivo
 
     def salvar(self) -> Path:
+        """Um arquivo só (.zip) com os passos, os prints das telas e os arquivos baixados."""
+        import zipfile
+
         PASTA.mkdir(parents=True, exist_ok=True)
-        arquivo = PASTA / f"gravacao_{datetime.now():%Y%m%d_%H%M%S}.json"
-        arquivo.write_text(json.dumps({"eventos": self.eventos, "telas": self.telas, "arquivos_baixados": self.arquivos}, ensure_ascii=False, indent=1),
-                           encoding="utf-8")
-        print(f"\n{len(self.eventos)} ação(ões) gravada(s) em: {arquivo}")
+        rotulo = f"_{self.servico}" if self.servico else ""
+        arquivo = PASTA / f"gravacao{rotulo}_{datetime.now():%Y%m%d_%H%M%S}.zip"
+        dados = {"servico": self.servico, "eventos": self.eventos, "telas": self.telas,
+                 "arquivos_baixados": [f"baixados/{a}" for a in self.arquivos]}
+        with zipfile.ZipFile(arquivo, "w", zipfile.ZIP_DEFLATED) as z:
+            z.writestr("gravacao.json", json.dumps(dados, ensure_ascii=False, indent=1))
+            for nome, png in self.prints:
+                z.writestr(f"telas/{nome}", png)
+            for caminho in self.baixados:
+                if caminho.exists():
+                    z.write(caminho, f"baixados/{caminho.name}")
+                    caminho.unlink()
+        print(f"\n{len(self.eventos)} ação(ões), {len(self.prints)} tela(s) e {len(self.baixados)} arquivo(s) baixado(s)")
+        print(f"gravados em: {arquivo}")
         print("Mande esse arquivo para ajustarmos o robô.")
         return arquivo

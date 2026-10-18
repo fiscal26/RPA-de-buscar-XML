@@ -171,6 +171,7 @@ class Recolha:
     arquivos: list[tuple[str, bytes]] = field(default_factory=list)
     textos: list[tuple[str, str]] = field(default_factory=list)   # (código FIS, texto da mensagem)
     recebidas: dict[str, int] = field(default_factory=dict)       # código FIS -> mensagens lidas
+    ignorados: list[tuple[str, bytes]] = field(default_factory=list)  # anexos de outra competência/empresa
     tempo_esgotado: bool = False
 
 
@@ -869,6 +870,11 @@ class AtfPB:
                         recolha.recebidas[mae["codigo"]] = recolha.recebidas.get(mae["codigo"], 0) + 1
                     else:
                         self._log("Consulta de outra empresa ou competência: não conta")
+                        # o anexo não vai para a pasta de nenhuma empresa da rodada (fica em _sem_empresa)
+                        recolha.ignorados.extend(anexos)
+                        for anexo in anexos:
+                            if anexo in capt.recebidos:
+                                capt.recebidos.remove(anexo)
                 if all(recolha.recebidas.get(c, 0) >= n for c, n in esperadas.items()):
                     break
                 if time.time() >= limite:

@@ -17,7 +17,7 @@ Uso:
     python robo_xml.py --gerar-chaves      cria as chaves das senhas (uma vez só; veja o README)
     python robo_xml.py --modelo PASTA      copia a planilha modelo para a pasta
     python robo_xml.py --local empresas.xlsx [--competencia 09/2026]
-    python robo_xml.py --gravar            grava os passos que você faz no Chrome (para ajustar o robô)
+    python robo_xml.py --gravar faturas    grava os passos que você faz no Chrome (para ajustar o robô)
                                            roda direto da planilha, sem o portal (para testar)
 """
 from __future__ import annotations
@@ -216,6 +216,7 @@ class Executor:
             for caminho, (nome, dados) in zip(arquivos.salvar_nao_identificados(brutos, destino), brutos):
                 log.warning("   ATENÇÃO: o arquivo baixado '%s' (%s, %d bytes) não é XML nem ZIP de XML; guardado em %s",
                             nome, arquivos.tipo_de_arquivo(dados), len(dados), caminho)
+        sem_empresa = sem_empresa + list(recolha.ignorados)
         if sem_empresa:
             n = arquivos.salvar_sem_empresa(sem_empresa, destino)
             log.info("   %d arquivo(s) de empresas fora desta rodada salvos em %s/_sem_empresa", n, arquivos.PASTA_BAIXADOS)
@@ -532,7 +533,8 @@ def main():
     ap.add_argument("--modelo", metavar="PASTA", help="copia a planilha modelo para a pasta")
     ap.add_argument("--local", metavar="PLANILHA", help="roda direto da planilha, sem o portal")
     ap.add_argument("--competencia", help="MM/AAAA (padrão: mês anterior)")
-    ap.add_argument("--gravar", action="store_true", help="grava os passos que você faz no Chrome do robô")
+    ap.add_argument("--gravar", nargs="?", const="", metavar="SERVICO",
+                    help="grava os passos que você faz no Chrome do robô (ex.: --gravar faturas)")
     args = ap.parse_args()
 
     logging.basicConfig(
@@ -554,10 +556,10 @@ def main():
     if args.mostrar_chave_publica:
         print(cripto.publica_de(cripto.carregar_privada(cfg["chaves"]["privada"])))
         return
-    if args.gravar:
+    if args.gravar is not None:
         from gravador import Gravador
         try:
-            Gravador(cfg).gravar()
+            Gravador(cfg, args.gravar).gravar()
         except ChromeIndisponivel as e:
             sys.exit(str(e))
         return

@@ -124,10 +124,11 @@ Gera um relatório em `<destino>/_relatorios/`.
 Se o robô travar numa tela, grave você mesmo o caminho:
 
 1. Abra o Chrome pelo `abrir_chrome.bat`.
-2. Rode `gravar_passos.bat` (ou `py robo_xml.py --gravar`).
+2. Rode `gravar_passos.bat` (ele pergunta o nome do serviço) ou `py robo_xml.py --gravar faturas`.
 3. No Chrome, faça o caminho completo no ATF: login, NF-e, a consulta (datas, IE, Pesquisar, XML,
    Consultar), Minhas Mensagens, abrir a mensagem e baixar o anexo.
-4. Volte ao PowerShell e aperte **Ctrl+C**. O arquivo fica em `robo/gravacoes/gravacao_<data>.json`.
+4. Volte ao PowerShell e aperte **Ctrl+C**. Fica um arquivo só, `robo/gravacoes/gravacao_<serviço>_<data>.zip`,
+   com os passos, um print de cada tela visitada e os arquivos baixados.
 
 O arquivo traz cada clique e campo preenchido com o endereço exato do elemento na página e a lista de
 campos de cada tela. **A senha não é gravada** (aparece como `***`). Com ele, o robô passa a repetir

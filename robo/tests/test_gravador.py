@@ -5,6 +5,7 @@ import json
 import threading
 import time
 import urllib.request
+import zipfile
 
 import gravador
 from gravador import Gravador
@@ -28,7 +29,7 @@ def test_grava_passos_sem_senha(ambiente, tmp_path, monkeypatch):  # noqa: F811
     resultado = {}
 
     def gravar():
-        resultado["arquivo"] = Gravador(cfg).gravar(segundos=35)
+        resultado["arquivo"] = Gravador(cfg, "nfe teste").gravar(segundos=35)
 
     t = threading.Thread(target=gravar)
     t.start()
@@ -56,6 +57,7 @@ def test_grava_passos_sem_senha(ambiente, tmp_path, monkeypatch):  # noqa: F811
         conteudo.fill('input[name="edtDtInicial"]', "01/09/2026")
         conteudo.dispatch_event('input[name="edtDtInicial"]', "change")
         emit = _quadro(page, "_cmpEmit")
+        page.wait_for_timeout(1200)  # uma pessoa não age em milissegundos: o gravador entra no quadro novo
         emit.fill("#hidNrDocumentocmpEmit", IE_EMPRESA)
         emit.dispatch_event("#hidNrDocumentocmpEmit", "change")
         emit.click('button[name="btnPesquisar"]')
@@ -64,8 +66,12 @@ def test_grava_passos_sem_senha(ambiente, tmp_path, monkeypatch):  # noqa: F811
         page.wait_for_timeout(1000)
     t.join(60)
 
-    dados = json.loads(resultado["arquivo"].read_text(encoding="utf-8"))
+    z = zipfile.ZipFile(resultado["arquivo"])
+    assert resultado["arquivo"].name.startswith("gravacao_nfe-teste_")
+    dados = json.loads(z.read("gravacao.json"))
     texto = json.dumps(dados, ensure_ascii=False)
+    prints = [n for n in z.namelist() if n.startswith("telas/")]
+    assert prints and z.read(prints[0])[:4] == b"\x89PNG"  # print de cada tela nova
     assert "certa" not in texto  # a senha nunca vai para o arquivo
     alterou = [e for e in dados["eventos"] if e["acao"] == "alterou"]
     assert any(e["valor"] == "***" and e["id"] == "senha" for e in alterou)
@@ -93,5 +99,6 @@ def test_guarda_o_arquivo_baixado(ambiente, tmp_path, monkeypatch):  # noqa: F81
         f"http://127.0.0.1:{cfg['chrome']['porta']}/json/new?{base}/seg/SEGf_LerMensagem.do?hidsqMensagem={filha}"
         "%26auto=1", method="PUT"))
     t.join(40)
-    dados = json.loads(resultado["arquivo"].read_text(encoding="utf-8"))
-    assert any((tmp_path / a).read_bytes()[:2] == b"PK" for a in dados["arquivos_baixados"]), dados["arquivos_baixados"]
+    z = zipfile.ZipFile(resultado["arquivo"])
+    dados = json.loads(z.read("gravacao.json"))
+    assert any(z.read(a)[:2] == b"PK" for a in dados["arquivos_baixados"]), dados["arquivos_baixados"]
