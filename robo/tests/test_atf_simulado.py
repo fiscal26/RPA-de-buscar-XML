@@ -23,6 +23,7 @@ import copy
 import io
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -39,7 +40,7 @@ import pytest
 
 import config
 import robo_xml
-from util import IE_EMPRESA, IE_OUTRA, nfe
+from util import IE_EMPRESA, IE_OUTRA, chave, cte, evento_cte, nfe
 
 EMPRESA = "11222333000181"
 FORNECEDOR = "45723174000110"
@@ -50,7 +51,8 @@ CHROME = os.environ.get("CHROME_TESTE") or next(
     (str(p) for p in Path("/opt/pw-browsers").glob("chromium-*/chrome-linux/chrome")), shutil.which("chromium") or "")
 
 ESTADO = {"logins": [], "consultas": [], "mensagens": [], "recusas": [], "ultima_lista": 0.0, "lista_cedo": 0,
-          "blocos": {}, "abertas": [], "caixa_fora": 0, "servicos": [], "telas_servico": [], "faturas_emitidas": []}
+          "blocos": {}, "abertas": [], "caixa_fora": 0, "servicos": [], "telas_servico": [], "faturas_emitidas": [],
+          "cartao": []}
 
 
 def _zip(itens: dict[str, bytes]) -> bytes:
@@ -81,7 +83,14 @@ def _nova_mensagem(codigo: str, assunto: str, atraso: float, anexo: bytes | None
              "em anexo significa que não existem dados para o período consultado.") if anexo else (
         f"{texto}<br>NFe: Consulta Genérica<br>Período solicitado: {periodo}<br><br>"
         "Mensagem: Nenhum registro satisfaz a pesquisa.")
-    for i, (txt, arq) in enumerate((("Tarefa recebida.", None), (final, anexo), ("Tarefa em processamento.", None))):
+    filhas = (("Tarefa recebida.", None), (final, anexo), ("Tarefa em processamento.", None))
+    if codigo == "FIS_1192":  # CT-e: 4 filhas; a do anexo diz "Arquivo disponível para download."
+        filtro = f"Filtro pesquisa:<br>Data emissão: {periodo.replace(' a ', ' à ')}<br>{texto}"
+        filhas = (("CTe: Consulta Genérica", None), ("CTe: Consulta Genérica", None),
+                  (f"Arquivo disponível para download.<br><br>{filtro}" if anexo else
+                   f"Mensagem: Nenhum registro satisfaz a pesquisa.<br>{filtro}", anexo),
+                  ("CTe: Consulta Genérica", None))
+    for i, (txt, arq) in enumerate(filhas):
         mae["filhas"].append({"id": str(int(mae["id"]) + i + 1), "texto": txt, "anexo": arq})
     ESTADO["mensagens"].append(mae)
 
@@ -103,7 +112,7 @@ def _responder(tela: str, campos: dict) -> str:
     if emit and dest:
         ESTADO["recusas"].append(q)
         return "Erro: informe apenas o Emitente ou o Destinatário."
-    assert (q["ini"], q["fim"], q["exib"]) == ("01/09/2026", "30/09/2026", "3"), q
+    assert (q["ini"], q["fim"], q["exib"]) == ("01/09/2026", "30/09/2026", "4" if tela == "cte" else "3"), q
     assert campos.get("cmbTpDoccmpEmit") == "IE" and campos.get("cmbTpDoccmpDest", "IE") == "IE", campos
     ie = emit or dest
     assert ie, "Pesquisar do bloco não foi clicado (o ATF não sabe a empresa)"
@@ -114,6 +123,14 @@ def _responder(tela: str, campos: dict) -> str:
     if ESTADO.pop("manual", False):
         _nova_mensagem("FIS_1322", "NFe: Consulta Genérica (Ano 2026)", 0,
                        _zip({"x.xml": nfe(FORNECEDOR, "", 7, ie_emit=IE_ESTRANHA)}), "consulta manual")
+    if tela == "cte":  # CT-e: o ATF entrega um ZIP com os CT-e e os eventos de cada um
+        assert dest and not emit, q
+        anexo = _zip({"CTe_1.xml": cte(FORNECEDOR, EMPRESA, 1, ie_dest=dest, valor=150.0),
+                      "1.Evento do CTe_1.xml": evento_cte(FORNECEDOR, chave(FORNECEDOR, "2609", "57", 1), "310610")}) \
+            if dest == IE_EMPRESA else None
+        _nova_mensagem("FIS_1192", "CTe: Arquivo Zipado com as CTe", 2, anexo,
+                       f"IE Destinatário: {dest[:2]}.{dest[2:5]}.{dest[5:8]}-{dest[8]}")
+        return "O resultado será enviado para sua caixa de mensagens do ATF"
     if tela == "nfce":
         _nova_mensagem("FIS_1484", "NFCe: Consulta Genérica da NFC-e", 2,
                        _zip({"c1.xml": nfe(EMPRESA, "", 5, modelo="65", ie_emit=ie)}), f"emitente {ie}")
@@ -138,6 +155,29 @@ FUNCOES = {"ARR_278": "/atf/arr/ARRf_LancamentoEmitirDarContribuinte.do?limparSe
            "ARR_087": "/atf/arr/ARRf_ConsultarExtrPgtoCont.do?limparSessao=true",
            "COB_187": "/atf/cob/COBf_OmiGeralConsGenericaContribuinte.do?limparSessao=true",
            "DIA_061": "/atf/dia/DIAf_EmitirCertidaoDebitoIntranet.do?limparSessao=true"}
+# outras funções que o campo "Função" do topo abre (CT-e e Dossiê do Contribuinte)
+ATALHOS = {"FIS_1192": "/atf/fis/FISf_ConsultarCTeGenerica.do?limparSessao=true",
+           "DEC_381": "/atf/dec/DECf_DossierContribuinte.do?limparSessao=true"}
+
+
+def _dossie(ie: str, datas: tuple[str, str] | None = None) -> str:
+    """DEC_382 (Apresentar Dossiê): abas; "Docs fiscais" mostra o período e, depois do Consultar, o
+    "- Cartão:" que abre a janela das administradoras (só a IE_EMPRESA tem operações com cartão)."""
+    abas = "".join(f'<a href="#">{a}</a> ' for a in ("Identificação", "Contatos", "Omissão", "Faturamento", "CFOP"))
+    resultado = ""
+    if datas:
+        url = f"/atf/fis/FISf_DetalharAdministradorasECFTEF.do?sqHumanoInst=7549548&refIni=09/2026&refFim=09/2026&ie={ie}"
+        cartao = (f'<a href="#" onclick="window.open(\'{url}\', \'cartao\', \'width=900,height=600\'); return false">'
+                  '- Cartão:</a> 13.585,00') if ie == IE_EMPRESA else "- Cartão: 0,00"
+        resultado = f'<table><tr><td>- NF-e emitidas:</td><td>2</td></tr><tr><td>{cartao}</td></tr></table>'
+    return (sessao() + f'<b>Dossiê do Contribuinte</b><br>{abas}<div id="docsEletronicos"><form>'
+            '<a href="#" onclick="document.getElementById(\'docs\').style.display=\'block\'; return false">Docs fiscais</a>'
+            f'</form></div><div id="docs" style="display:{"block" if datas else "none"}">'
+            '<form method="post" action="/atf/dec/DECf_ApresentarDossierContribuinte.do">- Período: '
+            '<input name="edtDtInicial"> a <input name="edtDtFinal">'
+            f'<input type="submit" name="btnConsultar" value="Consultar"></form>{resultado}</div>')
+
+
 # Lançamentos de cada IE na tela de faturas: (id, operação)
 LANCAMENTOS = {IE_EMPRESA: [("34988404", "DIFERIDO - VALOR MINIMO"), ("60700321", ""), ("61128022", "")]}
 
@@ -178,9 +218,12 @@ def form_servico(nome: str) -> str:
 
 
 def form_consulta(tela: str, aviso: str = "") -> str:
-    titulo = "Consulta NF-e por Emitentes/Destinatários" if tela == "nfe" else "Consulta Genérica da NFC-e"
+    titulo = {"nfe": "Consulta NF-e por Emitentes/Destinatários", "nfce": "Consulta Genérica da NFC-e",
+              "cte": "Consulta Genérica de Conhecimentos de Transporte Eletrônicos"}[tela]
     datas = ('<label>Data de Emissão</label><input name="edtDtInicial" class="form-control"> - '
              '<input name="edtDtFinal" class="form-control">') if tela == "nfe" else (
+        '<label>Data inicial</label><input name="edtDtInicial" class="form-control"><label>Data final</label>'
+        '<input name="edtDtFinal" class="form-control">') if tela == "cte" else (
         '<label>Data Emissão Inicial</label><input name="edtDtInicial"><label>Data Emissão Final</label>'
         '<input name="edtDtFinal">')
     bloco = lambda nome, suf: (  # noqa: E731
@@ -191,10 +234,14 @@ def form_consulta(tela: str, aviso: str = "") -> str:
     alerta = f'<div class="alert alert-success">{aviso}</div>' if aviso else ""
     return (sessao() + f'<h5>{titulo}</h5>{alerta}<form method="post" action="/atf/fis/consultar_{tela}.do">{datas}'
             '<label>Situação</label><select name="cmbSituacao"><option>---</option></select>'
-            + bloco("Emitente", "Emit") + bloco("Destinatário", "Dest")
-            + '<label>Tipo de Exibição</label><select name="cmbTpExibicao"><option value="1">HTML</option>'
-              '<option value="2">TXT</option><option value="3">XML</option></select>'
-              '<button type="submit" name="btnConsultar" id="btnConsulta" class="g-recaptcha btn">Consultar</button>'
+            + bloco("Emitente", "Emit")
+            + (bloco("Tomador", "Toma") + bloco("Remetente", "Reme") if tela == "cte" else "")
+            + bloco("Destinatário", "Dest")
+            + ('<label>Formato:</label><select name="cmbTpExibicao"><option value="1">HTML</option><option value="2">TXT'
+               '</option><option value="3">TXT Personalizado</option><option value="4">XML</option></select>' if tela == "cte"
+               else '<label>Tipo de Exibição</label><select name="cmbTpExibicao"><option value="1">HTML</option>'
+                    '<option value="2">TXT</option><option value="3">XML</option></select>')
+            + '<button type="submit" name="btnConsultar" id="btnConsulta" class="g-recaptcha btn">Consultar</button>'
               '<button type="submit" class="btn btn-light">Limpar</button></form>')
 
 
@@ -241,7 +288,7 @@ class AtfFalso(BaseHTTPRequestHandler):
         elif p == "/atf/cabecalho.htm":
             self._html('<header>Sistema ATF <input placeholder="Função" onkeydown="if (event.key === \'Enter\' && FUNCOES[this.value]) '
                        'parent.frames[\'conteudo\'].location = FUNCOES[this.value]"><script>const FUNCOES = '
-                       + json.dumps(FUNCOES) + '</script><button id="toggleMenuHeader" aria-label="Menu">☰</button>'
+                       + json.dumps({**FUNCOES, **ATALHOS}) + '</script><button id="toggleMenuHeader" aria-label="Menu">☰</button>'
                        '<button type="button" aria-label="Mensagens" onclick="parent.frames[\'conteudo\'].location='
                        '\'/atf/seg/SEGf_MinhasMensagens.do?limparSessao=true\'">🔔</button>'
                        '<button aria-label="Encerrar Sessão" onclick="top.location=\'/atf/sair\'">⎋</button></header>')
@@ -262,8 +309,8 @@ class AtfFalso(BaseHTTPRequestHandler):
                            '<li><a href="/atf/seg/SEGf_Menu.jsp?caminho=nfce">NFC-e</a></li></ul></div>')
         elif p == "/atf/seg/SEGf_PrincipalSistema.jsp":
             self._html(sessao() + "Bem-vindo ao ATF")
-        elif p in ("/atf/fis/FISf_ConsultarNFeXml2.do", "/atf/fis/FISf_ConsultarNFCe.do"):
-            tela = "nfe" if "NFeXml2" in p else "nfce"
+        elif p in ("/atf/fis/FISf_ConsultarNFeXml2.do", "/atf/fis/FISf_ConsultarNFCe.do", "/atf/fis/FISf_ConsultarCTeGenerica.do"):
+            tela = "nfe" if "NFeXml2" in p else "cte" if "CTe" in p else "nfce"
             if q.get("limparSessao") == "true":
                 ESTADO["blocos"].pop(f"{tela}_cmpEmit", None)
                 ESTADO["blocos"].pop(f"{tela}_cmpDest", None)
@@ -272,6 +319,16 @@ class AtfFalso(BaseHTTPRequestHandler):
             self._html(self._componente(q["id"], ESTADO["blocos"].get(q["id"], "")))
         elif p == "/atf/componentes/CodDescLst.jsp":
             self._html(self._componente_simples(q["id"], ESTADO["blocos"].get(q["id"], "")))
+        elif p == "/atf/dec/DECf_DossierContribuinte.do":
+            self._html(sessao() + '<b>Dossiê do Contribuinte</b><form name="f" method="post" '
+                       'action="/atf/dec/DECf_ApresentarDossierContribuinte.do">- Inscrição Estadual: '
+                       '<input type="text" name="edtnrInscrEstadual" class="caixas">'
+                       '<input type="button" name="btnConsultar" value="Consultar" onclick="document.f.submit()"></form>')
+        elif p == "/atf/fis/FISf_DetalharAdministradorasECFTEF.do":
+            ESTADO["cartao"].append(q)
+            self._html('<b>Detalhamento por Administradora</b><br>- Inscrição Estadual: ' + q["ie"]
+                       + '<br>Lista de Operadoras<br>1. 09/2026<br>PAGSEGURO INTERNET SA - Operações de crédito: R$ 4.695,00'
+                       '<br>- Total do Periodo: R$ 6.380,00')
         elif p in [u.split("?")[0] for u in FUNCOES.values()]:
             nome = {"ARRf_Lanc": "faturas", "ARRf_Cons": "extrato", "COBf_OmiG": "omissao"}.get(p.rsplit("/", 1)[1][:9], "certidao")
             if q.get("limparSessao") == "true":
@@ -389,12 +446,12 @@ class AtfFalso(BaseHTTPRequestHandler):
             ESTADO["ultima_lista"] = time.time()
             linhas = "".join(
                 f'<tr><td><input type="checkbox" name="chbSqMensagems"></td>'
-                f'<td><a href="javascript:abrirFilhas(\'{m["id"]}\',3)"><img src="env.png"></a></td>'
-                + (f'<td><a href="javascript:abrirFilhas(\'{m["id"]}\',3)"><img src="clip.gif"></a></td>'
+                f'<td><a href="javascript:abrirFilhas(\'{m["id"]}\',{len(m["filhas"])})"><img src="env.png"></a></td>'
+                + (f'<td><a href="javascript:abrirFilhas(\'{m["id"]}\',{len(m["filhas"])})"><img src="clip.gif"></a></td>'
                    if any(f["anexo"] for f in m["filhas"]) else '<td></td>')
-                + f'<td><a href="javascript:abrirFilhas(\'{m["id"]}\',3)">{m["codigo"]} - Consulta Genérica (3 Mensagens )</a></td>'
-                f'<td><a href="javascript:abrirFilhas(\'{m["id"]}\',3)">{m["assunto"]}</a></td>'
-                f'<td><a href="javascript:abrirFilhas(\'{m["id"]}\',3)">{m["pronta"]:%d/%m/%Y %H:%M:%S}</a></td></tr>'
+                + f'<td><a href="javascript:abrirFilhas(\'{m["id"]}\',{len(m["filhas"])})">{m["codigo"]} - Consulta Genérica ({len(m["filhas"])} Mensagens )</a></td>'
+                f'<td><a href="javascript:abrirFilhas(\'{m["id"]}\',{len(m["filhas"])})">{m["assunto"]}</a></td>'
+                f'<td><a href="javascript:abrirFilhas(\'{m["id"]}\',{len(m["filhas"])})">{m["pronta"]:%d/%m/%Y %H:%M:%S}</a></td></tr>'
                 for m in sorted(ESTADO["mensagens"], key=lambda m: m["pronta"], reverse=True) if m["pronta"] <= agora)
         else:
             mae = next(m for m in ESTADO["mensagens"] if m["id"] == q["hidsqMensagem"])
@@ -424,6 +481,14 @@ class AtfFalso(BaseHTTPRequestHandler):
             suf = cid.rsplit("_cmp", 1)[1]
             ESTADO["blocos"][cid] = campos.get(f"hidNrDocumentocmp{suf}", "")
             self._html(self._componente(cid, ESTADO["blocos"][cid]))
+        elif p == "/atf/dec/DECf_ApresentarDossierContribuinte.do":
+            if "edtnrInscrEstadual" in campos:
+                ESTADO["dossie_ie"] = re.sub(r"\D", "", campos["edtnrInscrEstadual"])
+                self._html(_dossie(ESTADO["dossie_ie"]))
+            else:
+                datas = (campos.get("edtDtInicial"), campos.get("edtDtFinal"))
+                assert datas == ("01/09/2026", "30/09/2026"), datas
+                self._html(_dossie(ESTADO["dossie_ie"], datas))
         elif p == "/atf/componentes/CodDescLst.jsp":
             cid = campos["id"]
             ESTADO["blocos"][cid] = campos.get(f"hidNrDocumento{cid.rsplit('_', 1)[1]}", "")
@@ -668,3 +733,31 @@ def test_mensagem_que_nunca_chega_para_de_vez(ambiente):
     ((_, (r,)),) = repescados
     assert not r.pendente and "não entregou NF-e Saida" in r.mensagem, r
     assert r.detalhes["certidao"]["arquivos"] == 1  # o que funcionou ficou salvo
+
+
+def test_cte_e_conferencia_de_cartao(ambiente):
+    """CT-e (FIS_1192, IE no Destinatário, ZIP em Minhas Mensagens com 4 filhas) e conferência de cartão
+    (Dossiê > Docs fiscais > Cartão: a janela que abre vira PDF)."""
+    cfg, pasta = ambiente
+    executor = robo_xml.Executor(cfg)
+    try:
+        r1, r2 = executor.executar_rodada([
+            _trabalho(IE_EMPRESA, "Transporte", ["cte", "cartao"], codigo="050"),
+            _trabalho(IE_OUTRA, "SemCartao", ["cte", "cartao"], codigo="051"),
+        ])
+    finally:
+        if executor.atf:
+            print("\n".join(executor.atf.diag.linhas))  # aparece se o teste falhar
+        executor.fechar()
+    consultas = [c for c in ESTADO["consultas"] if c["tela"] == "cte"]
+    assert [c["dest"] for c in consultas[-2:]] == [IE_EMPRESA, IE_OUTRA]
+    assert r1.status == "concluido", r1
+    assert r1.detalhes["cte"]["notas"] == 1 and r1.detalhes["cartao"]["arquivos"] == 1, r1
+    base = pasta / "xml" / "Arquivos baixados"
+    (zip_cte,) = list(base.glob("050-Transporte/2026-09/CT-e - R$ 150,00/*.zip"))
+    assert zip_cte.read_bytes()[:2] == b"PK"
+    (pdf,) = list(base.glob("050-Transporte/2026-09/Conferência Cartão de Crédito/*.pdf"))
+    assert pdf.read_bytes()[:5] == b"%PDF-" and pdf.name == "Conferência Cartão de Crédito 2026-09.pdf"
+    assert ESTADO["cartao"][-1]["refIni"] == "09/2026" and ESTADO["cartao"][-1]["ie"] == IE_EMPRESA
+    assert r2.detalhes["cte"]["sem_notas"], r2
+    assert r2.detalhes["cartao"]["sem_notas"] and "não existem operações com cartão" in r2.mensagem, r2

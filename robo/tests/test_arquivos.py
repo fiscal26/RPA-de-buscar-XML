@@ -3,7 +3,7 @@ import zipfile
 from pathlib import Path
 
 import arquivos
-from util import IE_EMPRESA, IE_OUTRA, chave, evento, nfe
+from util import IE_EMPRESA, IE_OUTRA, chave, cte, evento, evento_cte, nfe
 
 EMPRESA = "11222333000181"
 OUTRA = "45723174000110"
@@ -140,3 +140,22 @@ def test_documento_pdf_na_pasta_do_servico(tmp_path):
     assert arquivos.salvar_documentos([("Saida.pdf", pdf)], tmp_path, "Padaria", "160123453", "certidao", "2026-09", "5")["repetidos"] == 1
     arquivos.salvar_documentos([("Saida.pdf", pdf + b" ")], tmp_path, "Padaria", "160123453", "certidao", "2026-09", "5")
     assert (arq.parent / "Certidão de Débitos 2026-09 (2).pdf").exists()
+
+
+def test_cte_vai_para_a_destinataria_com_o_valor_da_prestacao():
+    transportadora = "45723174000110"
+    c1 = cte(transportadora, "11222333000181", 1, ie_dest=IE_EMPRESA, valor=120.5)
+    c2 = cte(transportadora, "11222333000181", 2, ie_dest=IE_EMPRESA, valor=80.0)
+    cancelado = evento_cte(transportadora, chave(transportadora, "2609", "57", 2))
+    marcado = evento_cte(transportadora, chave(transportadora, "2609", "57", 1), "310610")  # MDF-e autorizado
+    info = arquivos.ler_xml(c1)
+    assert (info.modelo, info.ie_dest, info.valor) == ("57", IE_EMPRESA, 120.5)
+    assert arquivos.ler_xml(cancelado).evento
+    zip_ = io.BytesIO()
+    with zipfile.ZipFile(zip_, "w") as z:
+        for i, d in enumerate((c1, c2, cancelado, marcado)):
+            z.writestr(f"{i}.xml", d)
+    alvos = [arquivos.Alvo(IE_EMPRESA, "", ["cte"]), arquivos.Alvo(IE_OUTRA, "", ["cte", "nfe_saida"])]
+    por, sem, brutos = arquivos.distribuir_arquivos([("CTe_XML.zip", zip_.getvalue())], alvos)
+    assert list(por) == [(IE_EMPRESA, "cte")] and not sem and not brutos
+    assert arquivos.valor_total(arquivos.extrair(zip_.getvalue())) == (1, 120.5)  # o 2 foi cancelado

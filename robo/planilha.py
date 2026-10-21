@@ -14,9 +14,11 @@ As colunas são achadas pelo nome do cabeçalho (linha 1), não pela posição:
     Extrato de Pagamentos X = extrato de pagamentos da competência (PDF)
     Omissão e Inadimplência  X = relatório completo de omissos/inadimplentes (PDF)
     Certidão de Débitos   X = certidão de débitos (PDF)
+    CT-e                  X = XML dos CT-e em que a empresa é destinatária
+    Conferência Cartão de Credito  X = detalhamento por administradora de cartão no mês (PDF)
 O modelo já vem com todos os "X" marcados nas linhas livres; o cliente preenche só os dados das
 empresas (e apaga o X do que não quiser).
-As demais colunas (CT-e, Conferência Cartão de Crédito, Dossiê MEI) ainda não são feitas pelo robô.
+A coluna Dossiê MEI ainda não é feita pelo robô.
 """
 from __future__ import annotations
 
@@ -29,9 +31,10 @@ from pathlib import Path
 MODELO = Path(__file__).resolve().parent.parent / "modelos" / "modelo_empresas_sefaz_pb.xlsx"
 
 # coluna da planilha -> tipo de XML do robô
-COLUNAS_TIPOS = {"nfe saida": "nfe_saida", "nfe entrada": "nfe_entrada", "nfce": "nfce",
+COLUNAS_TIPOS = {"nfe saida": "nfe_saida", "nfe entrada": "nfe_entrada", "nfce": "nfce", "cte": "cte",
                  "download faturas": "faturas", "extrato de pagamentos": "extrato",
-                 "omissao e inadimplencia": "omissao", "certidao de debitos": "certidao"}
+                 "omissao e inadimplencia": "omissao", "certidao de debitos": "certidao",
+                 "conferencia cartao de credito": "cartao"}
 _CAMPOS_EMPRESA = ("id", "id filial", "cnpj", "inscricao estadual", "nome fantasia", "login", "senha")
 _SIM = {"s", "sim", "x", "1", "true", "verdadeiro", "v", "ok", "ativa", "ativo", "✓", "✔"}
 _NAO = {"n", "nao", "0", "false", "falso", "f", "inativa", "inativo"}

@@ -26,3 +26,23 @@ def evento(cnpj_autor: str, ch: str) -> bytes:
 <procEventoNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="1.00"><evento><infEvento Id="ID110111{ch}01">
 <cOrgao>25</cOrgao><CNPJ>{cnpj_autor}</CNPJ><chNFe>{ch}</chNFe><dhEvento>2026-09-20T09:00:00-03:00</dhEvento>
 <tpEvento>110111</tpEvento></infEvento></evento></procEventoNFe>""".encode()
+
+
+def cte(cnpj_emit: str, cnpj_dest: str, numero: int = 1, data: str = "2026-09-15", ie_dest: str = "",
+        valor: float = 50.0, cnpj_rem: str = "", ie_rem: str = "") -> bytes:
+    ch = chave(cnpj_emit, data[2:4] + data[5:7], "57", numero)
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<cteProc xmlns="http://www.portalfiscal.inf.br/cte" versao="4.00"><CTe><infCte Id="CTe{ch}" versao="4.00">
+<ide><cUF>25</cUF><mod>57</mod><nCT>{numero}</nCT><dhEmi>{data}T10:00:00-03:00</dhEmi><toma3><toma>3</toma></toma3></ide>
+<emit><CNPJ>{cnpj_emit}</CNPJ><IE>123</IE><xNome>TRANSPORTADORA</xNome></emit>
+<rem><CNPJ>{cnpj_rem}</CNPJ><IE>{ie_rem}</IE><xNome>REMETENTE</xNome></rem>
+<dest><CNPJ>{cnpj_dest}</CNPJ><IE>{ie_dest}</IE><xNome>DESTINATARIO</xNome></dest>
+<vPrest><vTPrest>{valor:.2f}</vTPrest><vRec>{valor:.2f}</vRec></vPrest>
+</infCte></CTe><protCTe versao="4.00"><infProt><chCTe>{ch}</chCTe><cStat>100</cStat></infProt></protCTe></cteProc>""".encode()
+
+
+def evento_cte(cnpj_autor: str, ch: str, tipo: str = "110111") -> bytes:
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<procEventoCTe xmlns="http://www.portalfiscal.inf.br/cte" versao="4.00"><eventoCTe><infEvento Id="ID{tipo}{ch}01">
+<cOrgao>25</cOrgao><CNPJ>{cnpj_autor}</CNPJ><chCTe>{ch}</chCTe><dhEvento>2026-09-20T09:00:00-03:00</dhEvento>
+<tpEvento>{tipo}</tpEvento></infEvento></eventoCTe></procEventoCTe>""".encode()

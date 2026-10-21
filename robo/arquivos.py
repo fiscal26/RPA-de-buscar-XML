@@ -25,13 +25,15 @@ TIPOS = {
     "nfe_saida": "NF-e Saida",
     "nfe_entrada": "NF-e Entrada",
     "nfce": "NFC-e",
+    "cte": "CT-e",
     "faturas": "Faturas",
     "extrato": "Extrato de Pagamentos",
     "omissao": "Omissão e Inadimplência",
     "certidao": "Certidão de Débitos",
+    "cartao": "Conferência Cartão de Crédito",
 }
 # serviços que o ATF responde na hora com PDF (ou ZIP): o arquivo vai direto para a empresa
-SERVICOS_DOCUMENTO = ("faturas", "extrato", "omissao", "certidao")
+SERVICOS_DOCUMENTO = ("faturas", "extrato", "omissao", "certidao", "cartao")
 PASTA_BAIXADOS = "Arquivos baixados"
 _MAX_ARQUIVOS_ZIP = 50_000
 _MAX_TAMANHO_XML = 20 * 1024 * 1024
@@ -40,7 +42,7 @@ _MAX_TAMANHO_XML = 20 * 1024 * 1024
 @dataclass
 class InfoXml:
     chave: str = ""
-    modelo: str = ""          # 55 = NF-e, 65 = NFC-e
+    modelo: str = ""          # 55 = NF-e, 65 = NFC-e, 57 = CT-e
     cnpj_emit: str = ""
     cnpj_dest: str = ""
     ie_emit: str = ""
@@ -50,6 +52,7 @@ class InfoXml:
     tipo_evento: str = ""      # 110111 = cancelamento
     valor: float = 0.0         # vNF (valor total da nota)
     situacao: str = ""         # cStat da autorização (100 = autorizada)
+    partes: list = field(default_factory=list)  # CT-e: (CNPJ, IE) de remetente, destinatário, tomador...
 
 
 @dataclass
@@ -134,10 +137,34 @@ def ler_xml(dados: bytes) -> InfoXml | None:
             info.valor = 0.0
         prot = nomes.get("infProt")
         info.situacao = _texto(prot, "cStat") if prot is not None else ""
-    elif "infEvento" in nomes or raiz_nome in ("procEventoNFe", "evento"):
+    elif "infCte" in nomes:  # CT-e (cteProc): o valor é o vTPrest
+        inf = nomes["infCte"]
+        info.chave = re.sub(r"\D", "", inf.get("Id", ""))
+        ide = _filho(inf, "ide")
+        info.modelo = _texto(ide, "mod") or "57"
+        info.emissao = (_texto(ide, "dhEmi") or _texto(ide, "dEmi"))[:10]
+        emit, dest = _filho(inf, "emit"), _filho(inf, "dest")
+        info.cnpj_emit = _texto(emit, "CNPJ") or _texto(emit, "CPF")
+        info.cnpj_dest = _texto(dest, "CNPJ") or _texto(dest, "CPF")
+        info.ie_emit = re.sub(r"\D", "", _texto(emit, "IE"))
+        info.ie_dest = re.sub(r"\D", "", _texto(dest, "IE"))
+        for papel in ("rem", "dest", "exped", "receb"):
+            e = _filho(inf, papel)
+            if e is not None:
+                info.partes.append((_texto(e, "CNPJ") or _texto(e, "CPF"), re.sub(r"\D", "", _texto(e, "IE"))))
+        toma4 = _filho(ide, "toma4")
+        if toma4 is not None:
+            info.partes.append((_texto(toma4, "CNPJ") or _texto(toma4, "CPF"), re.sub(r"\D", "", _texto(toma4, "IE"))))
+        try:
+            info.valor = float(_texto(_filho(inf, "vPrest"), "vTPrest") or 0)
+        except ValueError:
+            info.valor = 0.0
+        prot = nomes.get("infProt")
+        info.situacao = _texto(prot, "cStat") if prot is not None else ""
+    elif "infEvento" in nomes or raiz_nome in ("procEventoNFe", "procEventoCTe", "evento", "eventoCTe"):
         inf = nomes.get("infEvento")
         info.evento = True
-        info.chave = _texto(inf, "chNFe")
+        info.chave = _texto(inf, "chNFe") or _texto(inf, "chCTe")
         info.tipo_evento = _texto(inf, "tpEvento")
         info.cnpj_emit = _texto(inf, "CNPJ") or _texto(inf, "CPF")
         info.emissao = _texto(inf, "dhEvento")[:10]
@@ -250,6 +277,11 @@ def _destinos(info: InfoXml, alvos: list[Alvo]) -> list[tuple[str, str]]:
     saida: list[tuple[str, str]] = []
     for a in alvos:
         emitente = _mesmo_ie(info.ie_emit, a.ie) or (bool(a.cnpj) and a.cnpj in (info.cnpj_emit, emit_chave))
+        if info.modelo == "57":  # CT-e: a empresa é destinatária (ou outra parte: remetente, tomador...)
+            if "cte" in a.tipos and any(_mesmo_ie(ie, a.ie) or (bool(a.cnpj) and doc == a.cnpj)
+                                        for doc, ie in info.partes):
+                saida.append((a.ie, "cte"))
+            continue
         if info.modelo == "65":
             if "nfce" in a.tipos and emitente:
                 saida.append((a.ie, "nfce"))
@@ -285,7 +317,9 @@ def distribuir(arquivos: list[tuple[str, bytes]], alvos: list[Alvo]):
             sobras.append((nome, dados))
     for nome, dados, info in eventos:
         destinos = destinos_da_chave.get(info.chave)
-        if destinos is None:  # nota não veio nesta rodada: pelo CNPJ do emitente na chave
+        if destinos is None and info.modelo == "57":
+            destinos = []  # evento de CT-e sem o CT-e: o CNPJ da chave é o da transportadora
+        elif destinos is None:  # nota não veio nesta rodada: pelo CNPJ do emitente na chave
             destinos = [(a.ie, "nfce" if info.modelo == "65" else "nfe_saida") for a in alvos
                         if a.cnpj and a.cnpj == info.chave[6:20]
                         and ("nfce" if info.modelo == "65" else "nfe_saida") in a.tipos]
@@ -450,6 +484,8 @@ def extensao(dados: bytes) -> str:
         return ".pdf"
     if dados[:2] == b"\x1f\x8b":
         return ".gz"
+    if dados[:4] == b"\x89PNG":
+        return ".png"
     return {"XML": ".xml", "HTML": ".html"}.get(tipo_de_arquivo(dados), ".bin")
 
 

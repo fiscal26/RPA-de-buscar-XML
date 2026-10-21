@@ -12,10 +12,12 @@ faturas, extrato de pagamentos, omissão e inadimplência e certidão de débito
         NF-e Saida - R$ 12.345,67/     NF-e Saida 2026-09.zip     (o ZIP do ATF, como veio)
         NF-e Entrada - R$ 8.900,00/    NF-e Entrada 2026-09.zip
         NFC-e - R$ 1.230,50/           NFC-e 2026-09.zip
+        CT-e - R$ 950,00/              CT-e 2026-09.zip                  (valor da prestação, sem os cancelados)
         Faturas/                       Faturas 2026-09.pdf               (DAR/PIX dos lançamentos em aberto)
         Extrato de Pagamentos/         Extrato de Pagamentos 2026-09.pdf
         Omissão e Inadimplência/       Omissão e Inadimplência 2026-09.pdf   (o relatório completo)
         Certidão de Débitos/           Certidão de Débitos 2026-09.pdf
+        Conferência Cartão de Crédito/ Conferência Cartão de Crédito 2026-09.pdf
     _sem_empresa/        arquivo de empresa fora da rodada (ex.: consulta feita à mão no mesmo login)
     _nao_identificados/  arquivo baixado que não é XML/ZIP (guardado como veio, para conferir)
   _relatorios/           relatório de cada rodada
@@ -53,9 +55,10 @@ pelo nome do cabeçalho. O robô de XML usa:
 | NOME FANTASIA | nome da pasta |
 | LOGIN, SENHA | acesso do contador ao ATF. A senha só precisa vir uma vez por login |
 | NF-e Saida, NF-e Entrada, NFC-e | **X** (ou S, SIM) = baixar esse XML; apagar o X = não baixar |
-| Download Faturas, Extrato de Pagamentos, Omissão e Inadimplência, Certidão de Débitos | **X** = emitir o PDF desse serviço |
+| CT-e | **X** = baixar o XML dos CT-e em que a empresa é destinatária |
+| Download Faturas, Extrato de Pagamentos, Omissão e Inadimplência, Certidão de Débitos, Conferência Cartão de Credito | **X** = emitir o PDF desse serviço |
 
-CT-e, Conferência Cartão de Crédito e Dossiê MEI ainda não são feitos pelo robô.
+Dossiê MEI ainda não é feito pelo robô.
 
 ## Serviços com PDF na hora (gravações de 18/10/2026)
 
@@ -69,6 +72,7 @@ endereço direto; a IE vai no Número, **Pesquisar** confere a empresa (sem nome
 | Extrato de Pagamentos | ARR_087 | Período de Pagamento do **1º ao último dia** da competência, Tipo de Imposto *Todos*, *Consultar* |
 | Omissão e Inadimplência | COB_187 | *Consultar*: o **PDF completo** (todas as páginas) |
 | Certidão de Débitos | DIA_061 | *Submeter* (com o login, como em todo o robô) |
+| Conferência Cartão de Crédito | DEC_381 (Dossiê do Contribuinte) | IE, *Consultar*, aba **Docs fiscais**, período do 1º ao último dia, *Consultar*; clica em **"- Cartão:"**, que abre uma janela nova (*Detalhamento por Administradora*), e salva essa página em PDF. Sem o link: "não existem operações com cartão no período" |
 
 O ATF mostra o PDF no visualizador do Chrome; o robô guarda o arquivo antes de ele ir para a tela e
 fecha as janelas que o ATF abrir. Se vier ZIP, fica ZIP. Rodar de novo guarda o arquivo novo ao lado
@@ -89,6 +93,9 @@ em **rodadas de um login** (até 15 empresas):
      *Tipo de Exibição* = XML; *Consultar*. O ATF responde "O resultado será enviado para sua caixa
      de mensagens do ATF".
    - *NFC-e:* menu *NFC-e* > *Consulta por Emitente* (FIS_1484), IE no bloco **Emitente**, mesmo final.
+   - *CT-e:* Função **FIS_1192** (*Consulta Genérica de Conhecimentos de Transporte Eletrônicos*), Data
+     inicial/final, IE no bloco **Destinatário** (como na gravação de 20/10/2026), Formato XML, *Consultar*.
+     A resposta vem em Minhas Mensagens com 4 filhas; a do clipe traz o "Arquivo Compactado XML CTe".
 3. **Recolhe as mensagens** (sino; SEG_064). Cada consulta gera **3 mensagens** no mesmo segundo; só a
    final ("Tarefa executada com sucesso") importa: com o anexo *"Dados referentes ao ano de ..."* (o
    XML) ou sem anexo (= não existem dados no período). O robô abre as mensagens enviadas **depois do

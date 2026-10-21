@@ -67,6 +67,7 @@ _ERRO_CONSULTA = re.compile(r"\berro\b|inv[aá]lid|obrigat[oó]ri|n[aã]o\s+(foi
 _CONFIRMADA = re.compile(r"resultado\s+ser[aá]\s+enviado|caixa\s+de\s+mensagens", re.I)
 # Mensagem final de uma consulta (as outras 2 mensagens da mesma consulta são de andamento)
 _MENSAGEM_FINAL = re.compile(r"tarefa\s+executada|executada\s+com\s+sucesso|n[aã]o\s+existem\s+dados|relat[oó]rio\s+gerado|"
+                             r"arquivo\s+dispon[ií]vel|"
                              r"nenhum\s+registro\s+satisfaz", re.I)
 _PERIODO = re.compile(r"per[ií]odo\s+solicitado:?\s*(\d{2}/\d{2}/\d{4})\s*a\s*(\d{2}/\d{2}/\d{4})", re.I)
 _INPUT_TEXTO = "input:not([type=hidden]):not([type=checkbox]):not([type=radio]):not([type=button]):not([type=submit])"
@@ -130,11 +131,12 @@ TIPO_TELA = {
     "nfe_saida": ("nfe", "Emitente"),
     "nfe_entrada": ("nfe", "Destinatário"),
     "nfce": ("nfce", "Emitente"),
+    "cte": ("cte", "Destinatário"),  # FIS_1192, como na gravação: IE no bloco Destinatário
 }
 
 
 # Serviços com resposta na hora (PDF): tipo -> tela em config.atf.telas
-SERVICOS = ("faturas", "extrato", "omissao", "certidao")
+SERVICOS = ("faturas", "extrato", "omissao", "certidao", "cartao")
 _NAO_EMITE = re.compile(r"diferido\s*-\s*valor\s+m[ií]nimo", re.I)
 _SEM_DOCUMENTO = re.compile(r"nenhum(a)?\s+(registro|lan[cç]amento|pagamento|d[eé]bito|resultado|ocorr[eê]ncia)|"
                             r"n[aã]o\s+(foram\s+)?encontrad|"
@@ -144,8 +146,35 @@ _SEM_DOCUMENTO = re.compile(r"nenhum(a)?\s+(registro|lan[cç]amento|pagamento|d[
 # para a consulta" nas faturas)
 SEM_DADOS = {"faturas": "não existem débitos em aberto",
              "omissao": "não existem débitos em aberto (sem omissões ou inadimplências)",
-             "extrato": "não existem pagamentos no período"}
+             "extrato": "não existem pagamentos no período",
+             "cartao": "não existem operações com cartão no período"}
 _ERRO_DOCUMENTO = re.compile(r"n[aã]o\s+[eé]\s+permitid|\berro\b|inv[aá]lid|obrigat[oó]ri|informe\s+|n[aã]o\s+foi\s+poss[ií]vel", re.I)
+
+
+def pagina_em_pdf(pagina) -> bytes:
+    """A página aberta, em PDF (como "Imprimir > Salvar como PDF"). Se o Chrome não imprimir por aqui,
+    vira um PDF com a imagem da página inteira."""
+    try:
+        return pagina.pdf(print_background=True, format="A4", landscape=True,
+                          margin={"top": "10mm", "bottom": "10mm", "left": "8mm", "right": "8mm"})
+    except Exception:
+        pass
+    try:
+        sessao = pagina.context.new_cdp_session(pagina)
+        import base64
+        dados = sessao.send("Page.printToPDF", {"printBackground": True, "landscape": True})["data"]
+        return base64.b64decode(dados)
+    except Exception:
+        pass
+    import io
+    png = pagina.screenshot(full_page=True)
+    try:
+        from PIL import Image
+        saida = io.BytesIO()
+        Image.open(io.BytesIO(png)).convert("RGB").save(saida, "PDF")
+        return saida.getvalue()
+    except ImportError:
+        return png  # sem o Pillow: guarda a imagem da página
 
 
 class SenhaInvalida(Exception):
@@ -883,6 +912,9 @@ class AtfPB:
         try:
             self.abrir_tela(tipo)
             frame = self._quadro_da_tela(tela)
+            if tipo == "cartao":
+                self._conferir_cartao(frame, emissao, ie, inicio, fim)
+                return emissao
             if tipo == "extrato":  # Período de Pagamento: do 1º ao último dia da competência
                 for css, data in (('input[name="edtDataInicial"]', inicio), ('input[name="edtDataFinal"]', fim)):
                     campo = self._no_quadro(frame, css)
@@ -933,6 +965,74 @@ class AtfPB:
             emissao.ok, emissao.sem_dados = True, False
         self._log(f"{nome_tipo} IE {ie}: {len(emissao.arquivos)} arquivo(s)" + (f" — {emissao.resposta[:150]}" if emissao.resposta else ""))
         return emissao
+
+    def _esperar_quadro(self, css: str, segundos: float | None = None):
+        """Primeiro quadro em que o seletor aparece visível (o ATF recarrega a tela a cada passo)."""
+        limite = time.time() + (segundos or self.atf["segundos_carregar"])
+        while time.time() < limite:
+            pausa(self.page, 0.6, 1.0)
+            for f in self.page.frames:
+                if self._no_quadro(f, css) is not None:
+                    return f
+        return None
+
+    def _conferir_cartao(self, frame, emissao: Emissao, ie: str, inicio: date, fim: date):
+        """Dossiê do Contribuinte (DEC_381): IE, Consultar, aba "Docs fiscais", período, Consultar e o link
+        "Cartão", que abre uma janela nova (Detalhamento por Administradora). Essa página vira o PDF."""
+        campo = self._no_quadro(frame, 'input[name="edtnrInscrEstadual"]')
+        if campo is None:
+            raise EtapaNaoConcluida("campo Inscrição Estadual do dossiê não encontrado")
+        self._digitar(campo, ie)
+        self._clicar(frame, 'input[name="btnConsultar"]', "Consultar")
+        aba = 'a:text-is("Docs fiscais"), a:has-text("Docs fiscais")'
+        quadro = self._esperar_quadro(aba)
+        if quadro is None:
+            erro = self._avisos_na_tela()
+            if erro:
+                raise IeNaoEncontrada(f"o ATF não abriu o dossiê da IE {ie}: {erro[:150]}")
+            raise EtapaNaoConcluida("o dossiê não abriu (aba Docs fiscais não apareceu)")
+        self._no_quadro(quadro, aba).click()
+        quadro = self._esperar_quadro('input[name="edtDtInicial"]')
+        if quadro is None:
+            raise EtapaNaoConcluida("período da aba Docs fiscais não apareceu")
+        for css, data in (('input[name="edtDtInicial"]', inicio), ('input[name="edtDtFinal"]', fim)):
+            campo = self._no_quadro(quadro, css)
+            if campo is None:
+                raise EtapaNaoConcluida("campos do período não encontrados")
+            self._digitar(campo, f"{data:%d/%m/%Y}")
+            campo.press("Tab")
+        self._log(f"Docs fiscais: período {inicio:%d/%m/%Y} a {fim:%d/%m/%Y}")
+        self._clicar(quadro, 'input[name="btnConsultar"]:visible', "Consultar")
+        link_css = 'a:has-text("Cartão")'
+        quadro = self._esperar_quadro(link_css)
+        if quadro is None:
+            emissao.sem_dados, emissao.resposta = True, SEM_DADOS["cartao"]
+            return
+        antes = set(self.contexto.pages)
+        self._no_quadro(quadro, link_css).click()
+        janela = None
+        limite = time.time() + self.atf["segundos_documento"]
+        while time.time() < limite and janela is None:  # a janela nova (ou a mesma aba, se o ATF abrir nela)
+            pausa(self.page, 0.8, 1.2)
+            for pagina in self.contexto.pages:
+                if pagina in antes and pagina is not self.page:
+                    continue
+                if any("DetalharAdministradoras" in (f.url or "") for f in pagina.frames) or (
+                        pagina not in antes and (pagina.url or "").startswith("http")):
+                    janela = pagina
+                    break
+        if janela is None:
+            raise EtapaNaoConcluida("a janela do cartão (Detalhamento por Administradora) não abriu")
+        try:
+            janela.wait_for_load_state("load", timeout=60_000)
+        except Exception:
+            pass
+        pausa(self.page, 1.0, 1.5)
+        if _SEM_DOCUMENTO.search(self._texto_quadro(janela.main_frame)):
+            emissao.sem_dados, emissao.resposta = True, SEM_DADOS["cartao"]
+            return
+        emissao.arquivos = [("Conferencia Cartao.pdf", pagina_em_pdf(janela))]
+        self._log(f"Cartão IE {ie}: página {janela.url[:100]} salva em PDF")
 
     def _selecionar_faturas(self, emissao: Emissao) -> bool:
         """Tela dos lançamentos: marca todos, menos os "DIFERIDO - VALOR MINIMO" (o ATF não emite).

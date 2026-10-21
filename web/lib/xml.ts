@@ -4,10 +4,12 @@ export const TIPOS = [
   { id: "nfe_saida", nome: "NF-e Saída", coluna: "nfe saida" },
   { id: "nfe_entrada", nome: "NF-e Entrada", coluna: "nfe entrada" },
   { id: "nfce", nome: "NFC-e", coluna: "nfce" },
+  { id: "cte", nome: "CT-e", coluna: "cte" },
   { id: "faturas", nome: "Faturas", coluna: "download faturas" },
   { id: "extrato", nome: "Extrato de Pagamentos", coluna: "extrato de pagamentos" },
   { id: "omissao", nome: "Omissão e Inadimplência", coluna: "omissao e inadimplencia" },
   { id: "certidao", nome: "Certidão de Débitos", coluna: "certidao de debitos" },
+  { id: "cartao", nome: "Conferência Cartão de Crédito", coluna: "conferencia cartao de credito" },
 ] as const;
 export const IDS_TIPOS: string[] = TIPOS.map((t) => t.id);
 export const nomeTipo = (id: string) => TIPOS.find((t) => t.id === id)?.nome ?? id;

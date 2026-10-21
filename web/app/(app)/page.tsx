@@ -15,21 +15,20 @@ export default async function Agendar() {
           A planilha modelo já vem com as opções marcadas com <b>X</b>. Preencha só os dados das empresas, uma por
           linha: <b>INSCRICAO ESTADUAL</b> (é por ela que o ATF pesquisa), <b>NOME FANTASIA</b>, <b>LOGIN</b> e{" "}
           <b>SENHA</b> do contador no ATF. Para não fazer algum serviço, apague o X da coluna dele (<b>NF-e Saida</b>,{" "}
-          <b>NF-e Entrada</b>, <b>NFC-e</b>, <b>Download Faturas</b>, <b>Extrato de Pagamentos</b>,{" "}
-          <b>Omissão e Inadimplência</b> ou <b>Certidão de Débitos</b>); para deixar uma empresa de fora, troque o X de <b>ATIVA</b> por N.
+          <b>NF-e Entrada</b>, <b>NFC-e</b>, <b>CT-e</b>, <b>Download Faturas</b>, <b>Extrato de Pagamentos</b>,{" "}
+          <b>Omissão e Inadimplência</b>, <b>Certidão de Débitos</b> ou <b>Conferência Cartão de Credito</b>); para deixar uma empresa de fora, troque o X de <b>ATIVA</b> por N.
         </p>
         <p className="suave">
           O ATF não entrega o XML na hora: o robô faz as consultas e recolhe os arquivos em Minhas Mensagens, que podem
-          levar alguns minutos para chegar. Faturas, extrato (do 1º ao último dia da competência), omissão e certidão
-          saem na hora, em PDF.
+          levar alguns minutos para chegar. Faturas, extrato (do 1º ao último dia da competência), omissão, certidão e
+          conferência de cartão saem na hora, em PDF.
         </p>
         <p>
           <a className="botao secundario pequeno" href="/modelos/modelo_empresas_sefaz_pb.xlsx" download>Baixar planilha modelo</a>
         </p>
         <p className="suave">
           A senha só precisa vir uma vez por login: depois de cadastrada, pode ficar em branco. A planilha contém
-          senhas; apague-a do computador depois de enviar. As colunas de CT-e, Conferência Cartão de Crédito e Dossiê MEI
-          ainda não são usadas.
+          senhas; apague-a do computador depois de enviar. A coluna Dossiê MEI ainda não é usada.
         </p>
       </div>
       <div className="cartao">

@@ -47,6 +47,14 @@ PADRAO = {
                 "titulo": "Consulta Genérica da NFC-e",
                 "rotulos_data": ["Data Emissão Inicial", "Data Emissão Final"],
             },
+            "cte": {  # Consulta Genérica de CT-e (gravação de 20/10/2026): IE no bloco Destinatário
+                "funcao": "FIS_1192",
+                "pagina": "FISf_ConsultarCTeGenerica.do",
+                "endereco": "fis/FISf_ConsultarCTeGenerica.do?limparSessao=true",
+                "pronta": 'input[name="edtDtInicial"]',
+                "titulo": "Consulta Genérica de Conhecimentos de Transporte",
+                "rotulos_data": ["Data Inicial", "Data Final"],
+            },
             # Serviços que o ATF responde na hora com um PDF (gravações de 18/10/2026). Abertos pelo
             # campo "Função" do topo (como na gravação) ou, se não der, pelo endereço direto no quadro de conteúdo.
             "faturas": {  # Emissão de DAR > Lançamentos Espontâneos
@@ -85,6 +93,13 @@ PADRAO = {
                 "titulo": "Emitir Certidão de Débito",
                 "componente": "Contribuinte",
                 "enviar": 'input[name="btnEmitirCertidao"]',
+            },
+            "cartao": {  # Dossiê do Contribuinte > Docs fiscais > "Cartão" (abre a janela das administradoras)
+                "funcao": "DEC_381",
+                "pagina": "DECf_DossierContribuinte.do",
+                "endereco": "dec/DECf_DossierContribuinte.do?limparSessao=true",
+                "pronta": 'input[name="edtnrInscrEstadual"]',
+                "titulo": "Dossiê",
             },
             # onde o ATF entrega os XML (sino do topo)
             "mensagens": {

@@ -210,7 +210,9 @@ class Executor:
 
         def relevante(anexos: list, texto: str) -> bool:
             # "Período solicitado: 01/09/2026 a 30/09/2026": resposta de outra competência não conta
-            m = re.search(r"per[ií]odo\s+solicitado:?\s*(\d{2}/\d{2}/\d{4})\s*a\s*(\d{2}/\d{2}/\d{4})", texto, re.I)
+            # (CT-e: "Data emissão: 01/09/2026 à 30/09/2026")
+            m = re.search(r"(?:per[ií]odo\s+solicitado|data\s+emiss[aã]o):?\s*(\d{2}/\d{2}/\d{4})\s*[aà]\s*(\d{2}/\d{2}/\d{4})",
+                          texto, re.I)
             if m and (m.group(1), m.group(2)) != periodo:
                 return False
             xmls = [x for nome, dados in anexos for x in arquivos.extrair(dados, nome)]
