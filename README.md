@@ -93,7 +93,12 @@ em **rodadas de um login** (até 15 empresas):
    final ("Tarefa executada com sucesso") importa: com o anexo *"Dados referentes ao ano de ..."* (o
    XML) ou sem anexo (= não existem dados no período). O robô abre as mensagens enviadas **depois do
    clique em Consultar** (hora do próprio ATF), baixa o anexo e volta pelo *Voltar*. A caixa só pode
-   ser consultada de 1 em 1 minuto: o robô espera 65 s entre uma leitura e outra, por até 30 min.
+   ser consultada de 1 em 1 minuto: o robô espera 65 s entre uma leitura e outra.
+   **Até 3 leituras por rodada:** se a mensagem com o XML não aparecer, a rodada fica pendente e o robô
+   **segue para as próximas tarefas**. No final ele lê a caixa **mais uma vez** para as pendentes (uma
+   resposta atrasada que aparecer durante outra rodada do mesmo login já vai para a empresa certa). Se
+   mesmo assim faltar, o robô **para de vez**, com tudo o que funcionou salvo (no portal, essas tarefas
+   ficam "Baixando…" até essa última leitura).
 4. **Distribui pelo conteúdo:** as mensagens têm todas o mesmo assunto e chegam fora de ordem, então cada
    XML vai para a empresa pela IE/CNPJ de dentro dele (emitente → NF-e Saída/NFC-e; destinatário →
    NF-e Entrada). Uma venda entre duas empresas da rodada vai para as duas. Resposta de outra
@@ -102,8 +107,8 @@ em **rodadas de um login** (até 15 empresas):
 5. **ATF lento:** se Minhas Mensagens não abrir, o robô espera 30 s e tenta de novo; depois de
    **3 tentativas** ele anuncia o erro e **para**, salvando antes o que já tinha sido baixado
    (no portal, as tarefas voltam para a fila).
-6. Empresa/tipo sem XML: **Sem notas** se todas as respostas chegaram; **Erro** ("o ATF não entregou em
-   30 min") se o tempo acabou.
+6. Empresa/tipo sem XML: **Sem notas** se todas as respostas chegaram; **Erro** ("o ATF não entregou ...
+   em Minhas Mensagens") se nem a leitura do final trouxe.
 
 **Proteção do login do contador:** se o ATF recusar um login, o robô não tenta de novo com a mesma
 senha nas outras empresas (tentativas repetidas podem bloquear o acesso). Elas ficam como

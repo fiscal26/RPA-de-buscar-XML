@@ -200,7 +200,9 @@ class Recolha:
     textos: list[tuple[str, str]] = field(default_factory=list)   # (código FIS, texto da mensagem)
     recebidas: dict[str, int] = field(default_factory=dict)       # código FIS -> mensagens lidas
     ignorados: list[tuple[str, bytes]] = field(default_factory=list)  # anexos de outra competência/empresa
-    tempo_esgotado: bool = False
+    # as mesmas mensagens, inteiras (código, anexos, texto): podem ser de uma rodada anterior que ficou pendente
+    mensagens_ignoradas: list[tuple[str, list, str]] = field(default_factory=list)
+    tempo_esgotado: bool = False   # nem todas as respostas chegaram (tempo ou leituras esgotados)
 
 
 class Diagnostico:
@@ -451,6 +453,11 @@ class AtfPB:
                     except Exception:
                         continue
         for frame in self.page.frames:
+            # pelo título: nunca a caixa de mensagens (o assunto da mensagem repete o nome da consulta,
+            # ex.: "NFCe: Consulta Genérica da NFC-e")
+            if tela.get("pagina") != "SEGf_MinhasMensagens.do" and re.search(
+                    r"SEGf_(MinhasMensagens|LerMensagem)|cabecalho|SEGf_Menu", frame.url or ""):
+                continue
             try:
                 if re.search(re.escape(tela["titulo"]), frame.evaluate("() => document.body ? document.body.innerText : ''"), re.I):
                     return frame
@@ -1113,20 +1120,24 @@ class AtfPB:
         return "\n".join(textos), capt.recebidos[antes:], final
 
     def recolher(self, esperadas: dict[str, int], desde: datetime, minutos: int,
-                 relevante: Callable[[list, str], bool] | None = None) -> Recolha:
+                 relevante: Callable[[list, str], bool] | None = None, leituras: int | None = None) -> Recolha:
         """Acompanha Minhas Mensagens até chegarem as respostas finais esperadas ({código FIS: quantas})
         das consultas feitas a partir de 'desde' (hora do ATF ao clicar em Consultar), ou até o tempo
         acabar. Cada consulta gera uma mensagem mãe com 3 filhas; a final ("Tarefa executada...") traz o
         anexo, ou vem sem anexo quando não há dados. Só conta se 'relevante(anexos, texto)' disser que é
-        desta rodada (outra competência ou outra empresa não contam)."""
+        desta rodada (outra competência ou outra empresa não contam). 'leituras' limita quantas vezes a
+        caixa é lida (o que não chegou fica para o final da execução)."""
         recolha = Recolha()
+        lidas = 0
         capt = CapturadorArquivos(self.contexto, self.cfg["chrome"]["pasta_downloads"], log=self.aviso)
         limite = time.time() + minutos * 60
         try:
             while True:
                 if self._senha_na_tela() is not None:
                     raise SessaoExpirada("o ATF voltou para a tela de login.")
-                maes = [m for m in self.listar_mensagens()
+                lista = self.listar_mensagens()
+                lidas += 1
+                maes = [m for m in lista
                         if m["codigo"] in esperadas and m["id"] not in self._mensagens_lidas
                         and (not m["data"] or _data_br(m["data"]) >= desde - timedelta(seconds=5))]
                 for mae in maes:
@@ -1141,17 +1152,20 @@ class AtfPB:
                         self._log("Consulta de outra empresa ou competência: não conta")
                         # o anexo não vai para a pasta de nenhuma empresa da rodada (fica em _sem_empresa)
                         recolha.ignorados.extend(anexos)
+                        recolha.mensagens_ignoradas.append((mae["codigo"], anexos, textos))
                         for anexo in anexos:
                             if anexo in capt.recebidos:
                                 capt.recebidos.remove(anexo)
                 if all(recolha.recebidas.get(c, 0) >= n for c, n in esperadas.items()):
                     break
-                if time.time() >= limite:
+                if time.time() >= limite or (leituras and lidas >= leituras):
                     recolha.tempo_esgotado = True
-                    self._log(f"Tempo esgotado esperando mensagens: {recolha.recebidas} de {esperadas}")
+                    self._log(f"Mensagens incompletas depois de {lidas} leitura(s) da caixa: "
+                              f"{recolha.recebidas} de {esperadas}")
                     break
                 faltam = {c: n - recolha.recebidas.get(c, 0) for c, n in esperadas.items()}
-                self.aviso(f"Aguardando o ATF entregar os XML em Minhas Mensagens (faltam {faltam})...")
+                self.aviso(f"Aguardando o ATF entregar os XML em Minhas Mensagens (faltam {faltam}; leitura "
+                           f"{lidas}{f' de {leituras}' if leituras else ''})...")
         except MensagensIndisponiveis as e:
             capt.verificar()
             recolha.arquivos = list(capt.recebidos)

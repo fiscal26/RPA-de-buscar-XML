@@ -118,7 +118,7 @@ def _responder(tela: str, campos: dict) -> str:
         _nova_mensagem("FIS_1484", "NFCe: Consulta Genérica da NFC-e", 2,
                        _zip({"c1.xml": nfe(EMPRESA, "", 5, modelo="65", ie_emit=ie)}), f"emitente {ie}")
     elif emit:
-        _nova_mensagem("FIS_1322", "NFe: Consulta Genérica (Ano 2026)", 4,
+        _nova_mensagem("FIS_1322", "NFe: Consulta Genérica (Ano 2026)", 4 + ESTADO.pop("atraso", 0),
                        _zip({"s1.xml": nfe(EMPRESA, FORNECEDOR, 1, ie_emit=ie, ie_dest=IE_OUTRA),
                              "s2.xml": nfe(EMPRESA, FORNECEDOR, 2, ie_emit=ie)}), f"emitente {ie}")
     elif ie == IE_OUTRA:  # a Mercado comprou da Padaria (nota s1)
@@ -622,3 +622,45 @@ def test_faturas_extrato_omissao_certidao(ambiente):
 def arquivos_nome(tipo: str) -> str:
     import arquivos
     return arquivos.TIPOS[tipo]
+
+
+def test_mensagem_atrasada_fica_para_o_final(ambiente):
+    """O XML não chega nas 3 leituras da caixa: o robô segue para a próxima rodada e, no final, lê a caixa
+    mais uma vez e salva o XML na empresa certa."""
+    cfg, pasta = ambiente
+    cfg = copy.deepcopy(cfg)
+    cfg["atf"]["empresas_por_rodada"] = 1
+    ESTADO["atraso"] = 20  # a resposta da Padaria demora mais que 3 leituras (a cada 4 s)
+    executor = robo_xml.Executor(cfg)
+    try:
+        (r1,) = executor.executar_rodada([_trabalho(IE_EMPRESA, "Atrasada", ["nfe_saida"], codigo="040")])
+        assert r1.pendente and "aguardando" in r1.mensagem, r1
+        (r2,) = executor.executar_rodada([_trabalho(IE_OUTRA, "Seguinte", ["nfce"], codigo="041")])
+        assert r2.status == "concluido", r2  # a próxima tarefa não esperou a anterior
+        time.sleep(12)
+        repescados, tudo = executor.repescar()
+    finally:
+        if executor.atf:
+            print("\n".join(executor.atf.diag.linhas))  # aparece se o teste falhar
+        executor.fechar()
+    assert tudo, repescados
+    ((_, (r,)),) = repescados
+    assert r.status == "concluido" and not r.pendente and r.detalhes["nfe_saida"]["notas"] == 2, r
+    assert list((pasta / "xml" / "Arquivos baixados" / "040-Atrasada").glob("2026-09/NF-e Saida - R$ 200,00/*.zip"))
+
+
+def test_mensagem_que_nunca_chega_para_de_vez(ambiente):
+    """Nem a leitura do final traz o XML: o resultado fica com erro e o robô deve parar (tudo=False)."""
+    cfg, _ = ambiente
+    ESTADO["atraso"] = 3600
+    executor = robo_xml.Executor(cfg)
+    try:
+        (r1,) = executor.executar_rodada([_trabalho(IE_EMPRESA, "Nunca", ["nfe_saida", "certidao"], codigo="042")])
+        assert r1.pendente, r1
+        repescados, tudo = executor.repescar()
+    finally:
+        executor.fechar()
+    assert not tudo
+    ((_, (r,)),) = repescados
+    assert not r.pendente and "não entregou NF-e Saida" in r.mensagem, r
+    assert r.detalhes["certidao"]["arquivos"] == 1  # o que funcionou ficou salvo

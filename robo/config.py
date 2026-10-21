@@ -109,6 +109,9 @@ PADRAO = {
         "segundos_resposta": 15,
         # Quanto esperar o ATF entregar os XML em Minhas Mensagens, e de quanto em quanto olhar
         "minutos_espera_mensagens": 30,
+        # Quantas vezes a caixa é lida em cada rodada. O que não chegou fica pendente: o robô segue para as
+        # próximas empresas e, no final, lê a caixa mais uma vez; se ainda faltar, para e salva o que funcionou.
+        "leituras_mensagens": 3,
         # O ATF só deixa consultar a caixa de mensagens de 1 em 1 minuto
         "segundos_entre_verificacoes": 65,
         # O ATF às vezes é lento: quanto esperar uma tela carregar depois de um clique

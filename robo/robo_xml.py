@@ -60,6 +60,25 @@ class Resultado:
     qtd_xml: int = 0
     detalhes: dict = field(default_factory=dict)
     pasta: str = ""
+    pendente: bool = False           # falta XML: o robô lê a caixa mais uma vez no final da execução
+
+
+@dataclass
+class Pendencia:
+    """Rodada cujas mensagens não chegaram nas leituras da caixa: fica para o final da execução."""
+    trabalhos: list
+    senha: str
+    envios: dict
+    emissoes: dict
+    esperadas: dict
+    desde: datetime
+    relevante: object
+    alvos: list
+    recolha: Recolha
+
+    def faltam(self) -> dict[str, int]:
+        return {c: n - self.recolha.recebidas.get(c, 0) for c, n in self.esperadas.items()
+                if n - self.recolha.recebidas.get(c, 0) > 0}
 
 
 @dataclass
@@ -93,6 +112,7 @@ class Executor:
         self.chrome: Chrome | None = None
         self.atf: AtfPB | None = None
         self.recusados: set[tuple[str, str]] = set()  # (login, impressão da senha) recusados nesta execução
+        self.pendencias: list[Pendencia] = []  # rodadas à espera de mensagens (lidas de novo no final)
 
     @staticmethod
     def _impressao(login: str, senha: str) -> tuple[str, str]:
@@ -205,7 +225,8 @@ class Executor:
         if esperadas:
             for tentativa in (1, 2):
                 try:
-                    recolha = atf.recolher(esperadas, desde, self.cfg["atf"]["minutos_espera_mensagens"], relevante)
+                    recolha = atf.recolher(esperadas, desde, self.cfg["atf"]["minutos_espera_mensagens"], relevante,
+                                           leituras=self.cfg["atf"]["leituras_mensagens"])
                     break
                 except MensagensIndisponiveis as e:
                     if e.recolha is not None:  # salva o que já foi baixado antes de parar
@@ -217,10 +238,77 @@ class Executor:
                     if tentativa == 2:
                         raise EtapaNaoConcluida("a sessão do ATF expirou duas vezes")
 
+        # mensagem atrasada de uma rodada anterior (pendente) chega aqui: vai para a rodada dela
+        self._entregar_atrasadas(recolha)
+
         # 3) distribui os XML pelo conteúdo e salva
         por_destino = self._salvar_recolha(trabalhos, alvos, recolha, salvar_empresas=False)
         completas = not recolha.tempo_esgotado
-        return [self._resultado(t, envios, por_destino, recolha, completas, emissoes) for t in trabalhos]
+        resultados = [self._resultado(t, envios, por_destino, recolha, completas, emissoes, final=False)
+                      for t in trabalhos]
+        if any(r.pendente for r in resultados):
+            log.info("   Minhas Mensagens: faltam %s depois de %d leitura(s); segue para as próximas tarefas e "
+                     "volta às mensagens no final", {c: n - recolha.recebidas.get(c, 0) for c, n in esperadas.items()
+                                                     if n > recolha.recebidas.get(c, 0)},
+                     self.cfg["atf"]["leituras_mensagens"])
+            recolha.ignorados, recolha.mensagens_ignoradas = [], []  # já salvos em _sem_empresa
+            self.pendencias.append(Pendencia(trabalhos, t0.senha, envios, emissoes, esperadas, desde, relevante,
+                                             alvos, recolha))
+        return resultados
+
+    def _entregar_atrasadas(self, recolha: Recolha, pendencias: list[Pendencia] | None = None):
+        """Uma mensagem que não era desta rodada pode ser a que faltava numa rodada pendente (mesmo login):
+        o anexo vai para ela, e não para _sem_empresa."""
+        for codigo, anexos, texto in list(recolha.mensagens_ignoradas):
+            for p in (self.pendencias if pendencias is None else pendencias):
+                if p.faltam().get(codigo) and p.relevante(anexos, texto):
+                    p.recolha.arquivos.extend(anexos)
+                    p.recolha.recebidas[codigo] = p.recolha.recebidas.get(codigo, 0) + 1
+                    for anexo in anexos:
+                        if anexo in recolha.ignorados:
+                            recolha.ignorados.remove(anexo)
+                    recolha.mensagens_ignoradas.remove((codigo, anexos, texto))
+                    log.info("   resposta atrasada de %s entregue à rodada anterior", p.trabalhos[0].rotulo)
+                    break
+
+    def repescar(self, ler: bool = True) -> tuple[list[tuple[list, list[Resultado]]], bool]:
+        """Final da execução: lê Minhas Mensagens mais uma vez para cada rodada pendente. Devolve
+        ([(trabalhos, resultados)], tudo_chegou). Se ainda faltar, o robô deve parar de vez.
+        ler=False só fecha as pendências com o que já chegou (o robô já está parando)."""
+        pendencias, self.pendencias = self.pendencias, []
+        saida, tudo = [], True
+        parou = "" if ler else "parando"
+        for i, p in enumerate(pendencias):
+            t0 = p.trabalhos[0]
+            if p.faltam() and not parou:
+                log.info("Última leitura de Minhas Mensagens para o login %s (faltam %s)", t0.login, p.faltam())
+                try:
+                    self._garantir_chrome(Diagnostico(self.cfg["pastas"]["diagnostico"], t0.login))
+                    t0.senha = t0.senha or p.senha
+                    self._entrar(t0)
+                    nova = self.atf.recolher(p.faltam(), p.desde, self.cfg["atf"]["minutos_espera_mensagens"],
+                                             p.relevante, leituras=1)
+                    p.recolha.arquivos.extend(nova.arquivos)
+                    for c, n in nova.recebidas.items():
+                        p.recolha.recebidas[c] = p.recolha.recebidas.get(c, 0) + n
+                    self._entregar_atrasadas(nova, pendencias[i + 1:])
+                    p.recolha.ignorados = nova.ignorados
+                except MensagensIndisponiveis as e:
+                    parou = str(e)
+                    if e.recolha is not None:
+                        p.recolha.arquivos.extend(e.recolha.arquivos)
+                except (SenhaInvalida, SiteForaDoAr, EtapaNaoConcluida, SessaoExpirada, ChromeIndisponivel) as e:
+                    log.info("   não consegui ler as mensagens de novo: %s", e)
+                except Exception:
+                    log.exception("   falha inesperada na última leitura das mensagens")
+            completa = not p.faltam()
+            tudo = tudo and completa
+            p.recolha.tempo_esgotado = not completa
+            por_destino = self._salvar_recolha(p.trabalhos, p.alvos, p.recolha, salvar_empresas=False)
+            saida.append((p.trabalhos, [self._resultado(t, p.envios, por_destino, p.recolha, completa, p.emissoes)
+                                        for t in p.trabalhos]))
+            p.senha = ""
+        return saida, tudo
 
     def _salvar_recolha(self, trabalhos: list[Trabalho], alvos, recolha: Recolha, salvar_empresas: bool = True):
         """Distribui os arquivos baixados pelo conteúdo, cada um INTEIRO (o ZIP continua ZIP). Nada se
@@ -245,7 +333,7 @@ class Executor:
         return por_destino
 
     def _resultado(self, t: Trabalho, envios, por_destino, recolha: Recolha, completas: bool,
-                   emissoes: dict | None = None) -> Resultado:
+                   emissoes: dict | None = None, final: bool = True) -> Resultado:
         detalhes: dict = {}
         sem_notas, faltando, falhas, partes = [], [], [], []
         total_notas = 0
@@ -291,8 +379,11 @@ class Executor:
         pasta = arquivos.pasta_empresa(self.cfg["pastas"]["destino"], t.nome, t.ie, t.codigo).name
         if sem_notas:
             partes.append("sem notas em " + ", ".join(sem_notas))
-        if faltando:
-            partes.append(f"o ATF não entregou {', '.join(faltando)} em {self.cfg['atf']['minutos_espera_mensagens']} min")
+        if faltando and not final:
+            partes.append(f"{', '.join(faltando)}: aguardando o ATF (o robô lê as mensagens de novo no final)")
+        elif faltando:
+            partes.append(f"o ATF não entregou {', '.join(faltando)} em Minhas Mensagens "
+                          f"({self.cfg['atf']['leituras_mensagens']} leituras e mais uma no final)")
         if falhas:
             partes.append("; ".join(falhas))
         msg = "; ".join(partes) + "."
@@ -302,7 +393,8 @@ class Executor:
             status = "erro"
         else:
             status = "sem_notas"
-        return Resultado(status, msg[:1].upper() + msg[1:], total_notas, detalhes, pasta)
+        return Resultado(status, msg[:1].upper() + msg[1:], total_notas, detalhes, pasta,
+                         pendente=bool(faltando) and not final)
 
     @property
     def login_aberto(self) -> str:
@@ -398,6 +490,7 @@ class Robo:
         self.nome = p["nome_robo"] or socket.gethostname()
         self.executor = Executor(cfg, p["segundos_assistido"])
         self.tarefas_atuais: list[dict] = []
+        self.aguardando: dict[int, dict] = {}  # trabalho -> tarefa à espera da última leitura das mensagens
         self.ultimo_sinal = 0.0
         self.chrome_ok = True
         self.parar = False
@@ -413,6 +506,9 @@ class Robo:
                 log.warning("Sem contato com o portal: %s", e)
                 time.sleep(30)
                 continue
+            if not lote and self.executor.pendencias:
+                self._repescar()  # acabou a fila: última leitura das mensagens que faltaram
+                continue
             if not lote:
                 self.executor.encerrar_sessao_ociosa()
                 time.sleep(self.cfg["portal"]["intervalo_segundos"])
@@ -425,6 +521,7 @@ class Robo:
                 for t in lote:
                     self.portal.atualizar_tarefa(t["id"], {"status": "pendente", "iniciado_em": None, "robo": None})
                 self.tarefas_atuais = []
+                self._repescar(ler=False)  # as que esperavam mensagens ficam com o que já chegou
                 self.executor.fechar()
                 sys.exit(f"ERRO: {e} Confira o ATF no Chrome e ligue o robô de novo.")
             except ChromeIndisponivel as e:
@@ -462,14 +559,34 @@ class Robo:
         resultados = []
         for grupo in rodadas(trabalhos, len(trabalhos), chave=lambda t: f"{t.inicio}"):
             resultados.extend(zip(grupo, self.executor.executar_rodada(grupo)))
-        por_ie_periodo = {(t.ie, t.inicio): r for t, r in resultados}
+        por_ie_periodo = {(t.ie, t.inicio): (t, r) for t, r in resultados}
         for t in trabalhos:
             t.senha = ""
         self.chrome_ok = True
         for t in lote:
-            r = por_ie_periodo[(t["ie"], date.fromisoformat(t["data_inicio"]))]
-            self._finalizar(t, r)
+            trabalho, r = por_ie_periodo[(t["ie"], date.fromisoformat(t["data_inicio"]))]
             log.info("   %s -> %s: %s", t["nome"], r.status, r.mensagem)
+            if r.pendente:  # fica "processando" até a última leitura das mensagens, no final da fila
+                self.aguardando[id(trabalho)] = t
+                self.portal.atualizar_tarefa(t["id"], {"mensagem": r.mensagem[:500]})
+            else:
+                self._finalizar(t, r)
+
+    def _repescar(self, ler: bool = True):
+        """Fila vazia: lê Minhas Mensagens mais uma vez para as tarefas que esperavam XML. Se ainda faltar,
+        finaliza com o que chegou e o robô para de vez."""
+        repescados, tudo = self.executor.repescar(ler=ler)
+        for trabalhos, rs in repescados:
+            for trabalho, r in zip(trabalhos, rs):
+                t = self.aguardando.pop(id(trabalho), None)
+                if t is not None:
+                    self._finalizar(t, r)
+                    log.info("   %s -> %s: %s", t["nome"], r.status, r.mensagem)
+        if ler and not tudo:
+            log.error("ERRO: o ATF não entregou todos os XML em Minhas Mensagens, nem na última leitura. "
+                      "O robô parou de vez; o que funcionou foi salvo.")
+            self.executor.fechar()
+            sys.exit("ERRO: o ATF não entregou todos os XML. Confira o ATF e ligue o robô de novo.")
 
     def _finalizar(self, t, r: Resultado):
         self.portal.atualizar_tarefa(t["id"], {
@@ -480,7 +597,7 @@ class Robo:
     def encerrar(self, *_):
         log.info("Encerrando...")
         self.parar = True
-        for t in self.tarefas_atuais:  # as tarefas em andamento voltam para a fila
+        for t in self.tarefas_atuais + list(self.aguardando.values()):  # as tarefas em andamento voltam para a fila
             try:
                 self.portal.atualizar_tarefa(t["id"], {"status": "pendente", "iniciado_em": None, "robo": None})
             except Exception:
@@ -504,6 +621,7 @@ def rodar_local(cfg: dict, arquivo: str, inicio: date, fim: date):
             senhas.setdefault(emp.login.lower(), emp.senha)
     executor = Executor(cfg)
     resultados = []
+    posicao: dict[int, int] = {}  # trabalho -> linha em resultados (a leitura final pode trocar o resultado)
     parada = ""
     try:
         prontos = []
@@ -525,14 +643,26 @@ def rodar_local(cfg: dict, arquivo: str, inicio: date, fim: date):
                 for emp, _ in grupo:
                     resultados.append((emp, Resultado("erro", f"Parado: {e}")))
                 break
-            for (emp, _), r in zip(grupo, rs):
+            for (emp, t), r in zip(grupo, rs):
                 log.info("   %s -> %s: %s", emp.nome, r.status, r.mensagem)
                 resultados.append((emp, r))
+                posicao[id(t)] = len(resultados) - 1
+        # no final: mais uma leitura das mensagens para as rodadas que ficaram esperando
+        if executor.pendencias:
+            repescados, tudo = executor.repescar(ler=not parada)
+            for trabalhos, rs in repescados:
+                for t, r in zip(trabalhos, rs):
+                    emp = resultados[posicao[id(t)]][0]
+                    resultados[posicao[id(t)]] = (emp, r)
+                    log.info("   %s -> %s: %s", emp.nome, r.status, r.mensagem)
+            if not tudo and not parada:
+                parada = ("o ATF não entregou todos os XML em Minhas Mensagens, nem na última leitura do final. "
+                          "O robô parou de vez.")
     finally:
         executor.fechar()
     log.info("Relatório: %s", salvar_relatorio(cfg, resultados, inicio))
     if parada:
-        log.error("ERRO: %s O robô parou. O que já tinha sido baixado foi salvo; rode de novo mais tarde.", parada)
+        log.error("ERRO: %s O que já tinha sido baixado foi salvo; rode de novo mais tarde para o que faltou.", parada)
         sys.exit(1)
 
 
