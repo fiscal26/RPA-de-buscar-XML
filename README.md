@@ -65,7 +65,7 @@ endereço direto; a IE vai no Número, **Pesquisar** confere a empresa (sem nome
 
 | Serviço | Função | O que o robô faz |
 |---|---|---|
-| Faturas | ARR_278 (Emissão de DAR > Lançamentos Espontâneos) | *Avançar*; marca **todos** os lançamentos, menos os *DIFERIDO - VALOR MINIMO* (o ATF não emite); Tipo de Emissão como vier (PIX); *Emitir*. Sem lançamento: "nenhum lançamento em aberto" |
+| Faturas | ARR_278 (Emissão de DAR > Lançamentos Espontâneos) | *Avançar*; marca **todos** os lançamentos, menos os *DIFERIDO - VALOR MINIMO* (o ATF não emite); Tipo de Emissão como vier (PIX); *Emitir*. Sem lançamento (aviso "Não existem ocorrências de lançamentos"): "não existem débitos em aberto" |
 | Extrato de Pagamentos | ARR_087 | Período de Pagamento do **1º ao último dia** da competência, Tipo de Imposto *Todos*, *Consultar* |
 | Omissão e Inadimplência | COB_187 | *Consultar*: o **PDF completo** (todas as páginas) |
 | Certidão de Débitos | DIA_061 | *Submeter* (com o login, como em todo o robô) |

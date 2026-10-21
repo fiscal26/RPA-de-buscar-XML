@@ -344,7 +344,8 @@ class AtfFalso(BaseHTTPRequestHandler):
         if funcao == "ARRf_LancamentoEmitirDarContribuinte2":
             lancs = LANCAMENTOS.get(ie, [])
             if not lancs:
-                self._html(sessao() + "<b>Lançamentos para Emissão de DAR/FC/PIX</b><br>Nenhum lançamento encontrado.")
+                # como no ATF real: tela vazia com o aviso (alert) do navegador
+                self._html("<script>alert('Não existem ocorrências de lançamentos para a consulta.')</script>")
                 return
             linhas = "".join(f'<tr><td><input type="checkbox" name="chbChavePrimaria" value="{i}"></td><td>30{i}</td>'
                              f'<td>08/2026</td><td>{"NOTA FISCAL ELETRONICA - NFE" if op else "FATURA"}</td><td>{op}</td>'
@@ -618,7 +619,7 @@ def test_faturas_extrato_omissao_certidao(ambiente):
 
     assert r2.status == "concluido", r2
     assert r2.detalhes["faturas"]["sem_notas"] and r2.detalhes["faturas"]["arquivos"] == 0, r2
-    assert "nenhum lançamento" in r2.mensagem.lower(), r2
+    assert "Faturas: não existem débitos em aberto" in r2.mensagem, r2
     assert (base / "031-Mercado" / "2026-09" / "Certidão de Débitos" / "Certidão de Débitos 2026-09.pdf").exists()
 
 

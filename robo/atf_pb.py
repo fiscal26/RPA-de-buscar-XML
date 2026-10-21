@@ -136,9 +136,15 @@ TIPO_TELA = {
 # Serviços com resposta na hora (PDF): tipo -> tela em config.atf.telas
 SERVICOS = ("faturas", "extrato", "omissao", "certidao")
 _NAO_EMITE = re.compile(r"diferido\s*-\s*valor\s+m[ií]nimo", re.I)
-_SEM_DOCUMENTO = re.compile(r"nenhum(a)?\s+(registro|lan[cç]amento|pagamento|d[eé]bito|resultado)|n[aã]o\s+(foram\s+)?encontrad|"
-                            r"n[aã]o\s+(h[aá]|existe[mn]?)\s+(registro|lan[cç]amento|pagamento|d[eé]bito|dado)|"
+_SEM_DOCUMENTO = re.compile(r"nenhum(a)?\s+(registro|lan[cç]amento|pagamento|d[eé]bito|resultado|ocorr[eê]ncia)|"
+                            r"n[aã]o\s+(foram\s+)?encontrad|"
+                            r"n[aã]o\s+(h[aá]|existe[mn]?)\s+(registro|lan[cç]amento|pagamento|d[eé]bito|dado|ocorr[eê]ncia)|"
                             r"0\s+registros?\s+encontrad", re.I)
+# o que o resultado diz quando o ATF responde que não há nada (ex.: "Não existem ocorrências de lançamentos
+# para a consulta" nas faturas)
+SEM_DADOS = {"faturas": "não existem débitos em aberto",
+             "omissao": "não existem débitos em aberto (sem omissões ou inadimplências)",
+             "extrato": "não existem pagamentos no período"}
 _ERRO_DOCUMENTO = re.compile(r"n[aã]o\s+[eé]\s+permitid|\berro\b|inv[aá]lid|obrigat[oó]ri|informe\s+|n[aã]o\s+foi\s+poss[ií]vel", re.I)
 
 
@@ -298,6 +304,8 @@ class AtfPB:
         self._marcas = 0
         self._ultima_lista = 0.0
         self.page.on("dialog", self._dialogo)
+        # o ATF também mostra avisos (alert) nas janelas que ele abre
+        contexto.on("page", lambda pagina: pagina.on("dialog", self._dialogo))
 
     # ------------------------------------------------------------------ utilidades
     def _log(self, texto: str):
@@ -951,7 +959,7 @@ class AtfPB:
                 sem_lancamento = m.group(0) if m else ""
         if frame is None and sem_lancamento:
             emissao.sem_dados = True
-            emissao.resposta = "nenhum lançamento em aberto"
+            emissao.resposta = SEM_DADOS["faturas"]
             return False
         if frame is None:
             raise EtapaNaoConcluida("a lista de lançamentos não abriu")
@@ -973,7 +981,7 @@ class AtfPB:
         if not marcadas:
             emissao.sem_dados = True
             emissao.resposta = ("só há lançamentos DIFERIDO - VALOR MINIMO, que o ATF não emite" if diferidas
-                                else "nenhum lançamento em aberto")
+                                else SEM_DADOS["faturas"])
             return False
         return True
 
@@ -1003,7 +1011,7 @@ class AtfPB:
                     texto += "\n" + self._texto_quadro(frame)
             if _SEM_DOCUMENTO.search(texto):
                 emissao.sem_dados = True
-                emissao.resposta = _SEM_DOCUMENTO.search(texto).group(0)
+                emissao.resposta = SEM_DADOS.get(emissao.tipo) or _SEM_DOCUMENTO.search(texto).group(0)
                 return
             m = re.search(r"[^\n]*n[aã]o\s+[eé]\s+permitid[^\n]*", texto, re.I)
             if m:
