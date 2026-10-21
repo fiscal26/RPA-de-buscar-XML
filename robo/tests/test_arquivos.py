@@ -194,13 +194,28 @@ def test_faturamento_mei_acumula_os_meses(tmp_path):
     from atf_pb import ler_docs_fiscais
     com_valor = [["Tipos de docs eletrônicos", "Qte. Entradas", "Entradas", "Qte. Saídas", "Saídas"],
                  ["- NFEs:", "1", "10,00", "5", "30.000,00"], ["TOTAIS", "", "10,00", "", "30.000,00"]]
+    com_valor.append(["- Cartão:", "---", "---", "3", "2.000,00"])
     for mes, linhas in (("2026-08", com_valor), ("2026-09", REAL)):
         r = arquivos.salvar_faturamento_mei(tmp_path, "Mei", IE_EMPRESA, mes, ler_docs_fiscais(linhas), "7")
-    assert r["acumulado"] == 30000.0 and r["percentual"] == 37.0
+    assert (r["notas_acumulado"], r["notas_percentual"]) == (30000.0, 37.0)  # notas e cartão separados
+    assert (r["cartao_acumulado"], r["cartao_percentual"]) == (2000.0, 2.5)
     pasta = tmp_path / "Arquivos baixados" / "7-Mei" / "Dossiê MEI"
     dados = json.loads((pasta / "Faturamento MEI 2026.json").read_text(encoding="utf-8"))
     assert sorted(dados["meses"]) == ["2026-08", "2026-09"] and len(dados["meses"]["2026-09"]["itens"]) == 5
     from openpyxl import load_workbook
     wb = load_workbook(pasta / "Faturamento MEI 2026.xlsx")
     assert [c.value for c in wb.worksheets[0][2]][:3] == ["2026-08", "com movimento", 30000.0]
-    assert [c.value for c in wb["Por documento"][3]][:2] == ["2026-09", "NFEs"]
+    assert [c.value for c in wb.worksheets[0][3]][8:12] == [0.0, 0, 2000.0, 0.0247]  # setembro: cartão zerado
+    assert [c.value for c in wb["Por documento"][4]][:2] == ["2026-09", "NFEs"]
+
+
+def test_meses_que_faltam_e_limite_proporcional(tmp_path):
+    from datetime import date
+    assert [p[0].month for p in arquivos.periodos_mei(tmp_path, "N", IE_EMPRESA, "", date(2026, 4, 1))] == [1, 2, 3]
+    arquivos.salvar_faturamento_mei(tmp_path, "N", IE_EMPRESA, "2026-02", {"saidas": 1.0, "itens": []})
+    assert [p[0].month for p in arquivos.periodos_mei(tmp_path, "N", IE_EMPRESA, "", date(2026, 4, 1))] == [1, 3]
+    assert len(arquivos.periodos_mei(tmp_path, "N", IE_EMPRESA, "", date(2026, 4, 1), refazer_ano=True)) == 3
+    assert arquivos.periodos_mei(tmp_path, "N", IE_EMPRESA, "", date(2026, 1, 1)) == []
+    assert arquivos.limite_mei(2026, None) == 81000.0
+    assert arquivos.limite_mei(2026, "2026-03-10") == 67500.0  # março a dezembro: 10 x 6.750
+    assert arquivos.limite_mei(2026, "2010-05-14") == 81000.0

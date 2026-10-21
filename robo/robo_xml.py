@@ -18,7 +18,7 @@ Uso:
     python robo_xml.py                     liga o robô do portal (deixe a janela aberta)
     python robo_xml.py --gerar-chaves      cria as chaves das senhas (uma vez só; veja o README)
     python robo_xml.py --modelo PASTA      copia a planilha modelo para a pasta
-    python robo_xml.py --local empresas.xlsx [--competencia 09/2026]
+    python robo_xml.py --local empresas.xlsx [--competencia 09/2026 | --competencia 01/2026-09/2026] [--mei-ano]
     python robo_xml.py --gravar faturas    grava os passos que você faz no Chrome (para ajustar o robô)
                                            roda direto da planilha, sem o portal (para testar)
 """
@@ -171,10 +171,10 @@ class Executor:
         t0 = trabalhos[0]
         self._entrar(t0)
 
-        def com_sessao(funcao, *args):
+        def com_sessao(funcao, *args, **kw):
             for tentativa in (1, 2):
                 try:
-                    return funcao(*args)
+                    return funcao(*args, **kw)
                 except SessaoExpirada:
                     log.info("   sessão do ATF expirou; entrando de novo")
                     atf.login_atual = ""
@@ -196,11 +196,18 @@ class Executor:
             for tipo in t.tipos:
                 if tipo in SERVICOS:
                     nome = arquivos.TIPOS.get(tipo, tipo)
-                    e = emissoes[(t.ie, tipo)] = com_sessao(atf.emitir, tipo, t.ie, t.inicio, t.fim, nome)
+                    extra = {}
+                    if tipo == "mei":  # meses do ano que ainda faltam (cliente que chega sem acompanhamento)
+                        extra["periodos_extra"] = tuple(arquivos.periodos_mei(
+                            self.cfg["pastas"]["destino"], t.nome, t.ie, t.codigo, t.inicio, self.cfg["mei"]["refazer_ano"]))
+                    e = emissoes[(t.ie, tipo)] = com_sessao(atf.emitir, tipo, t.ie, t.inicio, t.fim, nome, **extra)
                     if e.arquivos:
                         arquivos.salvar_documentos(e.arquivos, self.cfg["pastas"]["destino"], t.nome, t.ie, tipo,
                                                    f"{t.inicio:%Y-%m}", t.codigo)
-                    if e.dados:  # Dossiê MEI: entradas e saídas do mês, acumuladas no ano
+                    if e.dados:  # Dossiê MEI: entradas e saídas, notas e cartão acumulados no ano
+                        for mes, dados in sorted(e.dados.pop("outros_meses", {}).items()):
+                            dados.setdefault("inicio_atividade", e.dados.get("inicio_atividade"))
+                            arquivos.salvar_faturamento_mei(self.cfg["pastas"]["destino"], t.nome, t.ie, mes, dados, t.codigo)
                         e.dados["resumo"] = arquivos.salvar_faturamento_mei(
                             self.cfg["pastas"]["destino"], t.nome, t.ie, f"{t.inicio:%Y-%m}", e.dados, t.codigo)
 
@@ -356,12 +363,17 @@ class Executor:
                 if e.dados.get("resumo"):  # Dossiê MEI
                     r = e.dados["resumo"]
                     detalhes[tipo].update(arquivos=1, saidas=r["saidas"], entradas=r["entradas"], cartao=r["cartao"],
-                                          sem_movimento=r["sem_movimento"], acumulado_ano=r["acumulado"],
-                                          percentual_limite=r["percentual"])
+                                          sem_movimento=r["sem_movimento"], limite_ano=r["limite"], meses=r["meses"],
+                                          notas_acumulado=r["notas_acumulado"], notas_percentual=r["notas_percentual"],
+                                          cartao_acumulado=r["cartao_acumulado"], cartao_percentual=r["cartao_percentual"])
+                    reais = arquivos.reais
                     partes.append(f"{nome}: " + ("sem movimento no mês" if r["sem_movimento"] else
-                                                 f"saídas {arquivos.reais(r['saidas'] or 0)}, entradas "
-                                                 f"{arquivos.reais(r['entradas'] or 0)}, cartão {arquivos.reais(r['cartao'] or 0)}")
-                                  + f"; acumulado no ano {arquivos.reais(r['acumulado'])} ({r['percentual']}% do limite)")
+                                                 f"notas: saídas {reais(r['saidas'] or 0)}, entradas {reais(r['entradas'] or 0)}; "
+                                                 f"cartão {reais(r['cartao'] or 0)}")
+                                  + f". No ano ({r['meses'][0][5:]} a {r['meses'][-1][5:]}): notas {reais(r['notas_acumulado'])}"
+                                  f" ({r['notas_percentual']}% do limite de {reais(r['limite'])}); cartão "
+                                  f"{reais(r['cartao_acumulado'])} ({r['cartao_percentual']}%)"
+                                  + (f"; {e.resposta}" if e.resposta else ""))
                     log.info("   %s %s: %s", t.nome, nome, partes[-1])
                     continue
                 if n:
@@ -443,6 +455,22 @@ def rodadas(trabalhos: list, tamanho: int, chave=lambda t: t.login):
     for grupo in grupos.values():
         for i in range(0, len(grupo), max(1, tamanho)):
             yield grupo[i:i + tamanho]
+
+
+def competencias(texto: str | None) -> list[tuple[date, date]]:
+    """'09/2026' -> [setembro]; '01/2026-09/2026' (ou '01/2026 a 09/2026') -> um período por mês."""
+    partes = re.split(r"\s*(?:-|\ba\b|até)\s*(?=\d{1,2}/\d{2,4}\s*$)", (texto or "").strip())
+    if len(partes) == 1:
+        return [competencia(texto)]
+    inicio, _ = competencia(partes[0])
+    _, fim = competencia(partes[1])
+    if fim < inicio:
+        raise ValueError("competência final antes da inicial")
+    saida, atual = [], inicio
+    while atual <= fim:
+        saida.append(competencia(f"{atual.month}/{atual.year}"))
+        atual = saida[-1][1] + timedelta(days=1)
+    return saida
 
 
 def competencia(texto: str | None) -> tuple[date, date]:
@@ -713,7 +741,9 @@ def main():
     ap.add_argument("--mostrar-chave-publica", action="store_true", help="mostra de novo a chave pública")
     ap.add_argument("--modelo", metavar="PASTA", help="copia a planilha modelo para a pasta")
     ap.add_argument("--local", metavar="PLANILHA", help="roda direto da planilha, sem o portal")
-    ap.add_argument("--competencia", help="MM/AAAA (padrão: mês anterior)")
+    ap.add_argument("--competencia", help="MM/AAAA, ou um intervalo MM/AAAA-MM/AAAA (um mês de cada vez; padrão: mês anterior)")
+    ap.add_argument("--mei-ano", action="store_true",
+                    help="Dossiê MEI: busca de novo todos os meses do ano até a competência (sem isso, só os que faltam)")
     ap.add_argument("--gravar", nargs="?", const="", metavar="SERVICO",
                     help="grava os passos que você faz no Chrome do robô (ex.: --gravar faturas)")
     args = ap.parse_args()
@@ -747,12 +777,18 @@ def main():
     if args.modelo:
         print(planilha.copiar_modelo(args.modelo))
         return
+    if args.mei_ano:
+        cfg["mei"]["refazer_ano"] = True
     if args.local:
         try:
-            inicio, fim = competencia(args.competencia)
+            periodos = competencias(args.competencia)
         except ValueError:
-            sys.exit("Competência inválida: use MM/AAAA, por exemplo 09/2026.")
-        rodar_local(cfg, args.local, inicio, fim)
+            sys.exit("Competência inválida: use MM/AAAA (ex.: 09/2026) ou um intervalo (ex.: 01/2026-09/2026).")
+        for inicio, fim in periodos:
+            if len(periodos) > 1:
+                log.info("===== Competência %s =====", f"{inicio:%m/%Y}")
+            rodar_local(cfg, args.local, inicio, fim)
+            cfg["mei"]["refazer_ano"] = False  # o ano já foi refeito na primeira competência
         return
 
     robo = Robo(cfg)

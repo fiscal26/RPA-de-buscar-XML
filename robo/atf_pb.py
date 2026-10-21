@@ -987,25 +987,26 @@ class AtfPB:
             raise EtapaNaoConcluida(f"botão {nome} não encontrado")
         botao.click()
 
-    def emitir(self, tipo: str, ie: str, inicio: date, fim: date, nome_tipo: str) -> Emissao:
-        """Faturas, extrato, omissão ou certidão de UMA empresa: preenche, clica e captura o PDF (ou ZIP)
-        que o ATF devolve na hora."""
+    def emitir(self, tipo: str, ie: str, inicio: date, fim: date, nome_tipo: str,
+               periodos_extra: tuple = ()) -> Emissao:
+        """Faturas, extrato, omissão, certidão, cartão ou Dossiê MEI de UMA empresa: preenche, clica e
+        captura o PDF (ou ZIP) que o ATF devolve na hora. 'periodos_extra' (só MEI): outros meses do ano."""
         tela = self.atf["telas"][tipo]
         emissao = Emissao(ie=ie, tipo=tipo)
-        if tipo == "mei" and (ie, inicio) in self._dossie_cache:  # o cartão já consultou o dossiê
-            self._faturamento_mei(None, emissao, ie, inicio, fim)
-            return emissao
         self._respostas = []
         antes = set(self.contexto.pages)
         capt = None
         try:
+            if tipo == "mei" and (ie, inicio) in self._dossie_cache:  # o cartão já consultou o dossiê
+                self._faturamento_mei(None, emissao, ie, inicio, fim, periodos_extra)
+                return emissao
             self.abrir_tela(tipo)
             frame = self._quadro_da_tela(tela)
             if tipo == "cartao":
                 self._conferir_cartao(frame, emissao, ie, inicio, fim)
                 return emissao
             if tipo == "mei":
-                self._faturamento_mei(frame, emissao, ie, inicio, fim)
+                self._faturamento_mei(frame, emissao, ie, inicio, fim, periodos_extra)
                 return emissao
             if tipo == "extrato":  # Período de Pagamento: do 1º ao último dia da competência
                 for css, data in (('input[name="edtDataInicial"]', inicio), ('input[name="edtDataFinal"]', fim)):
@@ -1085,10 +1086,21 @@ class AtfPB:
             if erro:
                 raise IeNaoEncontrada(f"o ATF não abriu o dossiê da IE {ie}: {erro[:150]}")
             raise EtapaNaoConcluida("o dossiê não abriu (aba Docs fiscais não apareceu)")
-        m = re.search(r"optante\s+simei:?\s*(sim|n[aã]o)", self._texto_quadro(quadro), re.I)
+        texto = self._texto_quadro(quadro)
+        m = re.search(r"optante\s+simei:?\s*(sim|n[aã]o)", texto, re.I)
         simei = None if not m else m.group(1).lower() == "sim"
+        m = re.search(r"in[ií]cio\s+(?:de\s+)?atividade:?\s*(\d{2}/\d{2}/\d{4})", texto, re.I)
+        inicio_atividade = datetime.strptime(m.group(1), "%d/%m/%Y").date() if m else None
         self._no_quadro(quadro, aba).click()
-        quadro = self._esperar_quadro('input[name="edtDtInicial"]')
+        quadro, linhas = self._docs_fiscais_periodo(None, inicio, fim)
+        info = {"quadro": quadro, "simei": simei, "linhas": linhas, "inicio_atividade": inicio_atividade}
+        self._dossie_cache[(ie, inicio)] = {k: v for k, v in info.items() if k != "quadro"}
+        return info
+
+    def _docs_fiscais_periodo(self, quadro, inicio: date, fim: date) -> tuple:
+        """Aba Docs fiscais já aberta: preenche o período, Consultar e lê as linhas das tabelas.
+        Serve para vários meses seguidos na mesma tela (só troca o período)."""
+        quadro = quadro or self._esperar_quadro('input[name="edtDtInicial"]')
         if quadro is None:
             raise EtapaNaoConcluida("período da aba Docs fiscais não apareceu")
         for css, data in (('input[name="edtDtInicial"]', inicio), ('input[name="edtDtFinal"]', fim)):
@@ -1112,9 +1124,8 @@ class AtfPB:
             linhas = quadro.evaluate(_JS_LINHAS_DOCS)
         except Exception:
             linhas = []
-        info = {"quadro": quadro, "simei": simei, "linhas": linhas}
-        self._dossie_cache[(ie, inicio)] = {"simei": simei, "linhas": linhas}
-        return info
+        self.ultimo_uso = time.time()
+        return quadro, linhas
 
     def _conferir_cartao(self, frame, emissao: Emissao, ie: str, inicio: date, fim: date):
         """Docs fiscais do dossiê: o link "Cartão" abre uma janela nova (Detalhamento por Administradora),
@@ -1157,9 +1168,11 @@ class AtfPB:
         emissao.arquivos = [("Conferencia Cartao.pdf", pagina_em_pdf(janela))]
         self._log(f"Cartão IE {ie}: página {janela.url[:100]} salva em PDF")
 
-    def _faturamento_mei(self, frame, emissao: Emissao, ie: str, inicio: date, fim: date):
-        """Dossiê MEI: só para quem é Optante SIMEI. Lê as entradas e saídas da aba Docs fiscais do mês
-        (a mesma consulta do cartão, se já foi feita)."""
+    def _faturamento_mei(self, frame, emissao: Emissao, ie: str, inicio: date, fim: date, periodos_extra: tuple = ()):
+        """Dossiê MEI: só para quem é Optante SIMEI. Lê a tabela de Docs fiscais da competência (a mesma
+        consulta do cartão, se já foi feita) e, na mesma tela, dos outros meses pedidos (ex.: de janeiro até
+        a competência, para o cliente que chega sem acompanhamento). Meses antes do início da atividade
+        ficam de fora."""
         info = self._dossie_cache.get((ie, inicio)) or self._consultar_dossie(frame, ie, inicio, fim)
         if info["simei"] is False:
             emissao.sem_dados = True
@@ -1167,6 +1180,7 @@ class AtfPB:
             return
         emissao.dados = ler_docs_fiscais(info["linhas"])
         emissao.dados["simei"] = info["simei"]
+        emissao.dados["inicio_atividade"] = info["inicio_atividade"].isoformat() if info.get("inicio_atividade") else None
         if emissao.dados["entradas"] is None:
             # a tabela "Totais docs fiscais eletrônicos" não veio: nada é inventado, o mês fica com erro
             emissao.dados = {}
@@ -1175,6 +1189,33 @@ class AtfPB:
             return
         self._log(f"Dossiê MEI IE {ie}: entradas {emissao.dados['entradas']}, saídas {emissao.dados['saidas']}"
                   + (" (sem movimento)" if emissao.dados["sem_movimento"] else ""))
+        outros, falhas = {}, []
+        for ini, fim_mes in periodos_extra:
+            if info.get("inicio_atividade") and fim_mes < info["inicio_atividade"]:
+                continue  # antes de a empresa existir
+            try:
+                quadro = self._esperar_quadro('input[name="edtDtInicial"]', 3)
+                if quadro is None:  # a tela do dossiê se perdeu: abre de novo
+                    self.abrir_tela("mei")
+                    linhas = self._consultar_dossie(self._quadro_da_tela(self.atf["telas"]["mei"]), ie, ini, fim_mes)["linhas"]
+                else:
+                    linhas = self._docs_fiscais_periodo(quadro, ini, fim_mes)[1]
+            except (SiteForaDoAr, SessaoExpirada):
+                raise
+            except Exception as e:
+                falhas.append(f"{ini:%m/%Y} ({e})")
+                continue
+            dados = ler_docs_fiscais(linhas)
+            if dados["entradas"] is None:
+                falhas.append(f"{ini:%m/%Y} (tabela não encontrada)")
+                continue
+            dados["simei"] = info["simei"]
+            outros[f"{ini:%Y-%m}"] = dados
+        if outros:
+            emissao.dados["outros_meses"] = outros
+            self._log(f"Dossiê MEI IE {ie}: também {', '.join(sorted(outros))}")
+        if falhas:
+            emissao.resposta = "meses não lidos: " + "; ".join(falhas)[:300]
 
     def _selecionar_faturas(self, emissao: Emissao) -> bool:
         """Tela dos lançamentos: marca todos, menos os "DIFERIDO - VALOR MINIMO" (o ATF não emite).

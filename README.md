@@ -73,7 +73,7 @@ endereço direto; a IE vai no Número, **Pesquisar** confere a empresa (sem nome
 | Extrato de Pagamentos | ARR_087 | Período de Pagamento do **1º ao último dia** da competência, Tipo de Imposto *Todos*, *Consultar* |
 | Omissão e Inadimplência | COB_187 | *Consultar*: o **PDF completo** (todas as páginas) |
 | Certidão de Débitos | DIA_061 | *Submeter* (com o login, como em todo o robô) |
-| Dossiê MEI | DEC_381 (a mesma consulta do cartão) | Lê *Optante SIMEI* na Identificação (NÃO = "não é MEI", nada é consultado) e a tabela **Totais docs fiscais eletrônicos** da aba Docs fiscais (DEC_382): NFEs, NFAEs, NFCEs, NF Avulsa ATF e BPe, com Qte. e valor de Entradas e Saídas, os TOTAIS e o Cartão (guardado à parte, fora da soma). **Todas as linhas são guardadas, mesmo zeradas** ("---" = não se aplica); o mês sem quantidade nem valor fica **sem movimento**. Vai para `Dossiê MEI/Faturamento MEI <ano>.json` e para a planilha do ano: abas *Faturamento* (mês a mês, acumulado e % do limite de R$ 81.000,00 — LC 123/2006, art. 18-A, § 1º), *Por documento* e *Tabela do ATF* |
+| Dossiê MEI | DEC_381 (a mesma consulta do cartão) | Lê *Optante SIMEI* e *Início atividade* na Identificação (SIMEI NÃO = "não é MEI", nada é consultado) e a tabela **Totais docs fiscais eletrônicos** da aba Docs fiscais (DEC_382): NFEs, NFAEs, NFCEs, NF Avulsa ATF e BPe, com Qte. e valor de Entradas e Saídas, os TOTAIS e o Cartão. **Todas as linhas são guardadas, mesmo zeradas** ("---" = não se aplica); o mês sem quantidade nem valor fica **sem movimento**. **Notas e cartão são acompanhados separados** (o cartão pode estar ou não dentro das notas): cada um com o seu acumulado no ano e a sua % do limite — R$ 81.000,00, ou R$ 6.750,00 por mês de atividade no ano de início (LC 123/2006, art. 18-A, §§ 1º e 2º). **Cliente novo:** na competência, o robô busca também os meses do ano que ainda não estão no acompanhamento (de janeiro, ou do início da atividade, até a competência), na mesma tela, só trocando o período; `--mei-ano` busca o ano todo de novo. Vai para `Dossiê MEI/Faturamento MEI <ano>.json` e para a planilha do ano (abas *Faturamento*, *Por documento* e *Tabela do ATF*) |
 | Conferência Cartão de Crédito | DEC_381 (Dossiê do Contribuinte) | IE, *Consultar*, aba **Docs fiscais**, período do 1º ao último dia, *Consultar*; clica em **"- Cartão:"**, que abre uma janela nova (*Detalhamento por Administradora*), e salva essa página em PDF. Cartão com 0 / 0,00 (ou sem o link): "não existem operações com cartão no período", sem abrir a janela |
 
 O ATF mostra o PDF no visualizador do Chrome; o robô guarda o arquivo antes de ele ir para a tela e
@@ -152,6 +152,8 @@ iniciar_robo.bat                         # liga o robô do portal (deixe a janel
 
 ```bash
 python robo_xml.py --local empresas.xlsx --competencia 09/2026
+python robo_xml.py --local empresas.xlsx --competencia 01/2026-09/2026   # vários meses, um de cada vez
+python robo_xml.py --local empresas.xlsx --competencia 09/2026 --mei-ano  # Dossiê MEI: refaz o ano todo
 ```
 
 Gera um relatório em `<destino>/_relatorios/`.

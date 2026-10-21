@@ -536,25 +536,61 @@ def salvar_documentos(brutos: list[tuple[str, bytes]], destino: str | Path, nome
     return {"novos": novos, "repetidos": repetidos, "pasta": str(pasta) if pasta.is_dir() else ""}
 
 
+def _arquivo_mei(destino, nome, ie, codigo, ano) -> Path:
+    return pasta_empresa(destino, nome, ie, codigo) / "Dossiê MEI" / f"Faturamento MEI {ano}.json"
+
+
+def periodos_mei(destino: str | Path, nome: str, ie: str, codigo: str, inicio, refazer_ano: bool = False) -> list:
+    """Meses do ano ANTES da competência que o Dossiê MEI ainda não tem (de janeiro em diante): o cliente
+    que chega sem acompanhamento já sai com o ano todo. refazer_ano=True busca todos de novo.
+    Devolve [(1º dia, último dia)]."""
+    import calendar
+    import json
+    from datetime import date
+
+    try:
+        feitos = json.loads(_arquivo_mei(destino, nome, ie, codigo, inicio.year).read_text(encoding="utf-8"))["meses"]
+    except (OSError, ValueError, KeyError):
+        feitos = {}
+    saida = []
+    for mes in range(1, inicio.month):
+        if refazer_ano or f"{inicio.year}-{mes:02d}" not in feitos:
+            saida.append((date(inicio.year, mes, 1), date(inicio.year, mes, calendar.monthrange(inicio.year, mes)[1])))
+    return saida
+
+
+def limite_mei(ano: int, inicio_atividade: str | None) -> float:
+    """R$ 81.000,00 no ano; no ano em que a empresa começou, R$ 6.750,00 por mês de atividade, contando o
+    mês de início (LC 123/2006, art. 18-A, §§ 1º e 2º)."""
+    if inicio_atividade and int(inicio_atividade[:4]) == ano:
+        return round(LIMITE_MEI / 12 * (12 - int(inicio_atividade[5:7]) + 1), 2)
+    return LIMITE_MEI
+
+
 def salvar_faturamento_mei(destino: str | Path, nome: str, ie: str, competencia: str, dados: dict,
                            codigo: str = "") -> dict:
     """Dossiê MEI: guarda a tabela "Totais docs fiscais eletrônicos" do mês em
     Arquivos baixados/<ID>-<Nome>/Dossiê MEI/Faturamento MEI <ano>.json (um mês por chave, base para o
-    painel futuro) e refaz a planilha "Faturamento MEI <ano>.xlsx": mês a mês (com "sem movimento"),
-    acumulado e % do limite; todas as linhas por tipo de documento, inclusive as zeradas; e a tabela como
-    veio do ATF. Devolve {pasta, saidas, entradas, cartao, sem_movimento, acumulado, percentual}."""
+    painel futuro) e refaz a planilha "Faturamento MEI <ano>.xlsx". NOTAS e CARTÃO são acompanhados
+    separados (o cartão pode estar ou não dentro das notas): cada um com o seu acumulado e a sua % do
+    limite. Abas: o ano mês a mês ("sem movimento" quando tudo é zero), todas as linhas por tipo de
+    documento (inclusive as zeradas) e a tabela como veio do ATF."""
     import json
     from datetime import datetime
 
     ano = competencia[:4]
-    pasta = pasta_empresa(destino, nome, ie, codigo) / "Dossiê MEI"
+    arq_json = _arquivo_mei(destino, nome, ie, codigo, ano)
+    pasta = arq_json.parent
     pasta.mkdir(parents=True, exist_ok=True)
-    arq_json = pasta / f"Faturamento MEI {ano}.json"
     try:
         historico = json.loads(arq_json.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         historico = {}
-    historico.setdefault("empresa", {"ie": ie, "nome": nome, "codigo": codigo})
+    empresa = historico.setdefault("empresa", {"ie": ie, "nome": nome, "codigo": codigo})
+    if dados.get("inicio_atividade"):
+        empresa["inicio_atividade"] = dados["inicio_atividade"]
+    limite = limite_mei(int(ano), empresa.get("inicio_atividade"))
+    empresa["limite_ano"] = limite
     meses = historico.setdefault("meses", {})
     meses[competencia] = {**{k: dados.get(k) for k in ("saidas", "entradas", "qtd_saidas", "qtd_entradas", "cartao",
                                                        "sem_movimento", "simei")},
@@ -572,22 +608,29 @@ def salvar_faturamento_mei(destino: str | Path, nome: str, ie: str, competencia:
     wb = Workbook()
     ws = wb.active
     ws.title = f"Faturamento {ano}"
-    ws.append(["Mês", "Movimento", "Saídas (faturamento)", "Qtd. saídas", "Entradas", "Qtd. entradas",
-               "Cartão (vendas)", "Saídas acumuladas no ano", f"% do limite MEI ({reais(LIMITE_MEI)})", "Consultado em"])
-    acumulado = 0.0
+    ws.append(["Mês", "Movimento",
+               "Notas: saídas", "Notas: qtd. saídas", "Notas: entradas", "Notas: qtd. entradas",
+               "Notas: saídas acumuladas", f"Notas: % do limite ({reais(limite)})",
+               "Cartão: vendas", "Cartão: qtd.", "Cartão: acumulado", f"Cartão: % do limite ({reais(limite)})",
+               "Consultado em"])
+    notas_acum = cartao_acum = 0.0
     for mes in sorted(meses):
         m = meses[mes]
-        acumulado += m.get("saidas") or 0.0
-        cartao = (m.get("cartao") or {}).get("valor")
-        ws.append([mes, "sem movimento" if m.get("sem_movimento") else "com movimento", m.get("saidas"),
-                   m.get("qtd_saidas"), m.get("entradas"), m.get("qtd_entradas"), cartao, round(acumulado, 2),
-                   round(acumulado / LIMITE_MEI, 4), m.get("consultado_em")])
+        cartao = m.get("cartao") or {}
+        notas_acum += m.get("saidas") or 0.0
+        cartao_acum += cartao.get("valor") or 0.0
+        ws.append([mes, "sem movimento" if m.get("sem_movimento") else "com movimento",
+                   m.get("saidas"), m.get("qtd_saidas"), m.get("entradas"), m.get("qtd_entradas"),
+                   round(notas_acum, 2), round(notas_acum / limite, 4),
+                   cartao.get("valor"), cartao.get("qtd"), round(cartao_acum, 2), round(cartao_acum / limite, 4),
+                   m.get("consultado_em")])
     negrito(ws)
     for linha in ws.iter_rows(min_row=2):
-        for i in (2, 4, 6, 7):
+        for i in (2, 4, 6, 8, 10):
             linha[i].number_format = '#,##0.00'
-        linha[8].number_format = "0.00%"
-    for col, w in zip("ABCDEFGHIJ", (10, 16, 20, 12, 16, 13, 16, 24, 24, 20)):
+        for i in (7, 11):
+            linha[i].number_format = "0.00%"
+    for col, w in zip("ABCDEFGHIJKLM", (10, 16, 15, 12, 15, 13, 18, 22, 15, 11, 17, 22, 20)):
         ws.column_dimensions[col].width = w
 
     docs = wb.create_sheet("Por documento")
@@ -597,7 +640,7 @@ def salvar_faturamento_mei(destino: str | Path, nome: str, ie: str, competencia:
             docs.append([mes, i.get("tipo"), i.get("qtd_entradas"), i.get("entradas"), i.get("qtd_saidas"), i.get("saidas")])
         c = meses[mes].get("cartao")
         if c:
-            docs.append([mes, "Cartão", None, None, c.get("qtd"), c.get("valor")])
+            docs.append([mes, "Cartão (à parte)", None, None, c.get("qtd"), c.get("valor")])
     negrito(docs)
     docs.column_dimensions["B"].width = 22
 
@@ -612,7 +655,9 @@ def salvar_faturamento_mei(destino: str | Path, nome: str, ie: str, competencia:
         pass
     return {"pasta": str(pasta), "saidas": dados.get("saidas"), "entradas": dados.get("entradas"),
             "cartao": (dados.get("cartao") or {}).get("valor"), "sem_movimento": dados.get("sem_movimento"),
-            "acumulado": round(acumulado, 2), "percentual": round(acumulado / LIMITE_MEI * 100, 1)}
+            "limite": limite, "meses": sorted(meses),
+            "notas_acumulado": round(notas_acum, 2), "notas_percentual": round(notas_acum / limite * 100, 1),
+            "cartao_acumulado": round(cartao_acum, 2), "cartao_percentual": round(cartao_acum / limite * 100, 1)}
 
 
 def salvar_sem_empresa(brutos: list[tuple[str, bytes]], destino: str | Path) -> int:

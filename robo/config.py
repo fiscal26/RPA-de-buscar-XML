@@ -150,6 +150,11 @@ PADRAO = {
         # O ATF encerra a sessão com 15 min sem uso: depois disso o robô entra de novo.
         "minutos_sessao": 12,
     },
+    "mei": {
+        # Dossiê MEI: na competência, o robô busca também os meses do ano que ainda não estão no
+        # acompanhamento (de janeiro em diante). True = busca todos de novo (o mesmo que --mei-ano).
+        "refazer_ano": False,
+    },
     "portal": {
         # Robô do portal LotiVisse XML. Veja web/IMPLANTACAO.md.
         "supabase_url": "",

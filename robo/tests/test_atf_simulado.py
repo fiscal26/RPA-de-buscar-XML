@@ -52,7 +52,7 @@ CHROME = os.environ.get("CHROME_TESTE") or next(
 
 ESTADO = {"logins": [], "consultas": [], "mensagens": [], "recusas": [], "ultima_lista": 0.0, "lista_cedo": 0,
           "blocos": {}, "abertas": [], "caixa_fora": 0, "servicos": [], "telas_servico": [], "faturas_emitidas": [],
-          "cartao": [], "dossies": []}
+          "cartao": [], "dossies": [], "docs_periodos": []}
 
 
 def _zip(itens: dict[str, bytes]) -> bytes:
@@ -174,23 +174,29 @@ def _dossie(ie: str, datas: tuple[str, str] | None = None) -> str:
     resultado = ""
     if datas:  # "Totais docs fiscais eletrônicos", como no ATF (print de 20/10/2026)
         url = f"/atf/fis/FISf_DetalharAdministradorasECFTEF.do?sqHumanoInst=7549548&refIni=09/2026&refFim=09/2026&ie={ie}"
-        com = ie == IE_EMPRESA
-        linhas = [("NFEs", "2", "1.000,00", "3", "3.000,50") if com else ("NFEs", "0", "0,00", "0", "0,00"),
+        mes = datas[0][3:5]
+        com = ie == IE_EMPRESA and mes == "09"   # setembro com movimento; agosto só uma nota e cartão; o resto zerado
+        agosto = ie == IE_EMPRESA and mes == "08"
+        linhas = [("NFEs", "2", "1.000,00", "3", "3.000,50") if com else
+                  ("NFEs", "0", "0,00", "1", "500,00") if agosto else ("NFEs", "0", "0,00", "0", "0,00"),
                   ("NFAEs", "0", "0,00", "0", "0,00"), ("NFCEs", "---", "---", "9" if com else "0", "1.200,00" if com else "0,00"),
                   ("NF Avulsa ATF", "0", "0,00", "0", "0,00"), ("BPe", "---", "---", "0", "0,00")]
+        total_s = "4.200,50" if com else "500,00" if agosto else "0,00"
+        cartao_q, cartao_v = ("4", "13.585,00") if com else ("2", "300,00") if agosto else ("0", "0,00")
         resultado = ('<table><tr><td colspan="5">Totais docs fiscais eletrônicos</td></tr>'
                      '<tr><th>Tipos de docs eletrônicos</th><th>Qte. Entradas</th><th>Entradas</th><th>Qte. Saídas</th>'
                      '<th>Saídas</th></tr>'
                      + "".join(f'<tr><td><a href="#">- {t}:</a></td><td>{a}</td><td>{b}</td><td>{c}</td><td>{d}</td></tr>'
                                for t, a, b, c, d in linhas)
                      + f'<tr><td colspan="2">TOTAIS</td><td>{"1.000,00" if com else "0,00"}</td><td></td>'
-                       f'<td>{"4.200,50" if com else "0,00"}</td></tr>'
+                       f'<td>{total_s}</td></tr>'
                      f'<tr><td><a href="#" onclick="window.open(\'{url}\', \'cartao\', \'width=900,height=600\'); '
-                     f'return false">- Cartão:</a></td><td>---</td><td>---</td><td>{"4" if com else "0"}</td>'
-                     f'<td>{"13.585,00" if com else "0,00"}</td></tr></table>')
+                     f'return false">- Cartão:</a></td><td>---</td><td>---</td><td>{cartao_q}</td>'
+                     f'<td>{cartao_v}</td></tr></table>')
     simei = "SIM" if ie == IE_EMPRESA else "NÃO"
     identificacao = ("" if datas else  # como no ATF: a Identificação é a aba aberta depois do Consultar
                      f'<table><tr><td>- Inscrição Estadual:</td><td>{ie}</td></tr>'
+                     f'<tr><td>- Início atividade:</td><td>{"10/03/2026" if ie == IE_EMPRESA else "14/05/2010"}</td></tr>'
                      f'<tr><td>- Optante SIMEI:</td><td>{simei}</td></tr></table>')
     return (sessao() + f'<b>Dossiê do Contribuinte</b><br>{abas}{identificacao}<div id="docsEletronicos"><form>'
             '<a href="#" onclick="document.getElementById(\'docs\').style.display=\'block\'; return false">Docs fiscais</a>'
@@ -510,7 +516,8 @@ class AtfFalso(BaseHTTPRequestHandler):
                 self._html(_dossie(ESTADO["dossie_ie"]))
             else:
                 datas = (campos.get("edtDtInicial"), campos.get("edtDtFinal"))
-                assert datas == ("01/09/2026", "30/09/2026"), datas
+                assert re.fullmatch(r"01/(\d\d)/2026", datas[0]) and datas[1][3:] == datas[0][3:], datas  # um mês
+                ESTADO["docs_periodos"].append((ESTADO["dossie_ie"], datas[0][3:5]))
                 self._html(_dossie(ESTADO["dossie_ie"], datas))
         elif p == "/atf/componentes/CodDescLst.jsp":
             cid = campos["id"]
@@ -789,6 +796,12 @@ def test_cte_e_conferencia_de_cartao(ambiente):
     # Dossiê MEI: entradas e saídas do mês (da mesma consulta do cartão); quem não é SIMEI fica de fora
     assert (r1.detalhes["mei"]["saidas"], r1.detalhes["mei"]["entradas"], r1.detalhes["mei"]["cartao"]) == (
         4200.5, 1000.0, 13585.0), r1
+    # MEI que chega sem acompanhamento: do início da atividade (03/2026) até setembro, na mesma tela
+    meses = [m for ie, m in ESTADO["docs_periodos"] if ie == IE_EMPRESA]
+    assert meses == ["09", "03", "04", "05", "06", "07", "08"], meses
+    mei = r1.detalhes["mei"]
+    assert mei["meses"] == [f"2026-{m:02d}" for m in range(3, 10)] and mei["limite_ano"] == 67500.0  # março a dezembro: 10 x 6.750
+    assert (mei["notas_acumulado"], mei["cartao_acumulado"]) == (4700.5, 13885.0), mei  # notas e cartão separados
     assert len([c for c in ESTADO["dossies"] if c == IE_EMPRESA]) == 1  # o dossiê foi consultado uma vez só
     dados = json.loads((base / "050-Transporte/Dossiê MEI/Faturamento MEI 2026.json").read_text(encoding="utf-8"))
     assert dados["meses"]["2026-09"]["saidas"] == 4200.5
@@ -796,3 +809,19 @@ def test_cte_e_conferencia_de_cartao(ambiente):
     assert r2.detalhes["mei"]["sem_notas"] and "não é MEI" in r2.mensagem, r2
     assert r2.detalhes["cte_dest"]["sem_notas"] and r2.detalhes["cte_rem"]["sem_notas"], r2
     assert r2.detalhes["cartao"]["sem_notas"] and "não existem operações com cartão" in r2.mensagem, r2
+
+
+def test_mei_segunda_vez_so_a_competencia(ambiente):
+    """Com o ano já acompanhado, a próxima rodada consulta só a competência; com refazer_ano, o ano todo."""
+    cfg, _ = ambiente
+    cfg = copy.deepcopy(cfg)
+    for refazer, esperado in ((False, ["09"]), (True, ["09", "03", "04", "05", "06", "07", "08"])):
+        cfg["mei"]["refazer_ano"] = refazer
+        ESTADO["docs_periodos"].clear()
+        executor = robo_xml.Executor(cfg)
+        try:
+            (r,) = executor.executar_rodada([_trabalho(IE_EMPRESA, "Transporte", ["mei"], codigo="050")])
+        finally:
+            executor.fechar()
+        assert [m for _, m in ESTADO["docs_periodos"]] == esperado, (refazer, ESTADO["docs_periodos"])
+        assert r.detalhes["mei"]["notas_acumulado"] == 4700.5, r
