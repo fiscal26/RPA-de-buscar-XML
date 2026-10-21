@@ -538,10 +538,11 @@ def salvar_documentos(brutos: list[tuple[str, bytes]], destino: str | Path, nome
 
 def salvar_faturamento_mei(destino: str | Path, nome: str, ie: str, competencia: str, dados: dict,
                            codigo: str = "") -> dict:
-    """Dossiê MEI: guarda as entradas e saídas do mês em
+    """Dossiê MEI: guarda a tabela "Totais docs fiscais eletrônicos" do mês em
     Arquivos baixados/<ID>-<Nome>/Dossiê MEI/Faturamento MEI <ano>.json (um mês por chave, base para o
-    painel futuro) e refaz a planilha "Faturamento MEI <ano>.xlsx" do ano: mês a mês, acumulado e % do
-    limite. Devolve {pasta, saidas, entradas, acumulado, percentual}."""
+    painel futuro) e refaz a planilha "Faturamento MEI <ano>.xlsx": mês a mês (com "sem movimento"),
+    acumulado e % do limite; todas as linhas por tipo de documento, inclusive as zeradas; e a tabela como
+    veio do ATF. Devolve {pasta, saidas, entradas, cartao, sem_movimento, acumulado, percentual}."""
     import json
     from datetime import datetime
 
@@ -555,42 +556,62 @@ def salvar_faturamento_mei(destino: str | Path, nome: str, ie: str, competencia:
         historico = {}
     historico.setdefault("empresa", {"ie": ie, "nome": nome, "codigo": codigo})
     meses = historico.setdefault("meses", {})
-    meses[competencia] = {"saidas": dados.get("saidas"), "entradas": dados.get("entradas"),
-                          "simei": dados.get("simei"), "itens": dados.get("itens", []),
-                          "linhas": dados.get("linhas", []), "consultado_em": datetime.now().isoformat(timespec="seconds")}
+    meses[competencia] = {**{k: dados.get(k) for k in ("saidas", "entradas", "qtd_saidas", "qtd_entradas", "cartao",
+                                                       "sem_movimento", "simei")},
+                          "itens": dados.get("itens", []), "linhas": dados.get("linhas", []),
+                          "consultado_em": datetime.now().isoformat(timespec="seconds")}
     arq_json.write_text(json.dumps(historico, ensure_ascii=False, indent=1, sort_keys=True), encoding="utf-8")
 
     from openpyxl import Workbook
     from openpyxl.styles import Font
 
+    def negrito(ws):
+        for c in ws[1]:
+            c.font = Font(bold=True)
+
     wb = Workbook()
     ws = wb.active
     ws.title = f"Faturamento {ano}"
-    ws.append(["Mês", "Saídas (faturamento)", "Entradas", "Saídas acumuladas no ano",
-               f"% do limite MEI ({reais(LIMITE_MEI)})", "Consultado em"])
+    ws.append(["Mês", "Movimento", "Saídas (faturamento)", "Qtd. saídas", "Entradas", "Qtd. entradas",
+               "Cartão (vendas)", "Saídas acumuladas no ano", f"% do limite MEI ({reais(LIMITE_MEI)})", "Consultado em"])
     acumulado = 0.0
     for mes in sorted(meses):
         m = meses[mes]
-        acumulado += m["saidas"] or 0.0
-        ws.append([mes, m["saidas"], m["entradas"], round(acumulado, 2), round(acumulado / LIMITE_MEI, 4), m["consultado_em"]])
-    for c in ws[1]:
-        c.font = Font(bold=True)
+        acumulado += m.get("saidas") or 0.0
+        cartao = (m.get("cartao") or {}).get("valor")
+        ws.append([mes, "sem movimento" if m.get("sem_movimento") else "com movimento", m.get("saidas"),
+                   m.get("qtd_saidas"), m.get("entradas"), m.get("qtd_entradas"), cartao, round(acumulado, 2),
+                   round(acumulado / LIMITE_MEI, 4), m.get("consultado_em")])
+    negrito(ws)
     for linha in ws.iter_rows(min_row=2):
-        for c in linha[1:4]:
-            c.number_format = '#,##0.00'
-        linha[4].number_format = "0.00%"
-    for col, w in zip("ABCDEF", (10, 22, 16, 26, 24, 22)):
+        for i in (2, 4, 6, 7):
+            linha[i].number_format = '#,##0.00'
+        linha[8].number_format = "0.00%"
+    for col, w in zip("ABCDEFGHIJ", (10, 16, 20, 12, 16, 13, 16, 24, 24, 20)):
         ws.column_dimensions[col].width = w
-    detalhe = wb.create_sheet("Docs fiscais (como no ATF)")
+
+    docs = wb.create_sheet("Por documento")
+    docs.append(["Mês", "Tipo de documento", "Qtd. entradas", "Entradas", "Qtd. saídas", "Saídas"])
     for mes in sorted(meses):
-        for celulas in meses[mes]["linhas"]:
-            detalhe.append([mes] + list(celulas))
+        for i in meses[mes].get("itens", []):
+            docs.append([mes, i.get("tipo"), i.get("qtd_entradas"), i.get("entradas"), i.get("qtd_saidas"), i.get("saidas")])
+        c = meses[mes].get("cartao")
+        if c:
+            docs.append([mes, "Cartão", None, None, c.get("qtd"), c.get("valor")])
+    negrito(docs)
+    docs.column_dimensions["B"].width = 22
+
+    bruto = wb.create_sheet("Tabela do ATF")
+    for mes in sorted(meses):
+        for celulas in meses[mes].get("linhas", []):
+            bruto.append([mes] + list(celulas))
     arq_xlsx = pasta / f"Faturamento MEI {ano}.xlsx"
     try:
         wb.save(arq_xlsx)
     except PermissionError:  # planilha aberta no Excel: o JSON já foi salvo; a planilha sai na próxima vez
         pass
     return {"pasta": str(pasta), "saidas": dados.get("saidas"), "entradas": dados.get("entradas"),
+            "cartao": (dados.get("cartao") or {}).get("valor"), "sem_movimento": dados.get("sem_movimento"),
             "acumulado": round(acumulado, 2), "percentual": round(acumulado / LIMITE_MEI * 100, 1)}
 
 

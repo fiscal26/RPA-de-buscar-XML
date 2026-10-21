@@ -158,8 +158,14 @@ _JS_LINHAS_DOCS = """() => {
     const ini = Array.from(document.querySelectorAll('input[name="edtDtInicial"]')).find(e => e.offsetParent !== null);
     return Array.from(document.querySelectorAll('tr'))
         .filter(tr => tr.offsetParent !== null && (!ini || (ini.compareDocumentPosition(tr) & Node.DOCUMENT_POSITION_FOLLOWING)))
-        .map(tr => Array.from(tr.children).filter(c => !c.querySelector('tr'))
-            .map(c => (c.innerText || '').replace(/\\s+/g, ' ').trim()))
+        .map(tr => {
+            const cs = [];  // célula que ocupa várias colunas (colspan) vira texto + vazias: as colunas ficam alinhadas
+            for (const c of Array.from(tr.children).filter(c => !c.querySelector('tr'))) {
+                cs.push((c.innerText || '').replace(/\\s+/g, ' ').trim());
+                for (let i = 1; i < (c.colSpan || 1); i++) cs.push('');
+            }
+            return cs;
+        })
         .filter(cs => cs.some(Boolean));
 }"""
 _DINHEIRO = re.compile(r"-?\d{1,3}(?:\.\d{3})*,\d{2}")
@@ -170,50 +176,61 @@ def _reais(texto: str) -> float:
     return float(m.group(0).replace(".", "").replace(",", ".")) if m else 0.0
 
 
+def _numero(texto: str):
+    """Quantidade ou valor de uma célula: "---" (não se aplica) = None; vazio = None."""
+    texto = (texto or "").replace("R$", "").strip()
+    if not texto or set(texto) <= set("-–—"):
+        return None
+    if _DINHEIRO.search(texto):
+        return _reais(texto)
+    d = re.sub(r"[^\d]", "", texto)
+    return int(d) if d else None
+
+
 def ler_docs_fiscais(linhas: list[list[str]]) -> dict:
-    """Entradas e saídas da aba Docs fiscais do dossiê. Aceita os dois jeitos de tabela:
-    colunas "Entradas" / "Saídas" (uma linha por documento, com ou sem linha de total) ou linhas cujo rótulo
-    diz entrada/saída. Devolve {"entradas", "saidas" (None se não achou), "itens": [{rotulo, entradas, saidas}],
-    "linhas": as linhas como vieram}."""
-    col_e = col_s = None
-    itens, totais = [], {}
-    rotulados = {"entradas": [], "saidas": []}
+    """Tabela "Totais docs fiscais eletrônicos" do dossiê (DEC_382 > Docs fiscais):
+    Tipos de docs eletrônicos | Qte. Entradas | Entradas | Qte. Saídas | Saídas, com as linhas NFEs, NFAEs,
+    NFCEs, NF Avulsa ATF, BPe, TOTAIS e Cartão. Guarda TODAS as linhas, inclusive as zeradas ("---" = não se
+    aplica). Devolve {"entradas", "saidas" (os TOTAIS; sem a linha de totais, a soma dos tipos), "qtd_entradas",
+    "qtd_saidas", "cartao" {qtd, valor} (fora da soma), "itens" (um por tipo de documento),
+    "sem_movimento" (tudo zero), "linhas" (como vieram)}."""
+    col = {}
+    itens, totais, cartao = [], None, None
     for celulas in linhas:
         baixo = [c.lower() for c in celulas]
-        tem_valor = any(_DINHEIRO.search(c) for c in celulas)
-        if not tem_valor and any("entrada" in c for c in baixo) and any(re.search(r"sa[ií]da", c) for c in baixo):
-            # cabeçalho: prefere a coluna de valor (R$/Valor) se houver mais de uma de entrada/saída
-            def coluna(padrao):
-                cand = [i for i, c in enumerate(baixo) if re.search(padrao, c)]
-                return next((i for i in cand if re.search(r"r\$|valor", baixo[i])), cand[0])
-            col_e, col_s = coluna("entrada"), coluna(r"sa[ií]da")
+        if not col and any("entrada" in c for c in baixo) and any(re.search(r"sa[ií]da", c) for c in baixo):
+            for i, c in enumerate(baixo):  # "Qte. Entradas" é a quantidade; "Entradas" é o valor
+                qtd = bool(re.search(r"\bq(td|te|uant)", c))
+                if "entrada" in c:
+                    col["qtd_entradas" if qtd else "entradas"] = i
+                elif re.search(r"sa[ií]da", c):
+                    col["qtd_saidas" if qtd else "saidas"] = i
             continue
-        if not tem_valor:
+        if not col:
             continue
-        rotulo = next((c for c in celulas if c and not _DINHEIRO.fullmatch(c.replace("R$", "").strip())), "").strip(" -:")
-        if col_e is not None and len(celulas) > max(col_e, col_s):
-            e, s = _reais(celulas[col_e]), _reais(celulas[col_s])
-            if re.search(r"\btotal", rotulo, re.I):
-                totais = {"entradas": e, "saidas": s}
-            else:
-                itens.append({"rotulo": rotulo, "entradas": e, "saidas": s})
+        rotulo = (celulas[0] if celulas else "").strip(" -:")
+        if not rotulo or not any(_numero(c) is not None for c in celulas[1:]):
             continue
-        valor = _reais(next(c for c in reversed(celulas) if _DINHEIRO.search(c)))
-        chave = "entradas" if re.search(r"entrada", rotulo, re.I) else "saidas" if re.search(r"sa[ií]da", rotulo, re.I) else ""
-        if chave:
-            rotulados[chave].append((rotulo, valor))
-        itens.append({"rotulo": rotulo, "valor": valor})
-    if col_e is not None:
-        entradas = totais.get("entradas", round(sum(i["entradas"] for i in itens if "entradas" in i), 2))
-        saidas = totais.get("saidas", round(sum(i["saidas"] for i in itens if "saidas" in i), 2))
-    else:
-        def soma(lista):
-            if not lista:
-                return None
-            total = [v for r, v in lista if re.search(r"\btotal", r, re.I)]
-            return total[-1] if total else round(sum(v for _, v in lista), 2)
-        entradas, saidas = soma(rotulados["entradas"]), soma(rotulados["saidas"])
-    return {"entradas": entradas, "saidas": saidas, "itens": itens, "linhas": linhas}
+        valores = {k: (_numero(celulas[i]) if i < len(celulas) else None) for k, i in col.items()}
+        if re.search(r"\btota(l|is)\b", rotulo, re.I):
+            totais = valores
+        elif re.search(r"cart[aã]o", rotulo, re.I):
+            cartao = {"qtd": valores.get("qtd_saidas"), "valor": valores.get("saidas")}
+        else:
+            itens.append({"tipo": rotulo, **valores})
+
+    def soma(chave):
+        return round(sum(i.get(chave) or 0 for i in itens), 2)
+
+    if not col:
+        return {"entradas": None, "saidas": None, "qtd_entradas": None, "qtd_saidas": None, "cartao": None,
+                "itens": [], "sem_movimento": None, "linhas": linhas}
+    entradas = totais["entradas"] if totais and totais.get("entradas") is not None else soma("entradas")
+    saidas = totais["saidas"] if totais and totais.get("saidas") is not None else soma("saidas")
+    qtd_e, qtd_s = int(soma("qtd_entradas")), int(soma("qtd_saidas"))
+    sem_movimento = not (entradas or saidas or qtd_e or qtd_s or (cartao and (cartao["qtd"] or cartao["valor"])))
+    return {"entradas": entradas, "saidas": saidas, "qtd_entradas": qtd_e, "qtd_saidas": qtd_s, "cartao": cartao,
+            "itens": itens, "sem_movimento": sem_movimento, "linhas": linhas}
 
 
 def pagina_em_pdf(pagina) -> bytes:
@@ -1102,7 +1119,12 @@ class AtfPB:
     def _conferir_cartao(self, frame, emissao: Emissao, ie: str, inicio: date, fim: date):
         """Docs fiscais do dossiê: o link "Cartão" abre uma janela nova (Detalhamento por Administradora),
         que é salva em PDF."""
-        quadro = self._consultar_dossie(frame, ie, inicio, fim)["quadro"]
+        info = self._consultar_dossie(frame, ie, inicio, fim)
+        quadro = info["quadro"]
+        linha = ler_docs_fiscais(info["linhas"])["cartao"]
+        if linha is not None and not linha["qtd"] and not linha["valor"]:
+            emissao.sem_dados, emissao.resposta = True, SEM_DADOS["cartao"]  # "- Cartão: 0 / 0,00"
+            return
         link_css = 'a:has-text("Cartão")'
         if self._no_quadro(quadro, link_css) is None:
             quadro = self._esperar_quadro(link_css, 5)
@@ -1145,12 +1167,14 @@ class AtfPB:
             return
         emissao.dados = ler_docs_fiscais(info["linhas"])
         emissao.dados["simei"] = info["simei"]
-        if not info["linhas"]:
-            emissao.ok, emissao.resposta = False, "a aba Docs fiscais não trouxe nenhuma tabela"
+        if emissao.dados["entradas"] is None:
+            # a tabela "Totais docs fiscais eletrônicos" não veio: nada é inventado, o mês fica com erro
+            emissao.dados = {}
+            emissao.ok, emissao.resposta = False, "a tabela de Docs fiscais (entradas e saídas) não foi encontrada"
             self.diag.salvar(self.page, "mei-sem-tabela")
-        elif emissao.dados["entradas"] is None and emissao.dados["saidas"] is None:
-            self.diag.salvar(self.page, "mei-sem-entradas-saidas")  # para ajustar a leitura
-        self._log(f"Dossiê MEI IE {ie}: entradas {emissao.dados['entradas']}, saídas {emissao.dados['saidas']}")
+            return
+        self._log(f"Dossiê MEI IE {ie}: entradas {emissao.dados['entradas']}, saídas {emissao.dados['saidas']}"
+                  + (" (sem movimento)" if emissao.dados["sem_movimento"] else ""))
 
     def _selecionar_faturas(self, emissao: Emissao) -> bool:
         """Tela dos lançamentos: marca todos, menos os "DIFERIDO - VALOR MINIMO" (o ATF não emite).

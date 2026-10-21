@@ -165,25 +165,42 @@ def test_cte_vai_para_a_destinataria_com_o_valor_da_prestacao():
     assert arquivos.valor_total(arquivos.extrair(zip_.getvalue())) == (1, 120.5)  # o 2 foi cancelado
 
 
+REAL = [["Totais docs fiscais eletrônicos", "", "", "", ""],  # como no print do ATF (20/10/2026)
+        ["Tipos de docs eletrônicos", "Qte. Entradas", "Entradas", "Qte. Saídas", "Saídas"],
+        ["- NFEs:", "0", "0,00", "1", "0,00"], ["- NFAEs:", "0", "0,00", "0", "0,00"],
+        ["- NFCEs:", "---", "---", "0", "0,00"], ["- NF Avulsa ATF:", "0", "0,00", "0", "0,00"],
+        ["- BPe:", "---", "---", "0", "0,00"], ["TOTAIS", "", "0,00", "", "0,00"], ["- Cartão:", "---", "---", "0", "0,00"]]
+
+
+def test_ler_docs_fiscais_como_no_atf():
+    from atf_pb import ler_docs_fiscais
+    d = ler_docs_fiscais(REAL)
+    assert (d["entradas"], d["saidas"], d["qtd_saidas"], d["cartao"]) == (0.0, 0.0, 1, {"qtd": 0, "valor": 0.0})
+    assert [i["tipo"] for i in d["itens"]] == ["NFEs", "NFAEs", "NFCEs", "NF Avulsa ATF", "BPe"]  # todas, mesmo zeradas
+    assert d["itens"][2] == {"tipo": "NFCEs", "qtd_entradas": None, "entradas": None, "qtd_saidas": 0, "saidas": 0.0}
+    assert not d["sem_movimento"]  # 1 NF-e de saída (mesmo com valor 0,00) é movimento
+    zerado = [linha if linha[0] != "- NFEs:" else ["- NFEs:", "0", "0,00", "0", "0,00"] for linha in REAL]
+    assert ler_docs_fiscais(zerado)["sem_movimento"]
+    com_valor = [["Tipos de docs eletrônicos", "Qte. Entradas", "Entradas", "Qte. Saídas", "Saídas"],
+                 ["- NFEs:", "2", "1.000,00", "3", "3.000,50"], ["- NFCEs:", "---", "---", "9", "1.200,00"],
+                 ["TOTAIS", "", "1.000,00", "", "4.200,50"], ["- Cartão:", "---", "---", "4", "13.585,00"]]
+    d = ler_docs_fiscais(com_valor)
+    assert (d["entradas"], d["saidas"], d["cartao"]["valor"]) == (1000.0, 4200.5, 13585.0)  # cartão fora da soma
+    assert ler_docs_fiscais([["outra tabela", "1,00"]])["entradas"] is None
+
+
 def test_faturamento_mei_acumula_os_meses(tmp_path):
     import json
-    for mes, saidas in (("2026-08", 30000.0), ("2026-09", 4200.5)):
-        r = arquivos.salvar_faturamento_mei(tmp_path, "Mei", IE_EMPRESA, mes, {"saidas": saidas, "entradas": 10.0,
-                                            "itens": [], "linhas": [["NF-e", "1,00", "2,00"]]}, "7")
-    assert r["acumulado"] == 34200.5 and r["percentual"] == 42.2
+    from atf_pb import ler_docs_fiscais
+    com_valor = [["Tipos de docs eletrônicos", "Qte. Entradas", "Entradas", "Qte. Saídas", "Saídas"],
+                 ["- NFEs:", "1", "10,00", "5", "30.000,00"], ["TOTAIS", "", "10,00", "", "30.000,00"]]
+    for mes, linhas in (("2026-08", com_valor), ("2026-09", REAL)):
+        r = arquivos.salvar_faturamento_mei(tmp_path, "Mei", IE_EMPRESA, mes, ler_docs_fiscais(linhas), "7")
+    assert r["acumulado"] == 30000.0 and r["percentual"] == 37.0
     pasta = tmp_path / "Arquivos baixados" / "7-Mei" / "Dossiê MEI"
     dados = json.loads((pasta / "Faturamento MEI 2026.json").read_text(encoding="utf-8"))
-    assert sorted(dados["meses"]) == ["2026-08", "2026-09"]
+    assert sorted(dados["meses"]) == ["2026-08", "2026-09"] and len(dados["meses"]["2026-09"]["itens"]) == 5
     from openpyxl import load_workbook
-    ws = load_workbook(pasta / "Faturamento MEI 2026.xlsx").active
-    assert [c.value for c in ws[3]][:4] == ["2026-09", 4200.5, 10.0, 34200.5]
-
-
-def test_ler_docs_fiscais_por_colunas_e_por_rotulos():
-    from atf_pb import ler_docs_fiscais
-    por_coluna = ler_docs_fiscais([["Documento", "Qtd entradas", "Entradas (R$)", "Qtd saídas", "Saídas (R$)"],
-                                   ["NF-e", "2", "1.000,00", "3", "3.000,50"], ["NFC-e", "0", "0,00", "9", "1.200,00"]])
-    assert (por_coluna["entradas"], por_coluna["saidas"]) == (1000.0, 4200.5)
-    por_rotulo = ler_docs_fiscais([["- NF-e de entrada:", "2", "R$ 500,00"], ["- NF-e de saída:", "3", "R$ 1.500,00"],
-                                   ["- Total de saídas:", "R$ 2.300,00"], ["- Cartão:", "13.585,00"]])
-    assert (por_rotulo["entradas"], por_rotulo["saidas"]) == (500.0, 2300.0)
+    wb = load_workbook(pasta / "Faturamento MEI 2026.xlsx")
+    assert [c.value for c in wb.worksheets[0][2]][:3] == ["2026-08", "com movimento", 30000.0]
+    assert [c.value for c in wb["Por documento"][3]][:2] == ["2026-09", "NFEs"]

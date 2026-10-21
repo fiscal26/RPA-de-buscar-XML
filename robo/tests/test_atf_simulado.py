@@ -172,15 +172,22 @@ def _dossie(ie: str, datas: tuple[str, str] | None = None) -> str:
     "- Cartão:" que abre a janela das administradoras (só a IE_EMPRESA tem operações com cartão)."""
     abas = "".join(f'<a href="#">{a}</a> ' for a in ("Identificação", "Contatos", "Omissão", "Faturamento", "CFOP"))
     resultado = ""
-    if datas:
+    if datas:  # "Totais docs fiscais eletrônicos", como no ATF (print de 20/10/2026)
         url = f"/atf/fis/FISf_DetalharAdministradorasECFTEF.do?sqHumanoInst=7549548&refIni=09/2026&refFim=09/2026&ie={ie}"
-        cartao = (f'<a href="#" onclick="window.open(\'{url}\', \'cartao\', \'width=900,height=600\'); return false">'
-                  '- Cartão:</a> 13.585,00') if ie == IE_EMPRESA else "- Cartão: 0,00"
-        resultado = ('<table><tr><th>Documento</th><th>Entradas</th><th>Saídas</th></tr>'
-                     '<tr><td>NF-e</td><td>1.000,00</td><td>3.000,50</td></tr>'
-                     '<tr><td>NFC-e</td><td>0,00</td><td>1.200,00</td></tr>'
-                     '<tr><td>Total</td><td>1.000,00</td><td>4.200,50</td></tr></table>'
-                     f'<table><tr><td>{cartao}</td></tr></table>')
+        com = ie == IE_EMPRESA
+        linhas = [("NFEs", "2", "1.000,00", "3", "3.000,50") if com else ("NFEs", "0", "0,00", "0", "0,00"),
+                  ("NFAEs", "0", "0,00", "0", "0,00"), ("NFCEs", "---", "---", "9" if com else "0", "1.200,00" if com else "0,00"),
+                  ("NF Avulsa ATF", "0", "0,00", "0", "0,00"), ("BPe", "---", "---", "0", "0,00")]
+        resultado = ('<table><tr><td colspan="5">Totais docs fiscais eletrônicos</td></tr>'
+                     '<tr><th>Tipos de docs eletrônicos</th><th>Qte. Entradas</th><th>Entradas</th><th>Qte. Saídas</th>'
+                     '<th>Saídas</th></tr>'
+                     + "".join(f'<tr><td><a href="#">- {t}:</a></td><td>{a}</td><td>{b}</td><td>{c}</td><td>{d}</td></tr>'
+                               for t, a, b, c, d in linhas)
+                     + f'<tr><td colspan="2">TOTAIS</td><td>{"1.000,00" if com else "0,00"}</td><td></td>'
+                       f'<td>{"4.200,50" if com else "0,00"}</td></tr>'
+                     f'<tr><td><a href="#" onclick="window.open(\'{url}\', \'cartao\', \'width=900,height=600\'); '
+                     f'return false">- Cartão:</a></td><td>---</td><td>---</td><td>{"4" if com else "0"}</td>'
+                     f'<td>{"13.585,00" if com else "0,00"}</td></tr></table>')
     simei = "SIM" if ie == IE_EMPRESA else "NÃO"
     identificacao = ("" if datas else  # como no ATF: a Identificação é a aba aberta depois do Consultar
                      f'<table><tr><td>- Inscrição Estadual:</td><td>{ie}</td></tr>'
@@ -778,8 +785,10 @@ def test_cte_e_conferencia_de_cartao(ambiente):
     (pdf,) = list(base.glob("050-Transporte/2026-09/Conferência Cartão de Crédito/*.pdf"))
     assert pdf.read_bytes()[:5] == b"%PDF-" and pdf.name == "Conferência Cartão de Crédito 2026-09.pdf"
     assert ESTADO["cartao"][-1]["refIni"] == "09/2026" and ESTADO["cartao"][-1]["ie"] == IE_EMPRESA
+    assert all(c["ie"] == IE_EMPRESA for c in ESTADO["cartao"])  # "- Cartão: 0 / 0,00" não abre a janela
     # Dossiê MEI: entradas e saídas do mês (da mesma consulta do cartão); quem não é SIMEI fica de fora
-    assert (r1.detalhes["mei"]["saidas"], r1.detalhes["mei"]["entradas"]) == (4200.5, 1000.0), r1
+    assert (r1.detalhes["mei"]["saidas"], r1.detalhes["mei"]["entradas"], r1.detalhes["mei"]["cartao"]) == (
+        4200.5, 1000.0, 13585.0), r1
     assert len([c for c in ESTADO["dossies"] if c == IE_EMPRESA]) == 1  # o dossiê foi consultado uma vez só
     dados = json.loads((base / "050-Transporte/Dossiê MEI/Faturamento MEI 2026.json").read_text(encoding="utf-8"))
     assert dados["meses"]["2026-09"]["saidas"] == 4200.5
