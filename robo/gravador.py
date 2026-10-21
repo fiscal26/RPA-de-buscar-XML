@@ -86,6 +86,11 @@ JS_GRAVADOR = r"""(() => {
     const e = ev.target;
     enviar('alterou', e, e.tagName === 'SELECT' ? {opcao: (e.options[e.selectedIndex] || {}).text || ''} : {});
   }, true);
+  // Ctrl+V: o valor colado é gravado mesmo que o campo não dispare "change" (ex.: Pesquisar logo em seguida)
+  document.addEventListener('paste', ev => {
+    const e = ev.target;
+    setTimeout(() => enviar('alterou', e, {colou: true}), 200);
+  }, true);
   document.addEventListener('keydown', ev => {
     if (ev.key === 'Enter' || ev.key === 'Tab') enviar('tecla', ev.target, {tecla: ev.key});
   }, true);

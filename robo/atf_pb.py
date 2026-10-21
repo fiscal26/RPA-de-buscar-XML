@@ -808,14 +808,18 @@ class AtfPB:
 
     # ------------------------------------------------------------------ serviços com PDF na hora
     def _quadro_componente(self, comp: str):
-        """Quadro do Número / Pesquisar / Nome (componentes/CodDescLst.jsp?id=<função>_<componente>)."""
+        """Quadro do Número / Pesquisar / Nome (componentes/CodDescLst.jsp?id=<função>_<componente>).
+        A tela principal tem um campo OCULTO com o mesmo nome (onde o ATF guarda a IE depois do
+        Pesquisar): vale só o quadro em que o campo é visível."""
         for frame in self.page.frames:
-            try:
-                if frame.locator(f'input[name="hidNrDocumento{comp}"], input[id="hidNrDocumento{comp}"]').count():
-                    return frame
-            except Exception:
-                continue
+            if self._no_quadro(frame, self._css_numero(comp)) is not None:
+                return frame
         return None
+
+    @staticmethod
+    def _css_numero(comp: str) -> str:
+        return f'input[name="hidNrDocumento{comp}"]:not([type=hidden]), input[id="hidNrDocumento{comp}"]:not([type=hidden])'
+
 
     def _pesquisar_contribuinte(self, comp: str, ie: str):
         """IE no Número do componente e Pesquisar: o nome tem de aparecer (senão a IE não existe no ATF)."""
@@ -831,7 +835,7 @@ class AtfPB:
         tipo_id = self._no_quadro(quadro, 'select[name^="cmbTpDoc"]')
         if tipo_id is not None:
             self._escolher(tipo_id, r"inscri[cç][aã]o\s+estadual")
-        numero = self._no_quadro(quadro, f'input[name="hidNrDocumento{comp}"]')
+        numero = self._no_quadro(quadro, self._css_numero(comp))
         if numero is None:
             raise EtapaNaoConcluida("campo Número do contribuinte não encontrado")
         self._digitar(numero, ie)
@@ -843,7 +847,7 @@ class AtfPB:
         for _ in range(20):
             pausa(self.page, 0.5, 0.8)
             q = self._quadro_componente(comp)
-            nome = self._no_quadro(q, f'input[name="hidNoHumanoInst{comp}"]')
+            nome = self._no_quadro(q, f'input[name="hidNoHumanoInst{comp}"]:not([type=hidden])')
             try:
                 if nome is not None and nome.input_value().strip():
                     self._log(f"Pesquisar: {nome.input_value().strip()[:60]}")

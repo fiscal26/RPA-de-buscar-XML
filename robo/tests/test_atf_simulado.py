@@ -143,7 +143,10 @@ LANCAMENTOS = {IE_EMPRESA: [("34988404", "DIFERIDO - VALOR MINIMO"), ("60700321"
 
 
 def _identificacao(funcao: str, comp: str) -> str:
-    return ('<tr><td>- Tipo de Identificação:</td><td><select name="cmbTpDoc{0}" class="caixas"><option value="IE">'
+    # como no ATF real: a tela principal tem campos OCULTOS com os mesmos nomes do quadro do componente
+    ocultos = "".join(f'<input type="hidden" name="{n}{comp}">' for n in (
+        "hidTsAtualizacao", "hidNrDocumento", "hidNoHumanoInst", "hidNrATF", "hidCNPJ", "hidNrInscrEstadual"))
+    return (ocultos + '<tr><td>- Tipo de Identificação:</td><td><select name="cmbTpDoc{0}" class="caixas"><option value="IE">'
             'Inscrição Estadual</option><option value="CNPJ">CNPJ</option></select></td></tr>'
             '<tr><td colspan=2><iframe src="/atf/componentes/CodDescLst.jsp?id={1}_{0}" height="70"></iframe></td></tr>'
             ).format(comp, funcao)
