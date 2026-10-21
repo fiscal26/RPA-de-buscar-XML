@@ -73,7 +73,7 @@ _PERIODO = re.compile(r"per[ií]odo\s+solicitado:?\s*(\d{2}/\d{2}/\d{4})\s*a\s*(
 _INPUT_TEXTO = "input:not([type=hidden]):not([type=checkbox]):not([type=radio]):not([type=button]):not([type=submit])"
 _BOTAO = "button, input[type=button], input[type=submit], a.btn"
 # sufixo dos campos de cada bloco no ATF (hidNrDocumentocmpEmit, cmbTpDoccmpDest...)
-_SUFIXO_BLOCO = {"Emitente": "Emit", "Destinatário": "Dest"}
+_SUFIXO_BLOCO = {"Emitente": "Emit", "Destinatário": "Dest", "Remetente": "Reme", "Tomador": "Toma"}
 
 # Acha o campo que vem depois de um texto da tela e marca com data-robo-alvo
 _JS_APOS_ROTULO = """([rotulo, css, ordem, texto, marca]) => {
@@ -131,12 +131,14 @@ TIPO_TELA = {
     "nfe_saida": ("nfe", "Emitente"),
     "nfe_entrada": ("nfe", "Destinatário"),
     "nfce": ("nfce", "Emitente"),
-    "cte": ("cte", "Destinatário"),  # FIS_1192, como na gravação: IE no bloco Destinatário
+    # CT-e (FIS_1192): uma consulta com a IE no Remetente e outra no Destinatário
+    "cte_rem": ("cte", "Remetente"),
+    "cte_dest": ("cte", "Destinatário"),
 }
 
 
 # Serviços com resposta na hora (PDF): tipo -> tela em config.atf.telas
-SERVICOS = ("faturas", "extrato", "omissao", "certidao", "cartao")
+SERVICOS = ("faturas", "extrato", "omissao", "certidao", "cartao", "mei")
 _NAO_EMITE = re.compile(r"diferido\s*-\s*valor\s+m[ií]nimo", re.I)
 _SEM_DOCUMENTO = re.compile(r"nenhum(a)?\s+(registro|lan[cç]amento|pagamento|d[eé]bito|resultado|ocorr[eê]ncia)|"
                             r"n[aã]o\s+(foram\s+)?encontrad|"
@@ -149,6 +151,69 @@ SEM_DADOS = {"faturas": "não existem débitos em aberto",
              "extrato": "não existem pagamentos no período",
              "cartao": "não existem operações com cartão no período"}
 _ERRO_DOCUMENTO = re.compile(r"n[aã]o\s+[eé]\s+permitid|\berro\b|inv[aá]lid|obrigat[oó]ri|informe\s+|n[aã]o\s+foi\s+poss[ií]vel", re.I)
+
+
+# Linhas (células) das tabelas visíveis que vêm depois do período de Docs fiscais
+_JS_LINHAS_DOCS = """() => {
+    const ini = Array.from(document.querySelectorAll('input[name="edtDtInicial"]')).find(e => e.offsetParent !== null);
+    return Array.from(document.querySelectorAll('tr'))
+        .filter(tr => tr.offsetParent !== null && (!ini || (ini.compareDocumentPosition(tr) & Node.DOCUMENT_POSITION_FOLLOWING)))
+        .map(tr => Array.from(tr.children).filter(c => !c.querySelector('tr'))
+            .map(c => (c.innerText || '').replace(/\\s+/g, ' ').trim()))
+        .filter(cs => cs.some(Boolean));
+}"""
+_DINHEIRO = re.compile(r"-?\d{1,3}(?:\.\d{3})*,\d{2}")
+
+
+def _reais(texto: str) -> float:
+    m = _DINHEIRO.search(texto or "")
+    return float(m.group(0).replace(".", "").replace(",", ".")) if m else 0.0
+
+
+def ler_docs_fiscais(linhas: list[list[str]]) -> dict:
+    """Entradas e saídas da aba Docs fiscais do dossiê. Aceita os dois jeitos de tabela:
+    colunas "Entradas" / "Saídas" (uma linha por documento, com ou sem linha de total) ou linhas cujo rótulo
+    diz entrada/saída. Devolve {"entradas", "saidas" (None se não achou), "itens": [{rotulo, entradas, saidas}],
+    "linhas": as linhas como vieram}."""
+    col_e = col_s = None
+    itens, totais = [], {}
+    rotulados = {"entradas": [], "saidas": []}
+    for celulas in linhas:
+        baixo = [c.lower() for c in celulas]
+        tem_valor = any(_DINHEIRO.search(c) for c in celulas)
+        if not tem_valor and any("entrada" in c for c in baixo) and any(re.search(r"sa[ií]da", c) for c in baixo):
+            # cabeçalho: prefere a coluna de valor (R$/Valor) se houver mais de uma de entrada/saída
+            def coluna(padrao):
+                cand = [i for i, c in enumerate(baixo) if re.search(padrao, c)]
+                return next((i for i in cand if re.search(r"r\$|valor", baixo[i])), cand[0])
+            col_e, col_s = coluna("entrada"), coluna(r"sa[ií]da")
+            continue
+        if not tem_valor:
+            continue
+        rotulo = next((c for c in celulas if c and not _DINHEIRO.fullmatch(c.replace("R$", "").strip())), "").strip(" -:")
+        if col_e is not None and len(celulas) > max(col_e, col_s):
+            e, s = _reais(celulas[col_e]), _reais(celulas[col_s])
+            if re.search(r"\btotal", rotulo, re.I):
+                totais = {"entradas": e, "saidas": s}
+            else:
+                itens.append({"rotulo": rotulo, "entradas": e, "saidas": s})
+            continue
+        valor = _reais(next(c for c in reversed(celulas) if _DINHEIRO.search(c)))
+        chave = "entradas" if re.search(r"entrada", rotulo, re.I) else "saidas" if re.search(r"sa[ií]da", rotulo, re.I) else ""
+        if chave:
+            rotulados[chave].append((rotulo, valor))
+        itens.append({"rotulo": rotulo, "valor": valor})
+    if col_e is not None:
+        entradas = totais.get("entradas", round(sum(i["entradas"] for i in itens if "entradas" in i), 2))
+        saidas = totais.get("saidas", round(sum(i["saidas"] for i in itens if "saidas" in i), 2))
+    else:
+        def soma(lista):
+            if not lista:
+                return None
+            total = [v for r, v in lista if re.search(r"\btotal", r, re.I)]
+            return total[-1] if total else round(sum(v for _, v in lista), 2)
+        entradas, saidas = soma(rotulados["entradas"]), soma(rotulados["saidas"])
+    return {"entradas": entradas, "saidas": saidas, "itens": itens, "linhas": linhas}
 
 
 def pagina_em_pdf(pagina) -> bytes:
@@ -223,6 +288,7 @@ class Emissao:
     ie: str
     tipo: str
     arquivos: list[tuple[str, bytes]] = field(default_factory=list)
+    dados: dict = field(default_factory=dict)  # Dossiê MEI: entradas, saídas e as linhas lidas
     ok: bool = True
     sem_dados: bool = False
     resposta: str = ""
@@ -325,6 +391,7 @@ class AtfPB:
         self.login_atual = ""
         self.ultimo_uso = 0.0
         self._url_tela: dict[str, tuple] = {}  # tela -> (quadro, endereço)
+        self._dossie_cache: dict[tuple, dict] = {}  # (IE, início) -> Optante SIMEI e linhas de Docs fiscais
         self._respostas: list[str] = []
         self._mensagens_lidas: set[str] = set()   # consultas (mensagens mãe) já concluídas
         self._filhas_lidas: set[str] = set()
@@ -759,12 +826,14 @@ class AtfPB:
         if tipo_id is not None:
             self._escolher(tipo_id, r"inscri[cç][aã]o\s+estadual")
 
-        # só um bloco preenchido: o Número do outro fica vazio
-        outro = {"Emitente": "Destinatário", "Destinatário": "Emitente"}[bloco]
-        q_outro = self._quadro_do_bloco(outro)
-        numero_outro = self._no_quadro(q_outro, f'input[id^="hidNrDocumento"][id$="{_SUFIXO_BLOCO[outro]}"]')
-        if numero_outro is not None and numero_outro.input_value():
-            numero_outro.fill("")
+        # só um bloco preenchido: o Número dos outros fica vazio
+        for outro, suf_outro in _SUFIXO_BLOCO.items():
+            if outro == bloco:
+                continue
+            q_outro = self._quadro_do_bloco(outro)
+            numero_outro = self._no_quadro(q_outro, f'input[id^="hidNrDocumento"][id$="{suf_outro}"]')
+            if numero_outro is not None and numero_outro.input_value():
+                numero_outro.fill("")
 
         # IE no Número do bloco e "Pesquisar" (confere a IE e traz o Nome/Razão Social)
         quadro = self._quadro_do_bloco(bloco)
@@ -906,6 +975,9 @@ class AtfPB:
         que o ATF devolve na hora."""
         tela = self.atf["telas"][tipo]
         emissao = Emissao(ie=ie, tipo=tipo)
+        if tipo == "mei" and (ie, inicio) in self._dossie_cache:  # o cartão já consultou o dossiê
+            self._faturamento_mei(None, emissao, ie, inicio, fim)
+            return emissao
         self._respostas = []
         antes = set(self.contexto.pages)
         capt = None
@@ -914,6 +986,9 @@ class AtfPB:
             frame = self._quadro_da_tela(tela)
             if tipo == "cartao":
                 self._conferir_cartao(frame, emissao, ie, inicio, fim)
+                return emissao
+            if tipo == "mei":
+                self._faturamento_mei(frame, emissao, ie, inicio, fim)
                 return emissao
             if tipo == "extrato":  # Período de Pagamento: do 1º ao último dia da competência
                 for css, data in (('input[name="edtDataInicial"]', inicio), ('input[name="edtDataFinal"]', fim)):
@@ -976,9 +1051,11 @@ class AtfPB:
                     return f
         return None
 
-    def _conferir_cartao(self, frame, emissao: Emissao, ie: str, inicio: date, fim: date):
-        """Dossiê do Contribuinte (DEC_381): IE, Consultar, aba "Docs fiscais", período, Consultar e o link
-        "Cartão", que abre uma janela nova (Detalhamento por Administradora). Essa página vira o PDF."""
+    def _consultar_dossie(self, frame, ie: str, inicio: date, fim: date) -> dict:
+        """Dossiê do Contribuinte (DEC_381): IE, Consultar, aba "Docs fiscais", período e Consultar.
+        Devolve {"quadro", "simei" (Optante SIMEI da Identificação: True/False/None), "linhas" (as linhas
+        das tabelas de Docs fiscais: entradas, saídas, cartão...)}. Guardado por empresa e período: cartão
+        e Dossiê MEI usam a mesma consulta."""
         campo = self._no_quadro(frame, 'input[name="edtnrInscrEstadual"]')
         if campo is None:
             raise EtapaNaoConcluida("campo Inscrição Estadual do dossiê não encontrado")
@@ -991,6 +1068,8 @@ class AtfPB:
             if erro:
                 raise IeNaoEncontrada(f"o ATF não abriu o dossiê da IE {ie}: {erro[:150]}")
             raise EtapaNaoConcluida("o dossiê não abriu (aba Docs fiscais não apareceu)")
+        m = re.search(r"optante\s+simei:?\s*(sim|n[aã]o)", self._texto_quadro(quadro), re.I)
+        simei = None if not m else m.group(1).lower() == "sim"
         self._no_quadro(quadro, aba).click()
         quadro = self._esperar_quadro('input[name="edtDtInicial"]')
         if quadro is None:
@@ -1002,9 +1081,31 @@ class AtfPB:
             self._digitar(campo, f"{data:%d/%m/%Y}")
             campo.press("Tab")
         self._log(f"Docs fiscais: período {inicio:%d/%m/%Y} a {fim:%d/%m/%Y}")
-        self._clicar(quadro, 'input[name="btnConsultar"]:visible', "Consultar")
+        botao = self._no_quadro(quadro, 'input[name="btnConsultar"]:visible')
+        if botao is None:
+            raise EtapaNaoConcluida("botão Consultar de Docs fiscais não encontrado")
+        try:
+            with quadro.expect_navigation(timeout=60_000):
+                botao.click()
+        except Exception as e:
+            self._log(f"Docs fiscais: sem recarregar a tela depois do Consultar ({str(e).splitlines()[0][:80]})")
+        quadro = self._esperar_quadro('input[name="edtDtInicial"]') or quadro
+        pausa(self.page, 1.0, 1.5)
+        try:
+            linhas = quadro.evaluate(_JS_LINHAS_DOCS)
+        except Exception:
+            linhas = []
+        info = {"quadro": quadro, "simei": simei, "linhas": linhas}
+        self._dossie_cache[(ie, inicio)] = {"simei": simei, "linhas": linhas}
+        return info
+
+    def _conferir_cartao(self, frame, emissao: Emissao, ie: str, inicio: date, fim: date):
+        """Docs fiscais do dossiê: o link "Cartão" abre uma janela nova (Detalhamento por Administradora),
+        que é salva em PDF."""
+        quadro = self._consultar_dossie(frame, ie, inicio, fim)["quadro"]
         link_css = 'a:has-text("Cartão")'
-        quadro = self._esperar_quadro(link_css)
+        if self._no_quadro(quadro, link_css) is None:
+            quadro = self._esperar_quadro(link_css, 5)
         if quadro is None:
             emissao.sem_dados, emissao.resposta = True, SEM_DADOS["cartao"]
             return
@@ -1033,6 +1134,23 @@ class AtfPB:
             return
         emissao.arquivos = [("Conferencia Cartao.pdf", pagina_em_pdf(janela))]
         self._log(f"Cartão IE {ie}: página {janela.url[:100]} salva em PDF")
+
+    def _faturamento_mei(self, frame, emissao: Emissao, ie: str, inicio: date, fim: date):
+        """Dossiê MEI: só para quem é Optante SIMEI. Lê as entradas e saídas da aba Docs fiscais do mês
+        (a mesma consulta do cartão, se já foi feita)."""
+        info = self._dossie_cache.get((ie, inicio)) or self._consultar_dossie(frame, ie, inicio, fim)
+        if info["simei"] is False:
+            emissao.sem_dados = True
+            emissao.resposta = "não é MEI (Optante SIMEI: NÃO); faturamento não consultado"
+            return
+        emissao.dados = ler_docs_fiscais(info["linhas"])
+        emissao.dados["simei"] = info["simei"]
+        if not info["linhas"]:
+            emissao.ok, emissao.resposta = False, "a aba Docs fiscais não trouxe nenhuma tabela"
+            self.diag.salvar(self.page, "mei-sem-tabela")
+        elif emissao.dados["entradas"] is None and emissao.dados["saidas"] is None:
+            self.diag.salvar(self.page, "mei-sem-entradas-saidas")  # para ajustar a leitura
+        self._log(f"Dossiê MEI IE {ie}: entradas {emissao.dados['entradas']}, saídas {emissao.dados['saidas']}")
 
     def _selecionar_faturas(self, emissao: Emissao) -> bool:
         """Tela dos lançamentos: marca todos, menos os "DIFERIDO - VALOR MINIMO" (o ATF não emite).

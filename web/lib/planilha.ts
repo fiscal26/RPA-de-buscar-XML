@@ -15,7 +15,7 @@ type Linha = { n: number; valores: unknown[] };
 /** Lê a planilha modelo (.xlsx, primeira aba) ou um .csv com os mesmos cabeçalhos.
  *  As colunas são achadas pelo nome (ATIVA, ID, ID_FILIAL, CNPJ, INSCRICAO ESTADUAL, NOME FANTASIA,
  *  LOGIN, SENHA e os serviços: NF-e Saida, NF-e Entrada, NFC-e, CT-e, Download Faturas, Extrato de Pagamentos,
- *  Omissão e Inadimplência, Certidão de Débitos, Conferência Cartão de Credito); Dossiê MEI ainda não é usada. */
+ *  Omissão e Inadimplência, Certidão de Débitos, Conferência Cartão de Credito, Dossiê MEI). */
 export async function lerPlanilha(arquivo: File): Promise<Leitura> {
   const nome = arquivo.name.toLowerCase();
   const bytes = Buffer.from(await arquivo.arrayBuffer());

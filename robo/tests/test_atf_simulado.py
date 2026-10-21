@@ -52,7 +52,7 @@ CHROME = os.environ.get("CHROME_TESTE") or next(
 
 ESTADO = {"logins": [], "consultas": [], "mensagens": [], "recusas": [], "ultima_lista": 0.0, "lista_cedo": 0,
           "blocos": {}, "abertas": [], "caixa_fora": 0, "servicos": [], "telas_servico": [], "faturas_emitidas": [],
-          "cartao": []}
+          "cartao": [], "dossies": []}
 
 
 def _zip(itens: dict[str, bytes]) -> bytes:
@@ -114,7 +114,7 @@ def _responder(tela: str, campos: dict) -> str:
         return "Erro: informe apenas o Emitente ou o Destinatário."
     assert (q["ini"], q["fim"], q["exib"]) == ("01/09/2026", "30/09/2026", "4" if tela == "cte" else "3"), q
     assert campos.get("cmbTpDoccmpEmit") == "IE" and campos.get("cmbTpDoccmpDest", "IE") == "IE", campos
-    ie = emit or dest
+    ie = emit or dest or ESTADO["blocos"].get(f"{tela}_cmpReme", "")
     assert ie, "Pesquisar do bloco não foi clicado (o ATF não sabe a empresa)"
     if ESTADO.pop("agosto", False):
         _nova_mensagem("FIS_1322", "NFe: Consulta Genérica (Ano 2026)", 0,
@@ -124,12 +124,19 @@ def _responder(tela: str, campos: dict) -> str:
         _nova_mensagem("FIS_1322", "NFe: Consulta Genérica (Ano 2026)", 0,
                        _zip({"x.xml": nfe(FORNECEDOR, "", 7, ie_emit=IE_ESTRANHA)}), "consulta manual")
     if tela == "cte":  # CT-e: o ATF entrega um ZIP com os CT-e e os eventos de cada um
-        assert dest and not emit, q
-        anexo = _zip({"CTe_1.xml": cte(FORNECEDOR, EMPRESA, 1, ie_dest=dest, valor=150.0),
-                      "1.Evento do CTe_1.xml": evento_cte(FORNECEDOR, chave(FORNECEDOR, "2609", "57", 1), "310610")}) \
-            if dest == IE_EMPRESA else None
+        rem = ESTADO["blocos"].get("cte_cmpReme", "")
+        assert bool(dest) != bool(rem) and not emit, q  # um bloco por consulta: Remetente OU Destinatário
+        q["rem"] = rem
+        if dest == IE_EMPRESA:
+            anexo = _zip({"CTe_1.xml": cte(FORNECEDOR, EMPRESA, 1, ie_dest=dest, valor=150.0),
+                          "1.Evento do CTe_1.xml": evento_cte(FORNECEDOR, chave(FORNECEDOR, "2609", "57", 1), "310610")})
+        elif rem == IE_EMPRESA:
+            anexo = _zip({"CTe_2.xml": cte(FORNECEDOR, "", 2, cnpj_rem=EMPRESA, ie_rem=rem, valor=70.0)})
+        else:
+            anexo = None
+        ie = dest or rem
         _nova_mensagem("FIS_1192", "CTe: Arquivo Zipado com as CTe", 2, anexo,
-                       f"IE Destinatário: {dest[:2]}.{dest[2:5]}.{dest[5:8]}-{dest[8]}")
+                       f"IE {'Destinatário' if dest else 'Remetente'}: {ie[:2]}.{ie[2:5]}.{ie[5:8]}-{ie[8]}")
         return "O resultado será enviado para sua caixa de mensagens do ATF"
     if tela == "nfce":
         _nova_mensagem("FIS_1484", "NFCe: Consulta Genérica da NFC-e", 2,
@@ -169,8 +176,16 @@ def _dossie(ie: str, datas: tuple[str, str] | None = None) -> str:
         url = f"/atf/fis/FISf_DetalharAdministradorasECFTEF.do?sqHumanoInst=7549548&refIni=09/2026&refFim=09/2026&ie={ie}"
         cartao = (f'<a href="#" onclick="window.open(\'{url}\', \'cartao\', \'width=900,height=600\'); return false">'
                   '- Cartão:</a> 13.585,00') if ie == IE_EMPRESA else "- Cartão: 0,00"
-        resultado = f'<table><tr><td>- NF-e emitidas:</td><td>2</td></tr><tr><td>{cartao}</td></tr></table>'
-    return (sessao() + f'<b>Dossiê do Contribuinte</b><br>{abas}<div id="docsEletronicos"><form>'
+        resultado = ('<table><tr><th>Documento</th><th>Entradas</th><th>Saídas</th></tr>'
+                     '<tr><td>NF-e</td><td>1.000,00</td><td>3.000,50</td></tr>'
+                     '<tr><td>NFC-e</td><td>0,00</td><td>1.200,00</td></tr>'
+                     '<tr><td>Total</td><td>1.000,00</td><td>4.200,50</td></tr></table>'
+                     f'<table><tr><td>{cartao}</td></tr></table>')
+    simei = "SIM" if ie == IE_EMPRESA else "NÃO"
+    identificacao = ("" if datas else  # como no ATF: a Identificação é a aba aberta depois do Consultar
+                     f'<table><tr><td>- Inscrição Estadual:</td><td>{ie}</td></tr>'
+                     f'<tr><td>- Optante SIMEI:</td><td>{simei}</td></tr></table>')
+    return (sessao() + f'<b>Dossiê do Contribuinte</b><br>{abas}{identificacao}<div id="docsEletronicos"><form>'
             '<a href="#" onclick="document.getElementById(\'docs\').style.display=\'block\'; return false">Docs fiscais</a>'
             f'</form></div><div id="docs" style="display:{"block" if datas else "none"}">'
             '<form method="post" action="/atf/dec/DECf_ApresentarDossierContribuinte.do">- Período: '
@@ -312,8 +327,8 @@ class AtfFalso(BaseHTTPRequestHandler):
         elif p in ("/atf/fis/FISf_ConsultarNFeXml2.do", "/atf/fis/FISf_ConsultarNFCe.do", "/atf/fis/FISf_ConsultarCTeGenerica.do"):
             tela = "nfe" if "NFeXml2" in p else "cte" if "CTe" in p else "nfce"
             if q.get("limparSessao") == "true":
-                ESTADO["blocos"].pop(f"{tela}_cmpEmit", None)
-                ESTADO["blocos"].pop(f"{tela}_cmpDest", None)
+                for suf in ("Emit", "Dest", "Reme", "Toma"):
+                    ESTADO["blocos"].pop(f"{tela}_cmp{suf}", None)
             self._html(form_consulta(tela))
         elif p == "/atf/componentes/CodDescLstBS.jsp":
             self._html(self._componente(q["id"], ESTADO["blocos"].get(q["id"], "")))
@@ -484,6 +499,7 @@ class AtfFalso(BaseHTTPRequestHandler):
         elif p == "/atf/dec/DECf_ApresentarDossierContribuinte.do":
             if "edtnrInscrEstadual" in campos:
                 ESTADO["dossie_ie"] = re.sub(r"\D", "", campos["edtnrInscrEstadual"])
+                ESTADO["dossies"].append(ESTADO["dossie_ie"])
                 self._html(_dossie(ESTADO["dossie_ie"]))
             else:
                 datas = (campos.get("edtDtInicial"), campos.get("edtDtFinal"))
@@ -742,22 +758,32 @@ def test_cte_e_conferencia_de_cartao(ambiente):
     executor = robo_xml.Executor(cfg)
     try:
         r1, r2 = executor.executar_rodada([
-            _trabalho(IE_EMPRESA, "Transporte", ["cte", "cartao"], codigo="050"),
-            _trabalho(IE_OUTRA, "SemCartao", ["cte", "cartao"], codigo="051"),
+            _trabalho(IE_EMPRESA, "Transporte", ["cte", "cartao", "mei"], codigo="050"),
+            _trabalho(IE_OUTRA, "SemCartao", ["cte", "cartao", "mei"], codigo="051"),
         ])
     finally:
         if executor.atf:
             print("\n".join(executor.atf.diag.linhas))  # aparece se o teste falhar
         executor.fechar()
     consultas = [c for c in ESTADO["consultas"] if c["tela"] == "cte"]
-    assert [c["dest"] for c in consultas[-2:]] == [IE_EMPRESA, IE_OUTRA]
+    assert [(c["rem"], c["dest"]) for c in consultas[-4:]] == [
+        (IE_EMPRESA, ""), ("", IE_EMPRESA), (IE_OUTRA, ""), ("", IE_OUTRA)]  # remetente e destinatário
     assert r1.status == "concluido", r1
-    assert r1.detalhes["cte"]["notas"] == 1 and r1.detalhes["cartao"]["arquivos"] == 1, r1
+    assert r1.detalhes["cte_dest"]["notas"] == 1 and r1.detalhes["cte_rem"]["notas"] == 1, r1
+    assert r1.detalhes["cartao"]["arquivos"] == 1, r1
     base = pasta / "xml" / "Arquivos baixados"
-    (zip_cte,) = list(base.glob("050-Transporte/2026-09/CT-e - R$ 150,00/*.zip"))
+    (zip_cte,) = list(base.glob("050-Transporte/2026-09/CT-e Destinatario - R$ 150,00/*.zip"))
     assert zip_cte.read_bytes()[:2] == b"PK"
+    assert list(base.glob("050-Transporte/2026-09/CT-e Remetente - R$ 70,00/*.zip"))
     (pdf,) = list(base.glob("050-Transporte/2026-09/Conferência Cartão de Crédito/*.pdf"))
     assert pdf.read_bytes()[:5] == b"%PDF-" and pdf.name == "Conferência Cartão de Crédito 2026-09.pdf"
     assert ESTADO["cartao"][-1]["refIni"] == "09/2026" and ESTADO["cartao"][-1]["ie"] == IE_EMPRESA
-    assert r2.detalhes["cte"]["sem_notas"], r2
+    # Dossiê MEI: entradas e saídas do mês (da mesma consulta do cartão); quem não é SIMEI fica de fora
+    assert (r1.detalhes["mei"]["saidas"], r1.detalhes["mei"]["entradas"]) == (4200.5, 1000.0), r1
+    assert len([c for c in ESTADO["dossies"] if c == IE_EMPRESA]) == 1  # o dossiê foi consultado uma vez só
+    dados = json.loads((base / "050-Transporte/Dossiê MEI/Faturamento MEI 2026.json").read_text(encoding="utf-8"))
+    assert dados["meses"]["2026-09"]["saidas"] == 4200.5
+    assert (base / "050-Transporte/Dossiê MEI/Faturamento MEI 2026.xlsx").exists()
+    assert r2.detalhes["mei"]["sem_notas"] and "não é MEI" in r2.mensagem, r2
+    assert r2.detalhes["cte_dest"]["sem_notas"] and r2.detalhes["cte_rem"]["sem_notas"], r2
     assert r2.detalhes["cartao"]["sem_notas"] and "não existem operações com cartão" in r2.mensagem, r2

@@ -25,13 +25,25 @@ TIPOS = {
     "nfe_saida": "NF-e Saida",
     "nfe_entrada": "NF-e Entrada",
     "nfce": "NFC-e",
-    "cte": "CT-e",
+    "cte_rem": "CT-e Remetente",
+    "cte_dest": "CT-e Destinatario",
     "faturas": "Faturas",
     "extrato": "Extrato de Pagamentos",
     "omissao": "Omissão e Inadimplência",
     "certidao": "Certidão de Débitos",
     "cartao": "Conferência Cartão de Crédito",
+    "mei": "Dossiê MEI",
 }
+# Limite anual de receita bruta do MEI (LC 123/2006, art. 18-A, § 1º)
+LIMITE_MEI = 81_000.00
+# coluna da planilha que vira mais de uma consulta (CT-e: a empresa como remetente e como destinatária)
+SUBTIPOS = {"cte": ("cte_rem", "cte_dest")}
+
+
+def expandir_tipos(tipos: list[str]) -> list[str]:
+    return [sub for t in tipos for sub in SUBTIPOS.get(t, (t,))]
+
+
 # serviços que o ATF responde na hora com PDF (ou ZIP): o arquivo vai direto para a empresa
 SERVICOS_DOCUMENTO = ("faturas", "extrato", "omissao", "certidao", "cartao")
 PASTA_BAIXADOS = "Arquivos baixados"
@@ -47,6 +59,8 @@ class InfoXml:
     cnpj_dest: str = ""
     ie_emit: str = ""
     ie_dest: str = ""
+    cnpj_rem: str = ""         # CT-e: remetente
+    ie_rem: str = ""
     emissao: str = ""          # aaaa-mm-dd
     evento: bool = False       # cancelamento, carta de correção etc.
     tipo_evento: str = ""      # 110111 = cancelamento
@@ -148,6 +162,9 @@ def ler_xml(dados: bytes) -> InfoXml | None:
         info.cnpj_dest = _texto(dest, "CNPJ") or _texto(dest, "CPF")
         info.ie_emit = re.sub(r"\D", "", _texto(emit, "IE"))
         info.ie_dest = re.sub(r"\D", "", _texto(dest, "IE"))
+        rem = _filho(inf, "rem")
+        info.cnpj_rem = (_texto(rem, "CNPJ") or _texto(rem, "CPF")) if rem is not None else ""
+        info.ie_rem = re.sub(r"\D", "", _texto(rem, "IE")) if rem is not None else ""
         for papel in ("rem", "dest", "exped", "receb"):
             e = _filho(inf, papel)
             if e is not None:
@@ -277,10 +294,11 @@ def _destinos(info: InfoXml, alvos: list[Alvo]) -> list[tuple[str, str]]:
     saida: list[tuple[str, str]] = []
     for a in alvos:
         emitente = _mesmo_ie(info.ie_emit, a.ie) or (bool(a.cnpj) and a.cnpj in (info.cnpj_emit, emit_chave))
-        if info.modelo == "57":  # CT-e: a empresa é destinatária (ou outra parte: remetente, tomador...)
-            if "cte" in a.tipos and any(_mesmo_ie(ie, a.ie) or (bool(a.cnpj) and doc == a.cnpj)
-                                        for doc, ie in info.partes):
-                saida.append((a.ie, "cte"))
+        if info.modelo == "57":  # CT-e: a empresa como remetente e/ou como destinatária
+            if "cte_rem" in a.tipos and (_mesmo_ie(info.ie_rem, a.ie) or (bool(a.cnpj) and info.cnpj_rem == a.cnpj)):
+                saida.append((a.ie, "cte_rem"))
+            if "cte_dest" in a.tipos and (_mesmo_ie(info.ie_dest, a.ie) or (bool(a.cnpj) and info.cnpj_dest == a.cnpj)):
+                saida.append((a.ie, "cte_dest"))
             continue
         if info.modelo == "65":
             if "nfce" in a.tipos and emitente:
@@ -516,6 +534,64 @@ def salvar_documentos(brutos: list[tuple[str, bytes]], destino: str | Path, nome
         arquivo.write_bytes(dados)
         novos += 1
     return {"novos": novos, "repetidos": repetidos, "pasta": str(pasta) if pasta.is_dir() else ""}
+
+
+def salvar_faturamento_mei(destino: str | Path, nome: str, ie: str, competencia: str, dados: dict,
+                           codigo: str = "") -> dict:
+    """Dossiê MEI: guarda as entradas e saídas do mês em
+    Arquivos baixados/<ID>-<Nome>/Dossiê MEI/Faturamento MEI <ano>.json (um mês por chave, base para o
+    painel futuro) e refaz a planilha "Faturamento MEI <ano>.xlsx" do ano: mês a mês, acumulado e % do
+    limite. Devolve {pasta, saidas, entradas, acumulado, percentual}."""
+    import json
+    from datetime import datetime
+
+    ano = competencia[:4]
+    pasta = pasta_empresa(destino, nome, ie, codigo) / "Dossiê MEI"
+    pasta.mkdir(parents=True, exist_ok=True)
+    arq_json = pasta / f"Faturamento MEI {ano}.json"
+    try:
+        historico = json.loads(arq_json.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        historico = {}
+    historico.setdefault("empresa", {"ie": ie, "nome": nome, "codigo": codigo})
+    meses = historico.setdefault("meses", {})
+    meses[competencia] = {"saidas": dados.get("saidas"), "entradas": dados.get("entradas"),
+                          "simei": dados.get("simei"), "itens": dados.get("itens", []),
+                          "linhas": dados.get("linhas", []), "consultado_em": datetime.now().isoformat(timespec="seconds")}
+    arq_json.write_text(json.dumps(historico, ensure_ascii=False, indent=1, sort_keys=True), encoding="utf-8")
+
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = f"Faturamento {ano}"
+    ws.append(["Mês", "Saídas (faturamento)", "Entradas", "Saídas acumuladas no ano",
+               f"% do limite MEI ({reais(LIMITE_MEI)})", "Consultado em"])
+    acumulado = 0.0
+    for mes in sorted(meses):
+        m = meses[mes]
+        acumulado += m["saidas"] or 0.0
+        ws.append([mes, m["saidas"], m["entradas"], round(acumulado, 2), round(acumulado / LIMITE_MEI, 4), m["consultado_em"]])
+    for c in ws[1]:
+        c.font = Font(bold=True)
+    for linha in ws.iter_rows(min_row=2):
+        for c in linha[1:4]:
+            c.number_format = '#,##0.00'
+        linha[4].number_format = "0.00%"
+    for col, w in zip("ABCDEF", (10, 22, 16, 26, 24, 22)):
+        ws.column_dimensions[col].width = w
+    detalhe = wb.create_sheet("Docs fiscais (como no ATF)")
+    for mes in sorted(meses):
+        for celulas in meses[mes]["linhas"]:
+            detalhe.append([mes] + list(celulas))
+    arq_xlsx = pasta / f"Faturamento MEI {ano}.xlsx"
+    try:
+        wb.save(arq_xlsx)
+    except PermissionError:  # planilha aberta no Excel: o JSON já foi salvo; a planilha sai na próxima vez
+        pass
+    return {"pasta": str(pasta), "saidas": dados.get("saidas"), "entradas": dados.get("entradas"),
+            "acumulado": round(acumulado, 2), "percentual": round(acumulado / LIMITE_MEI * 100, 1)}
 
 
 def salvar_sem_empresa(brutos: list[tuple[str, bytes]], destino: str | Path) -> int:

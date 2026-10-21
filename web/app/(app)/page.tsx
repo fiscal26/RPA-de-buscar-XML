@@ -16,7 +16,8 @@ export default async function Agendar() {
           linha: <b>INSCRICAO ESTADUAL</b> (é por ela que o ATF pesquisa), <b>NOME FANTASIA</b>, <b>LOGIN</b> e{" "}
           <b>SENHA</b> do contador no ATF. Para não fazer algum serviço, apague o X da coluna dele (<b>NF-e Saida</b>,{" "}
           <b>NF-e Entrada</b>, <b>NFC-e</b>, <b>CT-e</b>, <b>Download Faturas</b>, <b>Extrato de Pagamentos</b>,{" "}
-          <b>Omissão e Inadimplência</b>, <b>Certidão de Débitos</b> ou <b>Conferência Cartão de Credito</b>); para deixar uma empresa de fora, troque o X de <b>ATIVA</b> por N.
+          <b>Omissão e Inadimplência</b>, <b>Certidão de Débitos</b>, <b>Conferência Cartão de Credito</b> ou{" "}
+          <b>Dossiê MEI</b>, que só é feito para quem é optante do SIMEI); para deixar uma empresa de fora, troque o X de <b>ATIVA</b> por N.
         </p>
         <p className="suave">
           O ATF não entrega o XML na hora: o robô faz as consultas e recolhe os arquivos em Minhas Mensagens, que podem
@@ -28,7 +29,7 @@ export default async function Agendar() {
         </p>
         <p className="suave">
           A senha só precisa vir uma vez por login: depois de cadastrada, pode ficar em branco. A planilha contém
-          senhas; apague-a do computador depois de enviar. A coluna Dossiê MEI ainda não é usada.
+          senhas; apague-a do computador depois de enviar.
         </p>
       </div>
       <div className="cartao">

@@ -155,7 +155,35 @@ def test_cte_vai_para_a_destinataria_com_o_valor_da_prestacao():
     with zipfile.ZipFile(zip_, "w") as z:
         for i, d in enumerate((c1, c2, cancelado, marcado)):
             z.writestr(f"{i}.xml", d)
-    alvos = [arquivos.Alvo(IE_EMPRESA, "", ["cte"]), arquivos.Alvo(IE_OUTRA, "", ["cte", "nfe_saida"])]
+    alvos = [arquivos.Alvo(IE_EMPRESA, "", ["cte_rem", "cte_dest"]), arquivos.Alvo(IE_OUTRA, "", ["cte_dest", "nfe_saida"])]
     por, sem, brutos = arquivos.distribuir_arquivos([("CTe_XML.zip", zip_.getvalue())], alvos)
-    assert list(por) == [(IE_EMPRESA, "cte")] and not sem and not brutos
+    assert list(por) == [(IE_EMPRESA, "cte_dest")] and not sem and not brutos
+    # a mesma empresa como remetente vai para "CT-e Remetente"
+    rem = cte("45723174000110", "", 3, cnpj_rem="11222333000181", ie_rem=IE_EMPRESA)
+    assert list(arquivos.distribuir([("r.xml", rem)], alvos)[0]) == [(IE_EMPRESA, "cte_rem")]
+    assert arquivos.expandir_tipos(["nfe_saida", "cte"]) == ["nfe_saida", "cte_rem", "cte_dest"]
     assert arquivos.valor_total(arquivos.extrair(zip_.getvalue())) == (1, 120.5)  # o 2 foi cancelado
+
+
+def test_faturamento_mei_acumula_os_meses(tmp_path):
+    import json
+    for mes, saidas in (("2026-08", 30000.0), ("2026-09", 4200.5)):
+        r = arquivos.salvar_faturamento_mei(tmp_path, "Mei", IE_EMPRESA, mes, {"saidas": saidas, "entradas": 10.0,
+                                            "itens": [], "linhas": [["NF-e", "1,00", "2,00"]]}, "7")
+    assert r["acumulado"] == 34200.5 and r["percentual"] == 42.2
+    pasta = tmp_path / "Arquivos baixados" / "7-Mei" / "Dossiê MEI"
+    dados = json.loads((pasta / "Faturamento MEI 2026.json").read_text(encoding="utf-8"))
+    assert sorted(dados["meses"]) == ["2026-08", "2026-09"]
+    from openpyxl import load_workbook
+    ws = load_workbook(pasta / "Faturamento MEI 2026.xlsx").active
+    assert [c.value for c in ws[3]][:4] == ["2026-09", 4200.5, 10.0, 34200.5]
+
+
+def test_ler_docs_fiscais_por_colunas_e_por_rotulos():
+    from atf_pb import ler_docs_fiscais
+    por_coluna = ler_docs_fiscais([["Documento", "Qtd entradas", "Entradas (R$)", "Qtd saídas", "Saídas (R$)"],
+                                   ["NF-e", "2", "1.000,00", "3", "3.000,50"], ["NFC-e", "0", "0,00", "9", "1.200,00"]])
+    assert (por_coluna["entradas"], por_coluna["saidas"]) == (1000.0, 4200.5)
+    por_rotulo = ler_docs_fiscais([["- NF-e de entrada:", "2", "R$ 500,00"], ["- NF-e de saída:", "3", "R$ 1.500,00"],
+                                   ["- Total de saídas:", "R$ 2.300,00"], ["- Cartão:", "13.585,00"]])
+    assert (por_rotulo["entradas"], por_rotulo["saidas"]) == (500.0, 2300.0)

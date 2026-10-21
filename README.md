@@ -12,12 +12,14 @@ faturas, extrato de pagamentos, omissão e inadimplência e certidão de débito
         NF-e Saida - R$ 12.345,67/     NF-e Saida 2026-09.zip     (o ZIP do ATF, como veio)
         NF-e Entrada - R$ 8.900,00/    NF-e Entrada 2026-09.zip
         NFC-e - R$ 1.230,50/           NFC-e 2026-09.zip
-        CT-e - R$ 950,00/              CT-e 2026-09.zip                  (valor da prestação, sem os cancelados)
+        CT-e Remetente - R$ 400,00/    CT-e Remetente 2026-09.zip        (valor da prestação, sem os cancelados)
+        CT-e Destinatario - R$ 950,00/ CT-e Destinatario 2026-09.zip
         Faturas/                       Faturas 2026-09.pdf               (DAR/PIX dos lançamentos em aberto)
         Extrato de Pagamentos/         Extrato de Pagamentos 2026-09.pdf
         Omissão e Inadimplência/       Omissão e Inadimplência 2026-09.pdf   (o relatório completo)
         Certidão de Débitos/           Certidão de Débitos 2026-09.pdf
         Conferência Cartão de Crédito/ Conferência Cartão de Crédito 2026-09.pdf
+      Dossiê MEI/                      Faturamento MEI 2026.xlsx e .json (um mês por linha; só Optante SIMEI)
     _sem_empresa/        arquivo de empresa fora da rodada (ex.: consulta feita à mão no mesmo login)
     _nao_identificados/  arquivo baixado que não é XML/ZIP (guardado como veio, para conferir)
   _relatorios/           relatório de cada rodada
@@ -55,10 +57,9 @@ pelo nome do cabeçalho. O robô de XML usa:
 | NOME FANTASIA | nome da pasta |
 | LOGIN, SENHA | acesso do contador ao ATF. A senha só precisa vir uma vez por login |
 | NF-e Saida, NF-e Entrada, NFC-e | **X** (ou S, SIM) = baixar esse XML; apagar o X = não baixar |
-| CT-e | **X** = baixar o XML dos CT-e em que a empresa é destinatária |
+| CT-e | **X** = baixar o XML dos CT-e em que a empresa é **remetente** e em que é **destinatária** (duas consultas, duas pastas) |
 | Download Faturas, Extrato de Pagamentos, Omissão e Inadimplência, Certidão de Débitos, Conferência Cartão de Credito | **X** = emitir o PDF desse serviço |
-
-Dossiê MEI ainda não é feito pelo robô.
+| Dossiê MEI | **X** = entradas e saídas do mês (aba Docs fiscais do dossiê). O robô confere o *Optante SIMEI* na Identificação: quem não é MEI fica de fora |
 
 ## Serviços com PDF na hora (gravações de 18/10/2026)
 
@@ -72,6 +73,7 @@ endereço direto; a IE vai no Número, **Pesquisar** confere a empresa (sem nome
 | Extrato de Pagamentos | ARR_087 | Período de Pagamento do **1º ao último dia** da competência, Tipo de Imposto *Todos*, *Consultar* |
 | Omissão e Inadimplência | COB_187 | *Consultar*: o **PDF completo** (todas as páginas) |
 | Certidão de Débitos | DIA_061 | *Submeter* (com o login, como em todo o robô) |
+| Dossiê MEI | DEC_381 (a mesma consulta do cartão) | Lê *Optante SIMEI* na Identificação (NÃO = "não é MEI", nada é consultado) e as tabelas de **Docs fiscais** do mês: colunas Entradas/Saídas ou linhas "entrada"/"saída". Guarda em `Dossiê MEI/Faturamento MEI <ano>.json` e refaz a planilha do ano com o acumulado e a % do limite de R$ 81.000,00 (LC 123/2006, art. 18-A, § 1º) |
 | Conferência Cartão de Crédito | DEC_381 (Dossiê do Contribuinte) | IE, *Consultar*, aba **Docs fiscais**, período do 1º ao último dia, *Consultar*; clica em **"- Cartão:"**, que abre uma janela nova (*Detalhamento por Administradora*), e salva essa página em PDF. Sem o link: "não existem operações com cartão no período" |
 
 O ATF mostra o PDF no visualizador do Chrome; o robô guarda o arquivo antes de ele ir para a tela e
@@ -94,7 +96,8 @@ em **rodadas de um login** (até 15 empresas):
      de mensagens do ATF".
    - *NFC-e:* menu *NFC-e* > *Consulta por Emitente* (FIS_1484), IE no bloco **Emitente**, mesmo final.
    - *CT-e:* Função **FIS_1192** (*Consulta Genérica de Conhecimentos de Transporte Eletrônicos*), Data
-     inicial/final, IE no bloco **Destinatário** (como na gravação de 20/10/2026), Formato XML, *Consultar*.
+     inicial/final, IE no bloco **Remetente** numa consulta e no **Destinatário** em outra (um bloco por vez),
+     Formato XML, *Consultar*.
      A resposta vem em Minhas Mensagens com 4 filhas; a do clipe traz o "Arquivo Compactado XML CTe".
 3. **Recolhe as mensagens** (sino; SEG_064). Cada consulta gera **3 mensagens** no mesmo segundo; só a
    final ("Tarefa executada com sucesso") importa: com o anexo *"Dados referentes ao ano de ..."* (o

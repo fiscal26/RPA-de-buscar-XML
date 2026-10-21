@@ -101,6 +101,13 @@ PADRAO = {
                 "pronta": 'input[name="edtnrInscrEstadual"]',
                 "titulo": "Dossiê",
             },
+            "mei": {  # Dossiê MEI: a mesma tela do cartão (Docs fiscais: entradas e saídas do mês)
+                "funcao": "DEC_381",
+                "pagina": "DECf_DossierContribuinte.do",
+                "endereco": "dec/DECf_DossierContribuinte.do?limparSessao=true",
+                "pronta": 'input[name="edtnrInscrEstadual"]',
+                "titulo": "Dossiê",
+            },
             # onde o ATF entrega os XML (sino do topo)
             "mensagens": {
                 "funcao": "SEG_064",

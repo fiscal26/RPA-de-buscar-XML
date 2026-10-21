@@ -46,7 +46,7 @@ def test_planilha_modelo_do_escritorio(tmp_path):
     leitura = planilha.ler(arq)
     assert [(e.codigo, e.ie, e.nome, e.login, e.tipos) for e in leitura.empresas] == [
         ("015", IE_EMPRESA, "Padaria Centro", "mar00134",
-         ["nfe_saida", "nfe_entrada", "cte", "faturas", "extrato", "omissao", "certidao", "cartao"]),
+         ["nfe_saida", "nfe_entrada", "cte", "faturas", "extrato", "omissao", "certidao", "cartao", "mei"]),
         ("016", IE_OUTRA, "Mercado", "mar00134", ["nfe_saida", "nfce"]),
     ]
     assert leitura.empresas[0].cnpj == "11222333000181" and leitura.empresas[0].filial == "1"

@@ -10,6 +10,7 @@ export const TIPOS = [
   { id: "omissao", nome: "Omissão e Inadimplência", coluna: "omissao e inadimplencia" },
   { id: "certidao", nome: "Certidão de Débitos", coluna: "certidao de debitos" },
   { id: "cartao", nome: "Conferência Cartão de Crédito", coluna: "conferencia cartao de credito" },
+  { id: "mei", nome: "Dossiê MEI", coluna: "dossie mei" },
 ] as const;
 export const IDS_TIPOS: string[] = TIPOS.map((t) => t.id);
 export const nomeTipo = (id: string) => TIPOS.find((t) => t.id === id)?.nome ?? id;

@@ -94,6 +94,9 @@ class Trabalho:
     cnpj: str = ""
     codigo: str = ""
 
+    def __post_init__(self):
+        self.tipos = arquivos.expandir_tipos(self.tipos)  # "cte" = CT-e Remetente + CT-e Destinatario
+
     @property
     def rotulo(self) -> str:
         return f"{self.nome} (IE {planilha.formatar_ie(self.ie)})"
@@ -197,6 +200,9 @@ class Executor:
                     if e.arquivos:
                         arquivos.salvar_documentos(e.arquivos, self.cfg["pastas"]["destino"], t.nome, t.ie, tipo,
                                                    f"{t.inicio:%Y-%m}", t.codigo)
+                    if e.dados:  # Dossiê MEI: entradas e saídas do mês, acumuladas no ano
+                        e.dados["resumo"] = arquivos.salvar_faturamento_mei(
+                            self.cfg["pastas"]["destino"], t.nome, t.ie, f"{t.inicio:%Y-%m}", e.dados, t.codigo)
 
         # 2) recolhe as respostas em Minhas Mensagens
         esperadas: dict[str, int] = {}
@@ -347,6 +353,18 @@ class Executor:
                     continue
                 n = len(e.arquivos)
                 detalhes[tipo] = {"arquivos": n, "repetidos": 0, "notas": 0, "valor": 0.0, "sem_notas": e.sem_dados}
+                if e.dados.get("resumo"):  # Dossiê MEI
+                    r = e.dados["resumo"]
+                    detalhes[tipo].update(arquivos=1, saidas=r["saidas"], entradas=r["entradas"],
+                                          acumulado_ano=r["acumulado"], percentual_limite=r["percentual"])
+                    if r["saidas"] is None and r["entradas"] is None:
+                        partes.append(f"{nome}: tabela de Docs fiscais salva, mas não reconheci entradas/saídas")
+                    else:
+                        partes.append(f"{nome}: saídas {arquivos.reais(r['saidas'] or 0)}, entradas "
+                                      f"{arquivos.reais(r['entradas'] or 0)}; acumulado no ano {arquivos.reais(r['acumulado'])} "
+                                      f"({r['percentual']}% do limite)")
+                    log.info("   %s %s: %s", t.nome, nome, partes[-1])
+                    continue
                 if n:
                     partes.append(f"{nome}: {n} arquivo(s)")
                     log.info("   %s %s: %d arquivo(s)", t.nome, nome, n)
