@@ -27,7 +27,7 @@ export default async function DetalheAgendamento({ params }: { params: Promise<{
 
   return (
     <>
-      <p><Link href="/agendamentos">← Agendamentos</Link></p>
+      <p><Link href="/painel/agendamentos">← Agendamentos</Link></p>
       <h1>Agendamento de {dataHoraBR(ag.criado_em)}</h1>
       <AutoRefresh ativo={emAndamento} segundos={8} />
       <div className="cartao">

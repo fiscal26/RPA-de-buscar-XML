@@ -2,6 +2,9 @@
 
 Três partes: o **banco** (Supabase), o **portal** (Vercel, em `xml.lotivisse.com.br`) e o **robô** (seu PC).
 
+No portal, a página inicial (`/`) é a apresentação, aberta a todos; o login fica em `/login` e o painel
+(agendar, agendamentos, empresas) em `/painel`, só para quem entrou.
+
 ## 1. Banco (Supabase)
 
 Projeto **próprio** do Supabase (separado do portal de CND; só o domínio e a marca são os mesmos).

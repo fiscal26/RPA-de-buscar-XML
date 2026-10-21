@@ -12,7 +12,7 @@ export async function entrar(_: EstadoLogin, form: FormData): Promise<EstadoLogi
   const supabase = await criarCliente();
   const { error } = await supabase.auth.signInWithPassword({ email, password: senha });
   if (error) return { erro: "E-mail ou senha incorretos." };
-  redirect("/");
+  redirect("/painel");
 }
 
 export async function sair() {

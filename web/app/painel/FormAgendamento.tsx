@@ -23,7 +23,7 @@ export default function FormAgendamento({ organizacoes, competencia }: { organiz
     return (
       <div>
         <div className="faixa ok">{resultado.ok} O robô salva os arquivos na pasta configurada no computador dele.</div>
-        <Link className="botao" href={`/agendamentos/${resultado.agendamentoId}`}>Acompanhar este agendamento</Link>{" "}
+        <Link className="botao" href={`/painel/agendamentos/${resultado.agendamentoId}`}>Acompanhar este agendamento</Link>{" "}
         <button className="secundario" onClick={() => location.reload()}>Novo agendamento</button>
       </div>
     );
@@ -71,7 +71,7 @@ export default function FormAgendamento({ organizacoes, competencia }: { organiz
 
       {previa?.itens && !previa.erro && (
         <div style={{ marginTop: "1.5rem" }}>
-          <h2>Conferência — {previa.nomeArquivo}</h2>
+          <h2>Confira a planilha {previa.nomeArquivo}</h2>
           <p>
             <b>{previa.itens.length}</b> empresa(s) · competência <b>{competenciaBR(previa.competencia)}</b> ·{" "}
             {previa.executarEm ? `começa em ${dataHoraBR(previa.executarEm)}` : "começa assim que possível"}.

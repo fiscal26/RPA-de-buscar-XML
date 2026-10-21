@@ -173,16 +173,16 @@ export async function confirmarAgendamento(previa: Previa): Promise<Previa> {
     await db.from("xml_agendamentos").delete().eq("id", ag.id);
     return { erro: erroTarefas.message };
   }
-  revalidatePath("/agendamentos");
-  revalidatePath("/empresas");
+  revalidatePath("/painel/agendamentos");
+  revalidatePath("/painel/empresas");
   return { ok: `Agendamento criado: ${empresas.length} empresa(s) na fila.`, agendamentoId: ag.id };
 }
 
 export async function cancelarAgendamento(id: string) {
   const { supabase } = await contexto();
   await supabase.rpc("xml_cancelar_agendamento", { p_id: id });
-  revalidatePath(`/agendamentos/${id}`);
-  revalidatePath("/agendamentos");
+  revalidatePath(`/painel/agendamentos/${id}`);
+  revalidatePath("/painel/agendamentos");
 }
 
 export async function removerEmpresa(form: FormData) {
@@ -192,5 +192,5 @@ export async function removerEmpresa(form: FormData) {
   const consulta = clienteAdmin().from("xml_empresas").delete().eq("id", id);
   // gestor/usuário só remove empresas da própria organização
   await (admin ? consulta : consulta.eq("org_id", perfil.org_id ?? ""));
-  revalidatePath("/empresas");
+  revalidatePath("/painel/empresas");
 }

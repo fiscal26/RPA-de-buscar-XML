@@ -50,7 +50,7 @@ export default async function Agendamentos() {
       </div>
       <div className="cartao">
         {!agendamentos.length ? (
-          <p className="suave">Nenhum agendamento ainda. <Link href="/">Agendar agora</Link>.</p>
+          <p className="suave">Nenhum agendamento ainda. <Link href="/painel">Agendar agora</Link>.</p>
         ) : (
           <div className="tabela-rolagem">
             <table>
@@ -82,7 +82,7 @@ export default async function Agendamentos() {
                         {c.problemas > 0 && <span className="status st-erro" style={{ marginLeft: 6 }}>{c.problemas} com problema</span>}
                       </td>
                       <td>{c.xml}</td>
-                      <td><Link className="botao secundario pequeno" href={`/agendamentos/${a.id}`}>Detalhes</Link></td>
+                      <td><Link className="botao secundario pequeno" href={`/painel/agendamentos/${a.id}`}>Detalhes</Link></td>
                     </tr>
                   );
                 })}

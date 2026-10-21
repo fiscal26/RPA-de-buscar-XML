@@ -27,7 +27,8 @@ export async function middleware(request: NextRequest) {
   } = await supabase.auth.getUser();
   const caminho = request.nextUrl.pathname;
   if (caminho.startsWith("/sair")) return resposta;
-  const publico = caminho.startsWith("/login");
+  const login = caminho.startsWith("/login");
+  const publico = login || caminho === "/";  // a página inicial (apresentação) é aberta a todos
 
   if (!user && !publico) {
     const url = request.nextUrl.clone();
@@ -35,9 +36,9 @@ export async function middleware(request: NextRequest) {
     url.search = "";
     return NextResponse.redirect(url);
   }
-  if (user && publico) {
+  if (user && login) {
     const url = request.nextUrl.clone();
-    url.pathname = "/";
+    url.pathname = "/painel";
     url.search = "";
     return NextResponse.redirect(url);
   }
