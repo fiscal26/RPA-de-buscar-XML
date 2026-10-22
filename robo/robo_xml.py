@@ -116,6 +116,15 @@ class Executor:
         self.atf: AtfPB | None = None
         self.recusados: set[tuple[str, str]] = set()  # (login, impressão da senha) recusados nesta execução
         self.pendencias: list[Pendencia] = []  # rodadas à espera de mensagens (lidas de novo no final)
+        # avisado a cada tarefa (empresa x serviço) que muda: (trabalho, tipo, situação, mensagem)
+        self.ao_progresso = None
+
+    def _progresso(self, t, tipo: str, situacao: str, mensagem: str = ""):
+        if self.ao_progresso is not None:
+            try:
+                self.ao_progresso(t, tipo, situacao, mensagem)
+            except Exception as e:  # o andamento é só informação: nunca para a rodada
+                log.debug("andamento não enviado: %s", e)
 
     @staticmethod
     def _impressao(login: str, senha: str) -> tuple[str, str]:
@@ -188,7 +197,14 @@ class Executor:
             log.info("%s — %s", t.rotulo, ", ".join(arquivos.TIPOS.get(x, x) for x in t.tipos))
             for tipo in t.tipos:
                 if tipo in TIPO_TELA:
-                    envios[(t.ie, tipo)] = com_sessao(atf.solicitar, tipo, t.ie, t.inicio, t.fim, arquivos.TIPOS.get(tipo, tipo))
+                    self._progresso(t, tipo, "andamento", "consultando no ATF")
+                    envio = envios[(t.ie, tipo)] = com_sessao(atf.solicitar, tipo, t.ie, t.inicio, t.fim, arquivos.TIPOS.get(tipo, tipo))
+                    if not envio.ok:
+                        self._progresso(t, tipo, "erro", envio.resposta or "consulta não aceita")
+                    elif envio.sem_notas:
+                        self._progresso(t, tipo, "sem_movimento", "sem notas no período")
+                    else:
+                        self._progresso(t, tipo, "aguardando", "consulta enviada; o ATF entrega em Minhas Mensagens")
 
         # 1b) enquanto o ATF prepara os XML: faturas, extrato, omissão e certidão (o PDF vem na hora)
         emissoes: dict[tuple[str, str], object] = {}
@@ -200,6 +216,7 @@ class Executor:
                     if tipo == "mei":  # meses do ano que ainda faltam (cliente que chega sem acompanhamento)
                         extra["periodos_extra"] = tuple(arquivos.periodos_mei(
                             self.cfg["pastas"]["destino"], t.nome, t.ie, t.codigo, t.inicio, self.cfg["mei"]["refazer_ano"]))
+                    self._progresso(t, tipo, "andamento", "fazendo no ATF")
                     e = emissoes[(t.ie, tipo)] = com_sessao(atf.emitir, tipo, t.ie, t.inicio, t.fim, nome, **extra)
                     if e.arquivos:
                         arquivos.salvar_documentos(e.arquivos, self.cfg["pastas"]["destino"], t.nome, t.ie, tipo,
@@ -210,6 +227,7 @@ class Executor:
                             arquivos.salvar_faturamento_mei(self.cfg["pastas"]["destino"], t.nome, t.ie, mes, dados, t.codigo)
                         e.dados["resumo"] = arquivos.salvar_faturamento_mei(
                             self.cfg["pastas"]["destino"], t.nome, t.ie, f"{t.inicio:%Y-%m}", e.dados, t.codigo)
+                    self._progresso(t, tipo, **situacao_emissao(e))
 
         # 2) recolhe as respostas em Minhas Mensagens
         esperadas: dict[str, int] = {}
@@ -374,8 +392,11 @@ class Executor:
                                   f" ({r['notas_percentual']}% do limite de {reais(r['limite'])}); cartão "
                                   f"{reais(r['cartao_acumulado'])} ({r['cartao_percentual']}%)"
                                   + (f"; {e.resposta}" if e.resposta else ""))
+                    detalhes[tipo].update(situacao="sem_movimento" if r["sem_movimento"] else "concluido",
+                                          mensagem=partes[-1][len(nome) + 2:])
                     log.info("   %s %s: %s", t.nome, nome, partes[-1])
                     continue
+                detalhes[tipo].update(situacao_emissao(e))
                 if n:
                     partes.append(f"{nome}: {n} arquivo(s)")
                     log.info("   %s %s: %d arquivo(s)", t.nome, nome, n)
@@ -394,6 +415,16 @@ class Executor:
             sem = vazio and envio.ok and (envio.sem_notas or completas)
             detalhes[tipo] = {"arquivos": r["novos"] if r else 0, "repetidos": r["repetidos"] if r else 0,
                               "notas": r["notas"] if r else 0, "valor": r["valor"] if r else 0.0, "sem_notas": bool(sem)}
+            if r:
+                detalhes[tipo].update(situacao="concluido", mensagem=f"{r['notas']} nota(s), {arquivos.reais(r['valor'])}")
+            elif not envio.ok:
+                detalhes[tipo].update(situacao="erro", mensagem=envio.resposta or "consulta não aceita")
+            elif sem:
+                detalhes[tipo].update(situacao="sem_movimento", mensagem="sem notas no período")
+            elif not final:
+                detalhes[tipo].update(situacao="aguardando", mensagem="aguardando o ATF; o robô lê as mensagens de novo no final")
+            else:
+                detalhes[tipo].update(situacao="erro", mensagem="o ATF não entregou em Minhas Mensagens")
             if r:
                 total_notas += r["notas"]
                 partes.append(f"{nome}: {r['notas']} nota(s), {arquivos.reais(r['valor'])}")
@@ -445,6 +476,18 @@ class Executor:
             self.chrome.fechar()
         self.atf = None
         self.chrome = None
+
+
+def situacao_emissao(e) -> dict:
+    """Situação de um serviço feito na hora (faturas, extrato, omissão, certidão, cartão, MEI)."""
+    if e.arquivos:
+        return {"situacao": "concluido", "mensagem": f"{len(e.arquivos)} arquivo(s)"}
+    if e.dados.get("resumo"):
+        return {"situacao": "sem_movimento" if e.dados["resumo"].get("sem_movimento") else "concluido",
+                "mensagem": "faturamento do mês salvo"}
+    if e.sem_dados:
+        return {"situacao": "sem_movimento", "mensagem": e.resposta or "nada a emitir"}
+    return {"situacao": "erro", "mensagem": e.resposta or "o ATF não devolveu o arquivo"}
 
 
 def rodadas(trabalhos: list, tamanho: int, chave=lambda t: t.login):
@@ -536,6 +579,8 @@ class Robo:
         self.privada = cripto.carregar_privada(cfg["chaves"]["privada"])
         self.nome = p["nome_robo"] or socket.gethostname()
         self.executor = Executor(cfg, p["segundos_assistido"])
+        self.executor.ao_progresso = self._andamento
+        self.em_curso: dict[int, tuple[str, dict]] = {}  # trabalho -> (id da tarefa, detalhes por serviço)
         self.tarefas_atuais: list[dict] = []
         self.aguardando: dict[int, dict] = {}  # trabalho -> tarefa à espera da última leitura das mensagens
         self.ultimo_sinal = 0.0
@@ -602,6 +647,7 @@ class Robo:
                               inicio=date.fromisoformat(t["data_inicio"]), fim=date.fromisoformat(t["data_fim"]),
                               cnpj=t.get("cnpj") or "", codigo=t.get("codigo") or "") for t in lote]
         del senha
+        self.em_curso = {id(tr): (t["id"], {}) for tr, t in zip(trabalhos, lote)}
         # mesma competência na rodada (o banco pode juntar agendamentos diferentes do mesmo login)
         resultados = []
         for grupo in rodadas(trabalhos, len(trabalhos), chave=lambda t: f"{t.inicio}"):
@@ -615,7 +661,7 @@ class Robo:
             log.info("   %s -> %s: %s", t["nome"], r.status, r.mensagem)
             if r.pendente:  # fica "processando" até a última leitura das mensagens, no final da fila
                 self.aguardando[id(trabalho)] = t
-                self.portal.atualizar_tarefa(t["id"], {"mensagem": r.mensagem[:500]})
+                self.portal.atualizar_tarefa(t["id"], {"mensagem": r.mensagem[:500], "detalhes": r.detalhes})
             else:
                 self._finalizar(t, r)
 
@@ -634,6 +680,15 @@ class Robo:
                       "O robô parou de vez; o que funcionou foi salvo.")
             self.executor.fechar()
             sys.exit("ERRO: o ATF não entregou todos os XML. Confira o ATF e ligue o robô de novo.")
+
+    def _andamento(self, trabalho, tipo: str, situacao: str, mensagem: str):
+        """Cada serviço de cada empresa aparece no portal assim que muda (na fila, fazendo, concluído...)."""
+        tarefa = self.em_curso.get(id(trabalho))
+        if tarefa is None:
+            return
+        tid, detalhes = tarefa
+        detalhes[tipo] = {"situacao": situacao, "mensagem": mensagem[:200]}
+        self.portal.atualizar_tarefa(tid, {"detalhes": detalhes})
 
     def _finalizar(self, t, r: Resultado):
         self.portal.atualizar_tarefa(t["id"], {

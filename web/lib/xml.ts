@@ -13,13 +13,46 @@ export const TIPOS = [
   { id: "mei", nome: "Dossiê MEI", coluna: "dossie mei" },
 ] as const;
 export const IDS_TIPOS: string[] = TIPOS.map((t) => t.id);
-export const nomeTipo = (id: string) => TIPOS.find((t) => t.id === id)?.nome ?? id;
+
+// Uma coluna da planilha pode virar mais de uma tarefa no robô (CT-e: como remetente e como destinatária)
+export const SUBTIPOS: Record<string, string[]> = { cte: ["cte_rem", "cte_dest"] };
+const NOMES_TAREFAS: Record<string, string> = { cte_rem: "CT-e Remetente", cte_dest: "CT-e Destinatário" };
+export const nomeTipo = (id: string) => TIPOS.find((t) => t.id === id)?.nome ?? NOMES_TAREFAS[id] ?? id;
+export const expandirTipos = (tipos: string[]) => tipos.flatMap((t) => SUBTIPOS[t] ?? [t]);
+/** Ordem das tarefas nas tabelas (a mesma das colunas da planilha). */
+export const ORDEM_TAREFAS = TIPOS.flatMap((t) => SUBTIPOS[t.id] ?? [t.id]);
+
+/** Situação de cada tarefa (empresa x serviço), gravada pelo robô à medida que avança. */
+export const SITUACAO: Record<string, { nome: string; classe: string }> = {
+  fila: { nome: "Na fila", classe: "st-neutro" },
+  andamento: { nome: "Fazendo", classe: "st-fila st-vivo" },
+  aguardando: { nome: "Aguardando ATF", classe: "st-alerta" },
+  concluido: { nome: "Concluído", classe: "st-ok" },
+  sem_movimento: { nome: "Sem movimento", classe: "st-calmo" },
+  erro: { nome: "Erro", classe: "st-erro" },
+  cancelado: { nome: "Cancelado", classe: "st-neutro" },
+};
+export const SITUACOES_ABERTAS = ["fila", "andamento", "aguardando"];
+
+type TarefaBase = { status: string; mensagem?: string; detalhes?: Record<string, { situacao?: string; mensagem?: string;
+  arquivos?: number; repetidos?: number; sem_notas?: boolean }> };
+
+/** Situação de um serviço de uma empresa: a que o robô gravou, ou a deduzida da situação da empresa. */
+export function situacaoTarefa(t: TarefaBase, tipo: string): { chave: string; mensagem: string } {
+  const d = t.detalhes?.[tipo];
+  if (d?.situacao) return { chave: d.situacao, mensagem: d.mensagem ?? "" };
+  if (t.status === "pendente" || t.status === "processando") return { chave: "fila", mensagem: "" };
+  if (t.status === "cancelado") return { chave: "cancelado", mensagem: "" };
+  if (d && ((d.arquivos ?? 0) > 0 || (d.repetidos ?? 0) > 0)) return { chave: "concluido", mensagem: "" };
+  if (d?.sem_notas || t.status === "sem_notas") return { chave: "sem_movimento", mensagem: "" };
+  return { chave: "erro", mensagem: t.mensagem ?? "" };
+}
 
 export const STATUS: Record<string, { nome: string; classe: string }> = {
   pendente: { nome: "Na fila", classe: "st-fila" },
-  processando: { nome: "Baixando…", classe: "st-fila" },
-  concluido: { nome: "Arquivos salvos", classe: "st-ok" },
-  sem_notas: { nome: "Sem notas", classe: "st-neutro" },
+  processando: { nome: "Em andamento", classe: "st-fila" },
+  concluido: { nome: "Concluído", classe: "st-ok" },
+  sem_notas: { nome: "Sem movimento", classe: "st-neutro" },
   senha_invalida: { nome: "Login recusado", classe: "st-erro" },
   erro: { nome: "Erro", classe: "st-erro" },
   fora_do_ar: { nome: "ATF fora do ar", classe: "st-alerta" },

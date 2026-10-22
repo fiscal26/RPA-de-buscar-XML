@@ -770,6 +770,8 @@ def test_cte_e_conferencia_de_cartao(ambiente):
     (Dossiê > Docs fiscais > Cartão: a janela que abre vira PDF)."""
     cfg, pasta = ambiente
     executor = robo_xml.Executor(cfg)
+    andamento = []  # o que o portal recebe, tarefa a tarefa
+    executor.ao_progresso = lambda t, tipo, situacao, msg: andamento.append((t.ie, tipo, situacao))
     try:
         r1, r2 = executor.executar_rodada([
             _trabalho(IE_EMPRESA, "Transporte", ["cte", "cartao", "mei"], codigo="050"),
@@ -808,6 +810,14 @@ def test_cte_e_conferencia_de_cartao(ambiente):
     assert (base / "050-Transporte/Dossiê MEI/Faturamento MEI 2026.xlsx").exists()
     assert r2.detalhes["mei"]["sem_notas"] and "não é MEI" in r2.mensagem, r2
     assert r2.detalhes["cte_dest"]["sem_notas"] and r2.detalhes["cte_rem"]["sem_notas"], r2
+    # andamento um a um: cada serviço avisa quando começa e quando termina
+    da_empresa = [(tipo, sit) for ie, tipo, sit in andamento if ie == IE_EMPRESA]
+    assert da_empresa[:2] == [("cte_rem", "andamento"), ("cte_rem", "aguardando")], da_empresa
+    assert ("cartao", "andamento") in da_empresa and ("cartao", "concluido") in da_empresa, da_empresa
+    assert ("cartao", "sem_movimento") in [(tipo, sit) for ie, tipo, sit in andamento if ie == IE_OUTRA]
+    assert {k: v["situacao"] for k, v in r1.detalhes.items()} == {
+        "cte_rem": "concluido", "cte_dest": "concluido", "cartao": "concluido", "mei": "concluido"}, r1.detalhes
+    assert r2.detalhes["cte_dest"]["situacao"] == "sem_movimento" and r2.detalhes["mei"]["situacao"] == "sem_movimento"
     assert r2.detalhes["cartao"]["sem_notas"] and "não existem operações com cartão" in r2.mensagem, r2
 
 

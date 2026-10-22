@@ -66,7 +66,7 @@ export default async function Agendamentos() {
                   <th>Arquivo</th>
                   <th>Início</th>
                   <th>Andamento</th>
-                  <th>XML</th>
+                  <th>Arquivos</th>
                   <th></th>
                 </tr>
               </thead>
