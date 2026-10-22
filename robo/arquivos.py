@@ -657,7 +657,10 @@ def salvar_faturamento_mei(destino: str | Path, nome: str, ie: str, competencia:
             "cartao": (dados.get("cartao") or {}).get("valor"), "sem_movimento": dados.get("sem_movimento"),
             "limite": limite, "meses": sorted(meses),
             "notas_acumulado": round(notas_acum, 2), "notas_percentual": round(notas_acum / limite * 100, 1),
-            "cartao_acumulado": round(cartao_acum, 2), "cartao_percentual": round(cartao_acum / limite * 100, 1)}
+            "cartao_acumulado": round(cartao_acum, 2), "cartao_percentual": round(cartao_acum / limite * 100, 1),
+            # o ano inteiro (sem a tabela bruta) para o painel de Monitoramento MEI
+            "inicio_atividade": empresa.get("inicio_atividade"),
+            "historico": {mes: {k: v for k, v in m.items() if k != "linhas"} for mes, m in sorted(meses.items())}}
 
 
 def salvar_sem_empresa(brutos: list[tuple[str, bytes]], destino: str | Path) -> int:

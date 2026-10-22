@@ -7,6 +7,7 @@ const caminhos: Record<string, React.ReactNode> = {
   equipe: <><circle cx="9" cy="8" r="3.5" /><path d="M2.5 20a6.5 6.5 0 0 1 13 0" /><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18.5 20a6.5 6.5 0 0 0-2.8-5.3" /></>,
   tarefas: <><rect x="4" y="3.5" width="16" height="18" rx="2" /><path d="M9 3.5h6v3H9zM8.5 12.5l2.2 2.2 4.8-4.8M8.5 18h7" /></>,
   visto: <><circle cx="12" cy="12" r="9" /><path d="m8 12.3 2.7 2.7L16 9.7" /></>,
+  mei: <><path d="M3 20h18" /><path d="M5 16l4.5-5 3.5 3 6-7" /><path d="M15 7h4v4" /></>,
   seta: <path d="m9 6 6 6-6 6" />,
   abaixo: <path d="m6 9 6 6 6-6" />,
   acima: <path d="m6 15 6-6 6 6" />,

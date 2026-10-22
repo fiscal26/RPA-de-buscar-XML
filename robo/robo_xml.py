@@ -118,6 +118,8 @@ class Executor:
         self.pendencias: list[Pendencia] = []  # rodadas à espera de mensagens (lidas de novo no final)
         # avisado a cada tarefa (empresa x serviço) que muda: (trabalho, tipo, situação, mensagem)
         self.ao_progresso = None
+        # Dossiê MEI salvo: (trabalho, resumo com o "historico" do ano) vai para o painel
+        self.ao_mei = None
 
     def _progresso(self, t, tipo: str, situacao: str, mensagem: str = ""):
         if self.ao_progresso is not None:
@@ -227,6 +229,11 @@ class Executor:
                             arquivos.salvar_faturamento_mei(self.cfg["pastas"]["destino"], t.nome, t.ie, mes, dados, t.codigo)
                         e.dados["resumo"] = arquivos.salvar_faturamento_mei(
                             self.cfg["pastas"]["destino"], t.nome, t.ie, f"{t.inicio:%Y-%m}", e.dados, t.codigo)
+                        if self.ao_mei is not None:
+                            try:
+                                self.ao_mei(t, e.dados["resumo"])
+                            except Exception as erro:  # o arquivo já está salvo no PC: o painel recebe na próxima vez
+                                log.warning("   faturamento MEI não enviado ao portal: %s", erro)
                     self._progresso(t, tipo, **situacao_emissao(e))
 
         # 2) recolhe as respostas em Minhas Mensagens
@@ -559,6 +566,11 @@ class Portal:
         self._r("PATCH", f"/rest/v1/xml_tarefas?status=eq.processando&robo=eq.{requests.utils.quote(robo)}",
                 json={"status": "pendente", "iniciado_em": None, "robo": None}, headers={"Prefer": "return=minimal"})
 
+    def registrar_mei(self, tarefa: str, meses: dict, inicio_atividade: str | None):
+        """Dossiê MEI: grava o ano mês a mês no painel (a empresa e o escritório saem da tarefa)."""
+        self._r("POST", "/rest/v1/rpc/xml_mei_registrar",
+                json={"p_tarefa": tarefa, "p_meses": meses, "p_inicio_atividade": inicio_atividade})
+
     def sinal(self, robo: str, info: dict):
         self._r("POST", "/rest/v1/xml_robos", json={"id": robo, "ultimo_sinal": agora(), "versao": VERSAO, "info": info},
                 headers={"Prefer": "resolution=merge-duplicates,return=minimal"})
@@ -580,6 +592,7 @@ class Robo:
         self.nome = p["nome_robo"] or socket.gethostname()
         self.executor = Executor(cfg, p["segundos_assistido"])
         self.executor.ao_progresso = self._andamento
+        self.executor.ao_mei = self._mei
         self.em_curso: dict[int, tuple[str, dict]] = {}  # trabalho -> (id da tarefa, detalhes por serviço)
         self.tarefas_atuais: list[dict] = []
         self.aguardando: dict[int, dict] = {}  # trabalho -> tarefa à espera da última leitura das mensagens
@@ -689,6 +702,11 @@ class Robo:
         tid, detalhes = tarefa
         detalhes[tipo] = {"situacao": situacao, "mensagem": mensagem[:200]}
         self.portal.atualizar_tarefa(tid, {"detalhes": detalhes})
+
+    def _mei(self, trabalho, resumo: dict):
+        tarefa = self.em_curso.get(id(trabalho))
+        if tarefa is not None:
+            self.portal.registrar_mei(tarefa[0], resumo.get("historico") or {}, resumo.get("inicio_atividade"))
 
     def _finalizar(self, t, r: Resultado):
         self.portal.atualizar_tarefa(t["id"], {

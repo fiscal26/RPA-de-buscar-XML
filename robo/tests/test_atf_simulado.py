@@ -829,9 +829,16 @@ def test_mei_segunda_vez_so_a_competencia(ambiente):
         cfg["mei"]["refazer_ano"] = refazer
         ESTADO["docs_periodos"].clear()
         executor = robo_xml.Executor(cfg)
+        enviados = []
+        executor.ao_mei = lambda t, resumo: enviados.append((t.ie, resumo))
         try:
             (r,) = executor.executar_rodada([_trabalho(IE_EMPRESA, "Transporte", ["mei"], codigo="050")])
         finally:
             executor.fechar()
         assert [m for _, m in ESTADO["docs_periodos"]] == esperado, (refazer, ESTADO["docs_periodos"])
+        # o painel recebe o ano inteiro (também os meses buscados em rodadas anteriores), sem a tabela bruta
+        ((ie, resumo),) = enviados
+        assert ie == IE_EMPRESA and resumo["inicio_atividade"] == "2026-03-10"
+        assert sorted(resumo["historico"]) == [f"2026-{m:02d}" for m in range(3, 10)]
+        assert all("linhas" not in m for m in resumo["historico"].values())
         assert r.detalhes["mei"]["notas_acumulado"] == 4700.5, r

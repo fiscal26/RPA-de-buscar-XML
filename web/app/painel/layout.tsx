@@ -9,6 +9,7 @@ const ITENS = [
   { href: "/painel/agendar", nome: "Agendar", icone: "agendar" },
   { href: "/painel/agendamentos", nome: "Agendamentos", icone: "agendamentos" },
   { href: "/painel/empresas", nome: "Empresas", icone: "empresas" },
+  { href: "/painel/mei", nome: "Monitoramento MEI", icone: "mei" },
 ];
 
 export default async function LayoutPainel({ children }: { children: React.ReactNode }) {

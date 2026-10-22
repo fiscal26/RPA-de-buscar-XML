@@ -76,3 +76,13 @@ precisam ser enviadas de novo. Para ver a pública de novo: `python robo_xml.py 
 3. Se alguma etapa não for reconhecida (login ou lista de notas depois do *Pesquisar*), o robô espera
    você concluir no Chrome (modo assistido) e salva um pacote em `<destino>/_diagnostico/`.
    Com esse pacote ajustamos o roteiro, e a partir daí fica automático.
+
+## 6. Monitoramento de Faturamento MEI
+
+1. **Atualize o banco:** no **SQL Editor**, rode de novo todo o `web/supabase/schema.sql` (cria as tabelas
+   `xml_mei_meses` e `xml_mei_ajustes` e a função `xml_mei_registrar`; não apaga nada).
+2. **Atualize o robô** no PC (copie a pasta `robo/` nova). A cada Dossiê MEI ele grava no portal o ano inteiro
+   da empresa, inclusive os meses buscados antes desta versão.
+3. No portal, **Monitoramento MEI** mostra a carteira (faturamento e compras contra o limite) e, ao clicar,
+   o painel de cada MEI com medidores, gráfico mês a mês/acumulado e **lançamentos manuais** (receita ou
+   compra que o ATF não mostra; valor negativo corrige para menos).
