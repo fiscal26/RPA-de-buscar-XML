@@ -44,9 +44,13 @@ export default async function Agendamentos() {
       <h1>Agendamentos</h1>
       <AutoRefresh ativo={emAndamento} segundos={10} />
       <div className={`faixa ${online.length ? "ok" : "alerta"}`}>
-        {online.length
-          ? `Robô ligado (${online.map((r) => r.id).join(", ")}).`
-          : `Robô desligado${robos?.[0] ? ` — último sinal em ${dataHoraBR(robos[0].ultimo_sinal)}` : ""}. Os agendamentos ficam na fila até ele ligar.`}
+        {admin
+          ? (online.length
+            ? `Robô ligado (${online.map((r) => r.id).join(", ")}).`
+            : `Robô desligado${robos?.[0] ? `; último sinal em ${dataHoraBR(robos[0].ultimo_sinal)}` : ""}. Os agendamentos ficam na fila até ele ligar.`)
+          : (online.length
+            ? "O robô está trabalhando: os agendamentos andam sozinhos."
+            : "O robô está pausado no momento. Seus agendamentos ficam na fila e começam assim que ele voltar.")}
       </div>
       <div className="cartao">
         {!agendamentos.length ? (
