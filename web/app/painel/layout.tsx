@@ -1,30 +1,41 @@
 import Link from "next/link";
 import Logo from "@/components/Logo";
-import NavPainel from "@/components/NavPainel";
+import Icone from "@/components/Icones";
+import MenuLateral from "@/components/MenuLateral";
 import { contexto } from "@/lib/sessao";
 import { sair } from "@/app/login/actions";
 
+const ITENS = [
+  { href: "/painel", nome: "Início", icone: "inicio" },
+  { href: "/painel/agendar", nome: "Agendar", icone: "agendar" },
+  { href: "/painel/agendamentos", nome: "Agendamentos", icone: "agendamentos" },
+  { href: "/painel/empresas", nome: "Empresas", icone: "empresas" },
+];
+
 export default async function LayoutPainel({ children }: { children: React.ReactNode }) {
-  const { perfil, org } = await contexto();
+  const { perfil, org, admin } = await contexto();
+  const gerencia = admin || perfil.papel === "gestor";
+  const nome = perfil.nome || perfil.email;
   return (
-    <>
-      <header className="topo">
-        <div className="topo-faixa">
-          <Link href="/painel" className="marca"><Logo /></Link>
-          <NavPainel />
-          <div className="usuario">
-            <span className="usuario-nome">{perfil.nome || perfil.email}</span>
-            {org && <span className="usuario-org">{org.nome}</span>}
-            <form action={sair}>
-              <button type="submit" className="botao fantasma pequeno">Sair</button>
-            </form>
-          </div>
+    <div className="painel-moldura">
+      <header className="barra">
+        <Link href="/painel" className="marca marca-clara" aria-label="LotiVisse, início do painel"><Logo /></Link>
+        <div className="barra-usuario">
+          <span className="avatar" aria-hidden="true">{nome.slice(0, 1).toUpperCase()}</span>
+          <span className="barra-nome">
+            {nome}
+            <small>{admin ? "Administrador" : org?.nome}</small>
+          </span>
+          <form action={sair}>
+            <button type="submit" className="botao-icone" aria-label="Sair" title="Sair"><Icone nome="sair" /></button>
+          </form>
         </div>
       </header>
+      <MenuLateral itens={ITENS} extras={gerencia ? [{ href: "/painel/equipe", nome: "Equipe", icone: "equipe" }] : []} />
       <main className="painel">
         {org && !org.ativo && <div className="faixa erro">Acesso suspenso. Fale com o responsável pelo site.</div>}
         {children}
       </main>
-    </>
+    </div>
   );
 }

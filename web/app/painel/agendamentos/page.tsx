@@ -50,7 +50,7 @@ export default async function Agendamentos() {
       </div>
       <div className="cartao">
         {!agendamentos.length ? (
-          <p className="suave">Nenhum agendamento ainda. <Link href="/painel">Agendar agora</Link>.</p>
+          <p className="suave">Nenhum agendamento ainda. <Link href="/painel/agendar">Agendar agora</Link>.</p>
         ) : (
           <div className="tabela-rolagem">
             <table>

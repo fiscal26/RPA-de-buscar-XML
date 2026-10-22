@@ -15,8 +15,16 @@ Projeto **próprio** do Supabase (separado do portal de CND; só o domínio e a 
 
 1. Crie o projeto no Supabase (região São Paulo).
 2. **SQL Editor** > cole todo o `web/supabase/schema.sql` > **Run**. Pode rodar de novo sem perder dados.
-3. Crie os usuários em **Authentication > Users** e, para cada um, uma linha em `organizacoes`
-   (o escritório cliente) e em `perfis` (papel `gestor` ou `usuario`; o seu, `admin`).
+3. **Só o seu acesso de administrador** é criado aqui: em **Authentication > Users > Add user** (marque
+   *Auto Confirm User*) e depois, no **SQL Editor**:
+   ```sql
+   insert into public.perfis (id, nome, email, papel, ativo)
+   select id, 'Seu nome', email, 'admin', true from auth.users where email = 'seu-email@exemplo.com'
+   on conflict (id) do update set papel = 'admin', ativo = true, org_id = null;
+   ```
+   Os escritórios clientes e as pessoas são criados no próprio portal, em **Painel > Equipe**: o admin cria o
+   escritório com o gestor; o gestor cadastra os colaboradores do escritório. (Precisa da variável
+   `SUPABASE_SERVICE_ROLE_KEY` na Vercel.)
 4. Anote em **Project Settings > API**: a URL, a chave `anon`/`publishable` e a `service_role`/`secret`.
 
 ## 2. Chaves das senhas (no PC do robô)
