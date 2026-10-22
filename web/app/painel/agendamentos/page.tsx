@@ -35,7 +35,7 @@ export default async function Agendamentos() {
   }
   const emAndamento = [...contagem.values()].some((c) => c.fila > 0);
 
-  const { data: robos } = await supabase.from("xml_robos").select("id, ultimo_sinal").order("ultimo_sinal", { ascending: false }).limit(5);
+  const { data: robos } = !admin ? { data: [] } : await supabase.from("xml_robos").select("id, ultimo_sinal").order("ultimo_sinal", { ascending: false }).limit(5);
   const agora = Date.now();
   const online = (robos ?? []).filter((r) => agora - Date.parse(r.ultimo_sinal) < ROBO_ONLINE_SEGUNDOS * 1000);
 
@@ -43,15 +43,13 @@ export default async function Agendamentos() {
     <>
       <h1>Agendamentos</h1>
       <AutoRefresh ativo={emAndamento} segundos={10} />
-      <div className={`faixa ${online.length ? "ok" : "alerta"}`}>
-        {admin
-          ? (online.length
+      {admin && (  // o estado do robô é da operação: o cliente não precisa ver
+        <div className={`faixa ${online.length ? "ok" : "alerta"}`}>
+          {online.length
             ? `Robô ligado (${online.map((r) => r.id).join(", ")}).`
-            : `Robô desligado${robos?.[0] ? `; último sinal em ${dataHoraBR(robos[0].ultimo_sinal)}` : ""}. Os agendamentos ficam na fila até ele ligar.`)
-          : (online.length
-            ? "O robô está trabalhando: os agendamentos andam sozinhos."
-            : "O robô está pausado no momento. Seus agendamentos ficam na fila e começam assim que ele voltar.")}
-      </div>
+            : `Robô desligado${robos?.[0] ? `; último sinal em ${dataHoraBR(robos[0].ultimo_sinal)}` : ""}. Os agendamentos ficam na fila até ele ligar.`}
+        </div>
+      )}
       <div className="cartao">
         {!agendamentos.length ? (
           <p className="suave">Nenhum agendamento ainda. <Link href="/painel/agendar">Agendar agora</Link>.</p>
