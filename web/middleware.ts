@@ -28,7 +28,8 @@ export async function middleware(request: NextRequest) {
   const caminho = request.nextUrl.pathname;
   if (caminho.startsWith("/sair")) return resposta;
   const login = caminho.startsWith("/login");
-  const publico = login || caminho === "/";  // a página inicial (apresentação) é aberta a todos
+  // abertas a todos: a apresentação, o login, o pedido de senha nova e o retorno do link do e-mail
+  const publico = login || caminho === "/" || caminho.startsWith("/esqueci-senha") || caminho.startsWith("/auth/");
 
   if (!user && !publico) {
     const url = request.nextUrl.clone();

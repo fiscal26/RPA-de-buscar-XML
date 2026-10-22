@@ -1,24 +1,16 @@
-import Link from "next/link";
 import FormLogin from "./FormLogin";
-import Logo from "@/components/Logo";
+import Entrada from "@/components/Entrada";
 
-export default async function Login({ searchParams }: { searchParams: Promise<{ erro?: string }> }) {
-  const { erro } = await searchParams;
+export default async function Login({ searchParams }: { searchParams: Promise<{ erro?: string; senha?: string }> }) {
+  const { erro, senha } = await searchParams;
   return (
-    <div className="entrada">
-      <aside className="entrada-lado">
-        <Link href="/" className="marca" aria-label="LotiVisse, início"><Logo /></Link>
-        <blockquote>Notas, guias e certidões da SEFAZ-PB, cada uma na pasta da sua empresa.</blockquote>
-        <p>O acesso ao portal é criado pela equipe LotiVisse.</p>
-      </aside>
-      <section className="entrada-form">
-        <div>
-          <h1>Entrar no portal</h1>
-          <p className="suave">Use o e-mail e a senha que a LotiVisse enviou para você.</p>
-          {erro === "sem-acesso" && <div className="faixa erro">Seu usuário está sem acesso. Fale com o responsável pelo site.</div>}
-          <FormLogin />
-        </div>
-      </section>
-    </div>
+    <Entrada>
+      <h1>Bem-vindo à LotiVisse</h1>
+      <p className="entrada-sub">Entre com o e-mail e a senha do seu acesso.</p>
+      {erro === "sem-acesso" && <div className="faixa erro">Seu usuário está sem acesso. Fale com o gestor do escritório.</div>}
+      {erro === "link" && <div className="faixa erro">O link de redefinição expirou ou já foi usado. Peça outro em "Esqueci minha senha".</div>}
+      {senha === "nova" && <div className="faixa ok">Senha nova salva. Entre com ela.</div>}
+      <FormLogin />
+    </Entrada>
   );
 }
