@@ -1,22 +1,12 @@
 import Link from "next/link";
 import Logo from "@/components/Logo";
-import ArvorePastas from "@/components/ArvorePastas";
+import Simbolo from "@/components/Simbolo";
+import AtfAoVivo from "@/components/AtfAoVivo";
+import ServicosInterativos from "@/components/ServicosInterativos";
 import BotaoTema from "@/components/BotaoTema";
 
 const PLANILHA = "/modelos/modelo_empresas_sefaz_pb.xlsx";
 
-// O que o robô busca: uma coluna da planilha para cada um
-const SERVICOS = [
-  ["NF-e de saída e de entrada", "XML"],
-  ["NFC-e", "XML"],
-  ["CT-e, como remetente e destinatária", "XML"],
-  ["Faturas (DAR/PIX em aberto)", "PDF"],
-  ["Extrato de pagamentos", "PDF"],
-  ["Omissão e inadimplência", "PDF"],
-  ["Certidão de débitos", "PDF"],
-  ["Conferência de cartão", "PDF"],
-  ["Dossiê MEI: faturamento do ano", "Planilha"],
-];
 const PASSOS = [
   ["Preencha a planilha", "Inscrição estadual, nome e o login do contador no ATF de cada empresa."],
   ["Agende a competência", "No portal, agora ou numa data e hora marcadas."],
@@ -50,19 +40,15 @@ export default function Inicio() {
               <a href={PLANILHA} className="botao secundario grande" download>Baixar a planilha modelo</a>
             </div>
           </div>
-          <ArvorePastas />
+          <AtfAoVivo />
         </section>
 
         <section id="servicos" className="secao">
           <div className="secao-cabeca">
             <h2>O que o robô busca</h2>
-            <p>Marque com X na planilha o que cada empresa precisa.</p>
+            <p>Uma coluna da planilha para cada serviço. Escolha um para ver como o ATF entrega e onde o robô guarda.</p>
           </div>
-          <ul className="servicos-lista">
-            {SERVICOS.map(([nome, tipo]) => (
-              <li key={nome}><span>{nome}</span><span className="servico-tipo">{tipo}</span></li>
-            ))}
-          </ul>
+          <ServicosInterativos />
         </section>
 
         <section id="como-funciona" className="secao">
@@ -85,11 +71,11 @@ export default function Inicio() {
       </main>
 
       <footer className="rodape">
-        <div className="site-faixa">
-          <Logo />
+        <div className="site-faixa rodape-linha">
           <p>lotivisse.com.br</p>
           <p className="rodape-aviso">SEFAZ-PB e ATF são sistemas do Governo da Paraíba. A LotiVisse não tem vínculo com a Secretaria da Fazenda.</p>
         </div>
+        <p className="marca-gigante" aria-hidden="true"><Simbolo tamanho={120} /><span>Loti<span className="logo-v">Visse</span></span></p>
       </footer>
     </div>
   );

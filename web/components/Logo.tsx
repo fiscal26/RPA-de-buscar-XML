@@ -1,8 +1,11 @@
-/** Logotipo em texto: "Loti" + "Visse". O V carrega o traço de marca-texto da marca. */
-export default function Logo({ grande = false }: { grande?: boolean }) {
+import Simbolo from "./Simbolo";
+
+/** Logotipo: o símbolo (o visto) e "Loti" + "Visse", com o traço de marca-texto sob o V. */
+export default function Logo({ grande = false, simbolo = true }: { grande?: boolean; simbolo?: boolean }) {
   return (
     <span className={`logo${grande ? " logo-grande" : ""}`} aria-label="LotiVisse">
-      Loti<span className="logo-v">Visse</span>
+      {simbolo && <Simbolo tamanho={grande ? 38 : 30} />}
+      <span className="logo-nome">Loti<span className="logo-v">Visse</span></span>
     </span>
   );
 }
