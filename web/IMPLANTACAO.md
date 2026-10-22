@@ -2,6 +2,10 @@
 
 Três partes: o **banco** (Supabase), o **portal** (Vercel, em `xml.lotivisse.com.br`) e o **robô** (seu PC).
 
+Na Vercel, o projeto precisa de **Root Directory = `web`** e **Framework Preset = Next.js** (o `web/vercel.json`
+já fixa o Next.js), sem Build/Output/Install Command sobrescritos. Com a raiz errada a Vercel responde 404;
+com o preset errado, erro 500 "Cannot use import statement outside a module" no `middleware.js`.
+
 No portal, a página inicial (`/`) é a apresentação, aberta a todos; o login fica em `/login` e o painel
 (agendar, agendamentos, empresas) em `/painel`, só para quem entrou.
 
