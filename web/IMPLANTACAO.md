@@ -59,7 +59,10 @@ precisam ser enviadas de novo. Para ver a pública de novo: `python robo_xml.py 
 ## 4. Robô (seu PC)
 
 1. Copie `robo/config.exemplo.json` para `robo/config.json` e preencha:
-   - `pastas.destino`: a pasta onde os XML devem ficar;
+   - a pasta dos arquivos não precisa ser preenchida: o robô usa **Documentos\XML SEFAZ-PB deste
+     computador** (com OneDrive, a pasta Documentos dele). Para outro lugar, acrescente
+     `"pastas": {"destino": "D:\\Clientes\\XML"}`; se a pasta não existir ou não aceitar gravação, o robô
+     avisa ao ligar e volta para a pasta Documentos;
    - `portal.supabase_url` e `portal.chave_service_role`;
    - `portal.nome_robo`: um nome para este PC (aparece no portal).
 2. Abra o Chrome pelo `abrir_chrome.bat` (porta 9222, perfil próprio).

@@ -756,6 +756,10 @@ def main():
         cfg = config.carregar()
     except config.ConfigInvalida as e:
         sys.exit(str(e))
+    for aviso in cfg.get("_avisos", []):
+        log.warning("ATENÇÃO: %s", aviso)
+    if not (args.gerar_chaves or args.mostrar_chave_publica or args.modelo or args.gravar is not None):
+        log.info("Os arquivos baixados ficam em: %s", Path(cfg["pastas"]["destino"]) / arquivos.PASTA_BAIXADOS)
 
     if args.gerar_chaves:
         publica = cripto.gerar_chaves(Path(cfg["chaves"]["privada"]))
