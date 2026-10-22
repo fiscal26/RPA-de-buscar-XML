@@ -29,8 +29,9 @@ export default async function Inicio() {
   const passos = [
     { feito: !!empresas, titulo: "Preencher a planilha modelo",
       texto: "Inscrição estadual, nome e o login do contador no ATF de cada empresa.", href: "/painel/agendar" },
-    { feito: !!robo, titulo: "Ligar o robô no computador do escritório",
-      texto: "Ele roda junto do Chrome e busca os agendamentos sozinho.", href: "/painel/agendamentos" },
+    // ligar o robô é com a LotiVisse: só o administrador vê esse passo
+    ...(admin ? [{ feito: !!robo, titulo: "Ligar o robô",
+      texto: "Ele roda junto do Chrome e busca os agendamentos sozinho.", href: "/painel/agendamentos" }] : []),
     { feito: !!ultimo, titulo: "Agendar a primeira competência",
       texto: "Envie a planilha e escolha o mês e a hora.", href: "/painel/agendar" },
     ...(gerencia ? [{ feito: (pessoas ?? 0) > 1, titulo: "Cadastrar a equipe",
