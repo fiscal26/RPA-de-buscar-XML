@@ -409,3 +409,18 @@ label.mini { font-size: 0.78rem; font-weight: 600; color: var(--suave); margin: 
 
 .passo-form { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 2rem; align-items: start; }
 @media (max-width: 860px) { .passo-form { grid-template-columns: 1fr; } }
+
+/* agendar: o preparo em três passos e as dúvidas recolhidas */
+.preparo { margin: 0.75rem 0 1.5rem; padding-left: 1.25rem; display: grid; gap: 0.5rem; }
+.preparo li { padding-left: 0.25rem; }
+.preparo li::marker { color: var(--suave); font-weight: 600; }
+.duvidas { margin-top: 1.5rem; border-top: 1px solid var(--carbono); padding-top: 0.75rem; }
+.duvidas summary { color: var(--forte); font-size: 0.95rem; }
+.duvidas dl { margin: 0.75rem 0 0; display: grid; gap: 0.15rem; font-size: 0.9rem; }
+.duvidas dt { font-weight: 600; color: var(--texto); margin-top: 0.6rem; }
+.duvidas dd { margin: 0; color: var(--suave); }
+input[type="file"]::file-selector-button {
+  font: 600 0.88rem var(--fonte-texto); color: var(--forte); background: var(--superficie);
+  border: 1px solid var(--linha); border-radius: 6px; padding: 0.4rem 0.8rem; margin-right: 0.75rem; cursor: pointer;
+}
+input[type="file"]::file-selector-button:hover { background: var(--carbono); }
