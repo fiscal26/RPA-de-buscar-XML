@@ -1,0 +1,17 @@
+# Credenciais e configuração local
+robo/config.json
+robo/chaves/
+*.pem
+*.pfx
+# Planilhas de clientes (têm senhas)
+robo/*.xlsx
+robo/*.csv
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+robo/robo_xml.log
+
+# Gravações de passos (podem ter dados de clientes)
+robo/gravacoes/

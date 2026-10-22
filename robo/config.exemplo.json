@@ -1,0 +1,11 @@
+{
+  "_comentario": "Copie para config.json e altere só o que precisar. Padrões em config.py.",
+  "pastas": {
+    "destino": "C:\\Users\\SEU-USUARIO\\Documents\\XML SEFAZ-PB"
+  },
+  "portal": {
+    "supabase_url": "https://SEU-PROJETO.supabase.co",
+    "chave_service_role": "COLE-AQUI-A-CHAVE-SERVICE-ROLE",
+    "nome_robo": "pc-escritorio"
+  }
+}
