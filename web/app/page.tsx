@@ -1,6 +1,7 @@
 import Link from "next/link";
 import Logo from "@/components/Logo";
 import ArvorePastas from "@/components/ArvorePastas";
+import BotaoTema from "@/components/BotaoTema";
 
 const PLANILHA = "/modelos/modelo_empresas_sefaz_pb.xlsx";
 
@@ -32,6 +33,7 @@ export default function Inicio() {
             <a href="#servicos">Serviços</a>
             <a href="#como-funciona">Como funciona</a>
           </nav>
+          <BotaoTema />
           <Link href="/login" className="botao">Entrar</Link>
         </div>
       </header>

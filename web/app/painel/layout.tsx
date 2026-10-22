@@ -1,9 +1,8 @@
 import Link from "next/link";
 import Logo from "@/components/Logo";
-import Icone from "@/components/Icones";
+import MenuPerfil from "@/components/MenuPerfil";
 import MenuLateral from "@/components/MenuLateral";
 import { contexto } from "@/lib/sessao";
-import { sair } from "@/app/login/actions";
 
 const ITENS = [
   { href: "/painel", nome: "Início", icone: "inicio" },
@@ -20,16 +19,7 @@ export default async function LayoutPainel({ children }: { children: React.React
     <div className="painel-moldura">
       <header className="barra">
         <Link href="/painel" className="marca marca-clara" aria-label="LotiVisse, início do painel"><Logo /></Link>
-        <div className="barra-usuario">
-          <span className="avatar" aria-hidden="true">{nome.slice(0, 1).toUpperCase()}</span>
-          <span className="barra-nome">
-            {nome}
-            <small>{admin ? "Administrador" : org?.nome}</small>
-          </span>
-          <form action={sair}>
-            <button type="submit" className="botao-icone" aria-label="Sair" title="Sair"><Icone nome="sair" /></button>
-          </form>
-        </div>
+        <MenuPerfil nome={nome} detalhe={admin ? "Administrador" : org?.nome} />
       </header>
       <MenuLateral itens={ITENS} extras={gerencia ? [{ href: "/painel/equipe", nome: "Equipe", icone: "equipe" }] : []} />
       <main className="painel">

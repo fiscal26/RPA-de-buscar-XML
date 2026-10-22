@@ -9,10 +9,14 @@ export const metadata: Metadata = {
 
 export const viewport: Viewport = { themeColor: "#13294B" };
 
+// Antes de pintar a página: o tema escolhido (guardado no navegador) ou o do sistema, sem piscar.
+const TEMA_INICIAL = `try{var t=localStorage.getItem("tema");if(t!=="claro"&&t!=="escuro")t=matchMedia("(prefers-color-scheme: dark)").matches?"escuro":"claro";document.documentElement.dataset.tema=t}catch(e){}`;
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="pt-BR">
+    <html lang="pt-BR" suppressHydrationWarning>
       <head>
+        <script dangerouslySetInnerHTML={{ __html: TEMA_INICIAL }} />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="" />
         <link

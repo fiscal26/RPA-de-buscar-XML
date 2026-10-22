@@ -50,8 +50,11 @@ precisam ser enviadas de novo. Para ver a pública de novo: `python robo_xml.py 
 4. **Domínio**: Vercel > Settings > Domains > `xml.lotivisse.com.br`. No painel do domínio
    lotivisse.com.br, crie o registro **CNAME** `xml` apontando para `cname.vercel-dns.com`
    (a Vercel mostra o valor exato).
-5. Supabase > Authentication > URL Configuration: acrescente `https://xml.lotivisse.com.br` em
-   *Redirect URLs*.
+5. Supabase > Authentication > URL Configuration: em *Site URL* coloque `https://xml.lotivisse.com.br` e em
+   *Redirect URLs* acrescente `https://xml.lotivisse.com.br/auth/confirmar` (o link do "Esqueci minha senha"
+   volta por aí). Se o site tiver outro endereço, pode fixá-lo na variável `NEXT_PUBLIC_SITE_URL`.
+   O e-mail de redefinição usa o envio do próprio Supabase (poucos por hora); para volume maior, configure
+   um SMTP em Authentication > Emails.
 
 ## 4. Robô (seu PC)
 
