@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import { contexto } from "@/lib/sessao";
 import { dataHoraBR, formatarDocumento } from "@/lib/documentos";
 import { alternarAcesso, alternarEscritorio } from "./actions";
-import { FormEscritorio, FormPessoa, FormSenha } from "./Formularios";
+import { ExcluirEscritorio, ExcluirPessoa, FormEscritorio, FormPessoa, FormSenha } from "./Formularios";
 
 type Pessoa = { id: string; org_id: string | null; nome: string; email: string; papel: string; ativo: boolean; criado_em: string };
 type Org = { id: string; nome: string; documento: string; ativo: boolean };
@@ -63,12 +63,15 @@ export default async function Equipe() {
               )}
             </div>
             {admin && e && (
-              <form action={alternarEscritorio}>
-                <input type="hidden" name="id" value={e.id} />
-                <button type="submit" className={e.ativo ? "perigo pequeno" : "secundario pequeno"}>
-                  {e.ativo ? "Suspender escritório" : "Liberar escritório"}
-                </button>
-              </form>
+              <div className="acoes-linha">
+                <form action={alternarEscritorio}>
+                  <input type="hidden" name="id" value={e.id} />
+                  <button type="submit" className="secundario pequeno">
+                    {e.ativo ? "Suspender escritório" : "Liberar escritório"}
+                  </button>
+                </form>
+                <ExcluirEscritorio id={e.id} nome={e.nome} />
+              </div>
             )}
           </div>
           {!lista.length ? (
@@ -100,6 +103,7 @@ export default async function Equipe() {
                                 <summary>Senha</summary>
                                 <FormSenha id={x.id} />
                               </details>
+                              <ExcluirPessoa id={x.id} nome={x.nome || x.email} />
                             </>
                           )}
                         </td>
