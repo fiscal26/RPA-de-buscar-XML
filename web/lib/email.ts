@@ -42,7 +42,7 @@ export async function enviarEmail(e: Email): Promise<string | null> {
   try {
     const r = await fetch("https://api.brevo.com/v3/smtp/email", {
       method: "POST",
-      headers: { "api-key": process.env.BREVO_API_KEY!, "content-type": "application/json", accept: "application/json" },
+      headers: { "api-key": process.env.BREVO_API_KEY!.trim().replace(/^["']|["']$/g, ""), "content-type": "application/json", accept: "application/json" },
       body: JSON.stringify({
         sender: { email: process.env.EMAIL_REMETENTE, name: process.env.EMAIL_REMETENTE_NOME || MARCA },
         to: [{ email: e.para.email, ...(e.para.nome ? { name: e.para.nome } : {}) }],
@@ -50,6 +50,7 @@ export async function enviarEmail(e: Email): Promise<string | null> {
       }),
       cache: "no-store",
     });
+    if (r.status === 401) return "a Brevo não reconheceu a BREVO_API_KEY (use a chave de API, que começa com xkeysib-, não a chave SMTP)";
     if (!r.ok) return `Brevo recusou (${r.status}): ${(await r.text()).slice(0, 200)}`;
     return null;
   } catch (erro) {
