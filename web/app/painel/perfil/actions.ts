@@ -3,12 +3,13 @@
 import { revalidatePath } from "next/cache";
 import { contexto } from "@/lib/sessao";
 import { clienteAdmin } from "@/lib/supabase/admin";
+import { corrigirNome } from "@/lib/nomes";
 
 export type EstadoPerfil = { ok?: string; erro?: string } | undefined;
 
 export async function salvarNome(_: EstadoPerfil, form: FormData): Promise<EstadoPerfil> {
   const { perfil } = await contexto();
-  const nome = String(form.get("nome") ?? "").trim().slice(0, 80);
+  const nome = corrigirNome(String(form.get("nome") ?? ""), 80);
   if (!nome) return { erro: "Informe o nome." };
   const { error } = await clienteAdmin().from("perfis").update({ nome }).eq("id", perfil.id);
   if (error) return { erro: `Não consegui salvar: ${error.message}.` };

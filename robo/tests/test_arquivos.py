@@ -219,3 +219,17 @@ def test_meses_que_faltam_e_limite_proporcional(tmp_path):
     assert arquivos.limite_mei(2026, None) == 81000.0
     assert arquivos.limite_mei(2026, "2026-03-10") == 67500.0  # março a dezembro: 10 x 6.750
     assert arquivos.limite_mei(2026, "2010-05-14") == 81000.0
+
+
+def test_historicos_mei_para_o_painel(tmp_path):
+    """O que já está salvo no PC vai para o painel: um item por empresa/ano, sem a tabela bruta."""
+    for mes, saidas in (("2026-08", 1000.0), ("2026-09", 2500.5)):
+        arquivos.salvar_faturamento_mei(tmp_path, "Loja MEI", IE_EMPRESA, mes,
+                                        {"saidas": saidas, "entradas": 300.0, "cartao": {"qtd": 2, "valor": 90.0},
+                                         "sem_movimento": False, "linhas": [["NFEs", "1"]], "inicio_atividade": "2026-03-10"},
+                                        codigo="7")
+    (h,) = arquivos.historicos_mei(tmp_path)
+    assert h["ie"] == IE_EMPRESA and h["nome"] == "Loja MEI" and h["inicio_atividade"] == "2026-03-10"
+    assert sorted(h["meses"]) == ["2026-08", "2026-09"] and h["meses"]["2026-09"]["saidas"] == 2500.5
+    assert all("linhas" not in m for m in h["meses"].values())
+    assert arquivos.historicos_mei(tmp_path / "vazio") == []

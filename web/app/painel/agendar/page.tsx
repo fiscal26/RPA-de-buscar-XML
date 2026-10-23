@@ -16,7 +16,7 @@ export default async function Agendar() {
           <ol className="preparo">
             <li>Baixe a planilha modelo.</li>
             <li>Preencha uma empresa por linha: inscrição estadual, nome, login e senha do ATF.</li>
-            <li>Apague o X do que a empresa não precisa.</li>
+            <li>Apague o X dos serviços de que a empresa não precisa.</li>
           </ol>
           <a className="botao" href="/modelos/modelo_empresas_sefaz_pb.xlsx" download>Baixar a planilha modelo</a>
           <details className="duvidas">
@@ -27,11 +27,11 @@ export default async function Agendar() {
               <dt>Como deixo uma empresa de fora?</dt>
               <dd>Troque o X da coluna ATIVA por N.</dd>
               <dt>Quanto tempo demora?</dt>
-              <dd>Os PDF saem na hora. Os XML chegam pelo ATF em alguns minutos.</dd>
+              <dd>Os PDFs saem na hora. Os XMLs chegam pelo ATF em alguns minutos.</dd>
               <dt>E o Dossiê MEI?</dt>
-              <dd>Só é feito para empresas optantes do SIMEI.</dd>
+              <dd>Só é feito para empresas optantes pelo SIMEI.</dd>
               <dt>E a planilha depois de enviar?</dt>
-              <dd>Apague do computador: ela tem as senhas. No portal elas ficam cifradas.</dd>
+              <dd>Apague-a do computador: ela contém as senhas. No portal elas ficam cifradas.</dd>
             </dl>
           </details>
         </section>

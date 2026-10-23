@@ -76,3 +76,11 @@ def test_modelo_vem_com_x_e_linhas_livres_sao_ignoradas():
     assert ws.cell(2, cab.index("NF-e Saida") + 1).value == "X" and ws.cell(2, 1).value == "X"
     leitura = planilha.ler(planilha.MODELO)
     assert (leitura.empresas, leitura.erros, leitura.avisos) == ([], [], [])
+
+
+def test_corrigir_nome():
+    from planilha import corrigir_nome
+    assert corrigir_nome("lidi@ne silv4") == "Lidiane Silva"
+    assert corrigir_nome("  JOAO  DA SILVA ltda ") == "Joao da Silva LTDA"
+    assert corrigir_nome("posto 2000 me") == "Posto 2000 ME"
+    assert corrigir_nome("3M do brasil") == "3M do Brasil"

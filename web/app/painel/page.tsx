@@ -31,7 +31,7 @@ export default async function Inicio() {
       texto: "Inscrição estadual, nome e o login do contador no ATF de cada empresa.", href: "/painel/agendar" },
     // ligar o robô é com a LotiVisse: só o administrador vê esse passo
     ...(admin ? [{ feito: !!robo, titulo: "Ligar o robô",
-      texto: "Ele roda junto do Chrome e busca os agendamentos sozinho.", href: "/painel/agendamentos" }] : []),
+      texto: "Ele roda junto com o Chrome e busca os agendamentos sozinho.", href: "/painel/agendamentos" }] : []),
     { feito: ags.length > 0, titulo: "Agendar a primeira competência",
       texto: "Envie a planilha e escolha o mês e a hora.", href: "/painel/agendar" },
     ...(gerencia ? [{ feito: (pessoas ?? 0) > 1, titulo: "Cadastrar a equipe",
@@ -44,7 +44,7 @@ export default async function Inicio() {
     <>
       <div className="cabeca-pagina">
         <div>
-          <h1>Bem-vindo, {(perfil.nome || perfil.email).split(" ")[0]}</h1>
+          <h1>Olá, {(perfil.nome || perfil.email).split(" ")[0]}</h1>
           <p className="suave">O resumo das execuções no ATF da SEFAZ-PB.</p>
         </div>
         <Link href="/painel/agendar" className="botao">Agendar competência</Link>
@@ -118,7 +118,7 @@ export default async function Inicio() {
       {acoes > 0 && (
         <section className="cartao" id="acoes">
           <h2 className="titulo-cartao">Precisa da sua ação</h2>
-          <p className="suave">Empresas que só voltam a sair depois de um ajuste seu.</p>
+          <p className="suave">Empresas cujos documentos só voltam a sair depois de um ajuste seu.</p>
           <ul className="acoes-lista">
             {r.acoes.map((a) => (
               <li key={a.ie}>
@@ -141,7 +141,7 @@ export default async function Inicio() {
           {ags.length > 0 && <Link href="/painel/agendamentos" className="link-discreto">Ver todos os agendamentos</Link>}
         </div>
         {ags.length === 0 ? (
-          <p className="suave">Quando o primeiro agendamento rodar, o resultado de cada um aparece aqui.</p>
+          <p className="suave">Quando o primeiro agendamento rodar, o resultado de cada execução aparecerá aqui.</p>
         ) : (
           <div className="tabela-rolagem">
             <table>

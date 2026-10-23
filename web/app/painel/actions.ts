@@ -7,6 +7,7 @@ import { lerPlanilha } from "@/lib/planilha";
 import { cifrarSenha } from "@/lib/cripto";
 import { normalizarDocumento, normalizarIe } from "@/lib/documentos";
 import { IDS_TIPOS } from "@/lib/xml";
+import { corrigirNome } from "@/lib/nomes";
 
 /** Empresa da conferência (sem senha nenhuma: as senhas vão à parte, cifradas, por login). */
 export type ItemAgendamento = {
@@ -139,7 +140,9 @@ export async function confirmarAgendamento(previa: Previa): Promise<Previa> {
   const { data: acessosDb } = await db.from("xml_acessos").select("id, login").eq("org_id", orgId);
   const acessoPorLogin = new Map((acessosDb ?? []).map((a) => [a.login as string, a.id as string]));
 
-  // 2) empresas (uma por IE)
+  // 2) empresas (uma por IE). Nome renomeado no portal (nome_fixo) vale mais que o da planilha.
+  const { data: fixos } = await db.from("xml_empresas").select("ie, nome").eq("org_id", orgId).eq("nome_fixo", true);
+  const nomeFixo = new Map((fixos ?? []).map((f) => [f.ie as string, f.nome as string]));
   const vistas = new Set<string>();
   const empresas = previa.itens.flatMap((i) => {
     const { ie } = normalizarIe(i.ie);
@@ -150,7 +153,7 @@ export async function confirmarAgendamento(previa: Previa): Promise<Previa> {
     if (!tipos.length) return [];
     return [{
       org_id: orgId, ie, cnpj: normalizarDocumento(i.cnpj).doc, codigo: String(i.codigo ?? "").slice(0, 20),
-      filial: String(i.filial ?? "").slice(0, 20), nome: String(i.nome ?? "").trim().slice(0, 60) || ie,
+      filial: String(i.filial ?? "").slice(0, 20), nome: nomeFixo.get(ie) ?? (corrigirNome(String(i.nome ?? "")) || ie),
       acesso_id: acessoId, tipos, atualizado_em: agora,
     }];
   });
@@ -175,7 +178,7 @@ export async function confirmarAgendamento(previa: Previa): Promise<Previa> {
   }
   revalidatePath("/painel/agendamentos");
   revalidatePath("/painel/empresas");
-  return { ok: `Agendamento criado: ${empresas.length} empresa(s) na fila.`, agendamentoId: ag.id };
+  return { ok: `Agendamento criado: ${empresas.length} ${empresas.length === 1 ? "empresa" : "empresas"} na fila.`, agendamentoId: ag.id };
 }
 
 export async function cancelarAgendamento(id: string) {
@@ -183,6 +186,29 @@ export async function cancelarAgendamento(id: string) {
   await supabase.rpc("xml_cancelar_agendamento", { p_id: id });
   revalidatePath(`/painel/agendamentos/${id}`);
   revalidatePath("/painel/agendamentos");
+}
+
+export type EstadoRenomear = { ok?: string; erro?: string } | undefined;
+
+/** Renomeia a empresa no portal. O nome fica fixo: a planilha seguinte não volta o nome antigo. */
+export async function renomearEmpresa(_: EstadoRenomear, form: FormData): Promise<EstadoRenomear> {
+  const { supabase } = await contexto();
+  const id = String(form.get("id") ?? "");
+  const nome = corrigirNome(String(form.get("nome") ?? ""));
+  if (!nome) return { erro: "Informe o nome." };
+  // a leitura com a sessão do usuário confere se a empresa é do escritório dele (ou se é o administrador)
+  const { data: empresa } = await supabase.from("xml_empresas").select("id, org_id, ie").eq("id", id).maybeSingle();
+  if (!empresa) return { erro: "Empresa não encontrada." };
+  const db = clienteAdmin();
+  const { error } = await db.from("xml_empresas").update({ nome, nome_fixo: true, atualizado_em: new Date().toISOString() }).eq("id", id);
+  if (error) return { erro: `Não consegui renomear: ${error.message}` };
+  // o que ainda vai rodar e o monitoramento MEI passam a usar o nome novo
+  await Promise.all([
+    db.from("xml_tarefas").update({ nome }).eq("empresa_id", id).in("status", ["pendente", "processando"]),
+    db.from("xml_mei_meses").update({ nome }).eq("org_id", empresa.org_id).eq("ie", empresa.ie),
+  ]);
+  revalidatePath("/painel", "layout");
+  return { ok: nome };
 }
 
 export async function removerEmpresa(form: FormData) {

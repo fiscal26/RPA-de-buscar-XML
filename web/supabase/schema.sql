@@ -81,6 +81,9 @@ create table if not exists public.xml_empresas (
     check (tipos <@ array['nfe_saida', 'nfe_entrada', 'nfce', 'cte', 'faturas', 'extrato', 'omissao', 'certidao', 'cartao', 'mei'])
 );
 
+-- Nome renomeado no portal: a planilha seguinte não troca de volta
+alter table public.xml_empresas add column if not exists nome_fixo boolean not null default false;
+
 -- Banco criado antes dos novos serviços (faturas, extrato, omissão, certidão, CT-e, cartão): troca a regra dos tipos
 alter table public.xml_empresas drop constraint if exists xml_empresas_tipos_check;
 alter table public.xml_empresas add constraint xml_empresas_tipos_check
@@ -246,30 +249,51 @@ begin
   return n;
 end $$;
 
--- Robô: grava o ano do Dossiê MEI. Escritório, IE e nome saem da tarefa (o robô não escolhe a organização).
-create or replace function public.xml_mei_registrar(p_tarefa uuid, p_meses jsonb, p_inicio_atividade date default null)
+-- Grava meses do Dossiê MEI de uma empresa num escritório (upsert por mês).
+create or replace function public.xml_mei_gravar(p_org uuid, p_ie text, p_nome text, p_meses jsonb, p_inicio_atividade date)
 returns integer language plpgsql security definer set search_path = public as $$
-declare
-  v_org uuid; v_ie text; v_nome text; v_mes text; v_d jsonb; n integer := 0;
+declare v_mes text; v_d jsonb; n integer := 0;
 begin
-  select org_id, ie, nome into v_org, v_ie, v_nome from public.xml_tarefas where id = p_tarefa;
-  if v_org is null then raise exception 'tarefa % não encontrada', p_tarefa; end if;
   for v_mes, v_d in select * from jsonb_each(coalesce(p_meses, '{}'::jsonb)) loop
-    continue when v_mes !~ '^[0-9]{4}-(0[1-9]|1[0-2])$';
+    continue when v_mes !~ '^[0-9]{4}-(0[1-9]|1[0-2])$' or jsonb_typeof(v_d) <> 'object';
     insert into public.xml_mei_meses as m (org_id, ie, nome, competencia, saidas, entradas, qtd_saidas, qtd_entradas,
                                            cartao, qtd_cartao, sem_movimento, simei, inicio_atividade, itens, consultado_em)
-    values (v_org, v_ie, v_nome, (v_mes || '-01')::date,
+    values (p_org, p_ie, coalesce(p_nome, ''), (v_mes || '-01')::date,
             nullif(v_d->>'saidas', '')::numeric, nullif(v_d->>'entradas', '')::numeric,
             nullif(v_d->>'qtd_saidas', '')::numeric::integer, nullif(v_d->>'qtd_entradas', '')::numeric::integer,
             nullif(v_d->'cartao'->>'valor', '')::numeric, nullif(v_d->'cartao'->>'qtd', '')::numeric::integer,
             (v_d->>'sem_movimento')::boolean, (v_d->>'simei')::boolean, p_inicio_atividade,
-            coalesce(v_d->'itens', '[]'::jsonb), nullif(v_d->>'consultado_em', '')::timestamp at time zone 'America/Fortaleza')
+            case when jsonb_typeof(v_d->'itens') = 'array' then v_d->'itens' else '[]'::jsonb end,
+            nullif(v_d->>'consultado_em', '')::timestamp at time zone 'America/Fortaleza')
     on conflict (org_id, ie, competencia) do update set
-      nome = excluded.nome, saidas = excluded.saidas, entradas = excluded.entradas,
+      nome = coalesce(nullif(excluded.nome, ''), m.nome), saidas = excluded.saidas, entradas = excluded.entradas,
       qtd_saidas = excluded.qtd_saidas, qtd_entradas = excluded.qtd_entradas, cartao = excluded.cartao,
       qtd_cartao = excluded.qtd_cartao, sem_movimento = excluded.sem_movimento, simei = excluded.simei,
       inicio_atividade = coalesce(excluded.inicio_atividade, m.inicio_atividade), itens = excluded.itens,
-      consultado_em = excluded.consultado_em, atualizado_em = now();
+      consultado_em = coalesce(excluded.consultado_em, m.consultado_em), atualizado_em = now();
+    n := n + 1;
+  end loop;
+  return n;
+end $$;
+
+-- Robô, ao terminar um Dossiê MEI: o escritório, a IE e o nome saem da tarefa (o robô não escolhe a organização).
+create or replace function public.xml_mei_registrar(p_tarefa uuid, p_meses jsonb, p_inicio_atividade date default null)
+returns integer language plpgsql security definer set search_path = public as $$
+declare v_org uuid; v_ie text; v_nome text;
+begin
+  select org_id, ie, nome into v_org, v_ie, v_nome from public.xml_tarefas where id = p_tarefa;
+  if v_org is null then raise exception 'tarefa % não encontrada', p_tarefa; end if;
+  return public.xml_mei_gravar(v_org, v_ie, v_nome, p_meses, p_inicio_atividade);
+end $$;
+
+-- Robô, ao ligar: o histórico já salvo no PC vai para todos os escritórios que têm essa IE cadastrada.
+-- Devolve quantos escritórios receberam (0 = IE sem cadastro no portal).
+create or replace function public.xml_mei_registrar_ie(p_ie text, p_nome text, p_meses jsonb, p_inicio_atividade date default null)
+returns integer language plpgsql security definer set search_path = public as $$
+declare v_org uuid; v_nome text; n integer := 0;
+begin
+  for v_org, v_nome in select org_id, nome from public.xml_empresas where ie = p_ie loop
+    perform public.xml_mei_gravar(v_org, p_ie, coalesce(v_nome, p_nome), p_meses, p_inicio_atividade);
     n := n + 1;
   end loop;
   return n;
@@ -330,8 +354,11 @@ create policy xml_mei_ajustes_ler on public.xml_mei_ajustes for select to authen
 -- funções: quem pode chamar
 revoke all on function public.xml_pegar_lote(text, text, integer) from public, anon, authenticated;
 grant execute on function public.xml_pegar_lote(text, text, integer) to service_role;
+revoke all on function public.xml_mei_gravar(uuid, text, text, jsonb, date) from public, anon, authenticated;
 revoke all on function public.xml_mei_registrar(uuid, jsonb, date) from public, anon, authenticated;
 grant execute on function public.xml_mei_registrar(uuid, jsonb, date) to service_role;
+revoke all on function public.xml_mei_registrar_ie(text, text, jsonb, date) from public, anon, authenticated;
+grant execute on function public.xml_mei_registrar_ie(text, text, jsonb, date) to service_role;
 revoke all on function public.xml_cancelar_agendamento(uuid) from public, anon;
 grant execute on function public.xml_cancelar_agendamento(uuid) to authenticated;
 

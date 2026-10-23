@@ -663,6 +663,25 @@ def salvar_faturamento_mei(destino: str | Path, nome: str, ie: str, competencia:
             "historico": {mes: {k: v for k, v in m.items() if k != "linhas"} for mes, m in sorted(meses.items())}}
 
 
+def historicos_mei(destino: str | Path) -> list[dict]:
+    """Todos os "Faturamento MEI <ano>.json" já salvos neste PC (para mandar ao painel o que veio antes):
+    [{"ie", "nome", "inicio_atividade", "meses": {aaaa-mm: {...sem a tabela bruta}}}]."""
+    import json
+
+    saida = []
+    for arq in sorted((Path(destino) / PASTA_BAIXADOS).glob("*/Dossiê MEI/Faturamento MEI *.json")):
+        try:
+            h = json.loads(arq.read_text(encoding="utf-8"))
+            emp = h["empresa"]
+        except (OSError, ValueError, KeyError):
+            continue
+        meses = {mes: {k: v for k, v in m.items() if k != "linhas"} for mes, m in sorted(h.get("meses", {}).items())}
+        if emp.get("ie") and meses:
+            saida.append({"ie": emp["ie"], "nome": emp.get("nome", ""), "inicio_atividade": emp.get("inicio_atividade"),
+                          "meses": meses})
+    return saida
+
+
 def salvar_sem_empresa(brutos: list[tuple[str, bytes]], destino: str | Path) -> int:
     """Arquivo baixado que não é de nenhuma empresa da rodada: guardado como veio."""
     return len(salvar_nao_identificados(brutos, destino, "_sem_empresa"))

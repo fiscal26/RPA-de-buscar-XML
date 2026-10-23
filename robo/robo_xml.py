@@ -485,6 +485,30 @@ class Executor:
         self.chrome = None
 
 
+FINAIS = ("concluido", "sem_movimento", "erro")
+MOTIVO_CURTO = {"senha_invalida": "login recusado pelo ATF", "fora_do_ar": "ATF fora do ar; agende de novo mais tarde"}
+
+
+def detalhes_finais(tipos: list[str], r: Resultado, andamento: dict) -> dict:
+    """Situação final de CADA serviço da empresa, com o motivo só daquele serviço. Se a rodada caiu no meio,
+    o que já tinha terminado (andamento) continua valendo e o resto fica com um motivo curto."""
+    detalhes = {k: dict(v) for k, v in (r.detalhes or {}).items()}
+    for tipo in tipos:
+        d = detalhes.get(tipo)
+        if d and d.get("situacao"):
+            continue
+        feito = andamento.get(tipo) or {}
+        if feito.get("situacao") in FINAIS:
+            detalhes[tipo] = {**(d or {}), **feito}
+            continue
+        if r.status == "cancelado":
+            continue
+        motivo = MOTIVO_CURTO.get(r.status) or (
+            "o ATF não devolveu o XML" if tipo in TIPO_TELA else "não foi concluído nesta execução")
+        detalhes[tipo] = {**(d or {}), "situacao": "erro", "mensagem": motivo}
+    return detalhes
+
+
 def situacao_emissao(e) -> dict:
     """Situação de um serviço feito na hora (faturas, extrato, omissão, certidão, cartão, MEI)."""
     if e.arquivos:
@@ -571,6 +595,11 @@ class Portal:
         self._r("POST", "/rest/v1/rpc/xml_mei_registrar",
                 json={"p_tarefa": tarefa, "p_meses": meses, "p_inicio_atividade": inicio_atividade})
 
+    def registrar_mei_ie(self, ie: str, nome: str, meses: dict, inicio_atividade: str | None) -> int:
+        """Histórico do Dossiê MEI salvo no PC: grava em todos os escritórios que têm essa IE cadastrada."""
+        return self._r("POST", "/rest/v1/rpc/xml_mei_registrar_ie",
+                       json={"p_ie": ie, "p_nome": nome, "p_meses": meses, "p_inicio_atividade": inicio_atividade}).json() or 0
+
     def sinal(self, robo: str, info: dict):
         self._r("POST", "/rest/v1/xml_robos", json={"id": robo, "ultimo_sinal": agora(), "versao": VERSAO, "info": info},
                 headers={"Prefer": "resolution=merge-duplicates,return=minimal"})
@@ -600,8 +629,28 @@ class Robo:
         self.chrome_ok = True
         self.parar = False
 
+    def enviar_historico_mei(self):
+        """Manda ao painel o faturamento MEI que já está salvo neste PC (meses consultados antes do painel)."""
+        historicos = arquivos.historicos_mei(self.cfg["pastas"]["destino"])
+        if not historicos:
+            return
+        enviados = 0
+        for h in historicos:
+            try:
+                n = self.portal.registrar_mei_ie(h["ie"], h["nome"], h["meses"], h["inicio_atividade"])
+            except Exception as e:
+                log.warning("Faturamento MEI de %s não enviado ao painel: %s", h["nome"] or h["ie"], e)
+                continue
+            if n:
+                enviados += 1
+            else:
+                log.info("   %s (IE %s): IE sem cadastro no portal; o faturamento MEI fica só no PC",
+                         h["nome"], planilha.formatar_ie(h["ie"]))
+        log.info("Monitoramento MEI: %d de %d empresa(s) enviadas ao painel.", enviados, len(historicos))
+
     def rodar(self):
         log.info("Robô '%s' conectado a %s. XML em: %s", self.nome, self.portal.url, self.cfg["pastas"]["destino"])
+        self.enviar_historico_mei()
         self.portal.devolver_tarefas(self.nome)
         while not self.parar:
             try:
@@ -709,9 +758,11 @@ class Robo:
             self.portal.registrar_mei(tarefa[0], resumo.get("historico") or {}, resumo.get("inicio_atividade"))
 
     def _finalizar(self, t, r: Resultado):
+        andamento = next((d for tid, d in self.em_curso.values() if tid == t["id"]), {})
+        detalhes = detalhes_finais(arquivos.expandir_tipos(t.get("tipos") or []), r, andamento)
         self.portal.atualizar_tarefa(t["id"], {
             "status": r.status, "mensagem": r.mensagem[:500], "qtd_xml": r.qtd_xml,
-            "detalhes": r.detalhes, "pasta": r.pasta, "concluido_em": agora(),
+            "detalhes": detalhes, "pasta": r.pasta, "concluido_em": agora(),
         })
 
     def encerrar(self, *_):
@@ -817,6 +868,8 @@ def main():
     ap.add_argument("--competencia", help="MM/AAAA, ou um intervalo MM/AAAA-MM/AAAA (um mês de cada vez; padrão: mês anterior)")
     ap.add_argument("--mei-ano", action="store_true",
                     help="Dossiê MEI: busca de novo todos os meses do ano até a competência (sem isso, só os que faltam)")
+    ap.add_argument("--enviar-mei", action="store_true",
+                    help="manda ao painel o faturamento MEI já salvo neste PC e sai (o robô também faz isso ao ligar)")
     ap.add_argument("--gravar", nargs="?", const="", metavar="SERVICO",
                     help="grava os passos que você faz no Chrome do robô (ex.: --gravar faturas)")
     args = ap.parse_args()
@@ -869,6 +922,9 @@ def main():
         return
 
     robo = Robo(cfg)
+    if args.enviar_mei:
+        robo.enviar_historico_mei()
+        return
     signal.signal(signal.SIGINT, robo.encerrar)
     signal.signal(signal.SIGTERM, robo.encerrar)
     robo.rodar()
