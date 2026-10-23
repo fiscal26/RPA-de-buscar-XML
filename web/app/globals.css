@@ -683,3 +683,9 @@ a.ranking-linha:hover { background: var(--carbono); }
 .grade-tarefas tr.linha-apagada { opacity: 0.45; }
 .grade-tarefas tr.linha-apagada:hover { opacity: 1; }
 .celula-tarefa.destaque { box-shadow: 0 0 0 2px currentColor inset; }
+/* caixas do Monitoramento MEI como filtro */
+.numero-filtro { text-decoration: none; color: inherit; cursor: pointer; transition: border-color 0.15s, box-shadow 0.15s, transform 0.12s; }
+.numero-filtro:hover { border-color: var(--tinta-clara); transform: translateY(-1px); }
+.numero-filtro.ativo { border-color: var(--forte); box-shadow: 0 0 0 1.5px var(--forte) inset; }
+.ranking-linha.linha-apagada { opacity: 0.4; }
+.ranking-linha.linha-apagada:hover { opacity: 1; }
