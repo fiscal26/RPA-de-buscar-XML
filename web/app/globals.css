@@ -675,3 +675,11 @@ a.ranking-linha:hover { background: var(--carbono); }
 .renomear-form { display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap; }
 .renomear-form input[type="text"] { max-width: 260px; padding: 0.35rem 0.6rem; }
 .erro-texto { color: var(--erro); font-size: 0.8rem; flex-basis: 100%; }
+
+/* contadores do agendamento como filtro */
+.contadores .contador { display: inline-block; text-decoration: none; cursor: pointer; border: 1.5px solid transparent; transition: transform 0.12s, box-shadow 0.12s; }
+.contadores .contador:hover { transform: translateY(-1px); box-shadow: 0 0 0 1.5px currentColor inset; }
+.contadores .contador.ativo { box-shadow: 0 0 0 2px currentColor inset; }
+.grade-tarefas tr.linha-apagada { opacity: 0.45; }
+.grade-tarefas tr.linha-apagada:hover { opacity: 1; }
+.celula-tarefa.destaque { box-shadow: 0 0 0 2px currentColor inset; }
