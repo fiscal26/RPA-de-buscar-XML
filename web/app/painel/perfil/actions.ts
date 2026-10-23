@@ -31,3 +31,13 @@ export async function trocarMinhaSenha(_: EstadoPerfil, form: FormData): Promise
   if (error) return { erro: `Não consegui trocar a senha: ${error.message}.` };
   return { ok: "Senha trocada. Use a nova no próximo acesso." };
 }
+
+/** Liga/desliga o e-mail de alerta do Monitoramento MEI. */
+export async function salvarAlertas(_: EstadoPerfil, form: FormData): Promise<EstadoPerfil> {
+  const { perfil } = await contexto();
+  const ligado = form.get("alertas_mei") === "on";
+  const { error } = await clienteAdmin().from("perfis").update({ alertas_mei: ligado }).eq("id", perfil.id);
+  if (error) return { erro: `Não consegui salvar: ${error.message}.` };
+  revalidatePath("/painel/perfil");
+  return { ok: ligado ? "Você vai receber os alertas de MEI." : "Você não vai mais receber os alertas de MEI." };
+}

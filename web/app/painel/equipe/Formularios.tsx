@@ -6,7 +6,7 @@ import { criarEscritorio, criarPessoa, trocarSenha, type EstadoEquipe } from "./
 type Org = { id: string; nome: string };
 
 /** Senha provisória: digitada ou gerada aqui mesmo (12 caracteres, sem os que se confundem). */
-function CampoSenha({ id }: { id: string }) {
+function CampoSenha({ id, opcional = false }: { id: string; opcional?: boolean }) {
   const ref = useRef<HTMLInputElement>(null);
   function gerar() {
     const letras = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789";
@@ -15,7 +15,7 @@ function CampoSenha({ id }: { id: string }) {
   }
   return (
     <div className="campo-com-botao">
-      <input ref={ref} id={id} name="senha" type="text" minLength={8} required autoComplete="off" spellCheck={false} />
+      <input ref={ref} id={id} name="senha" type="text" minLength={8} required={!opcional} autoComplete="off" spellCheck={false} />
       <button type="button" className="secundario" onClick={gerar}>Gerar</button>
     </div>
   );
@@ -36,7 +36,7 @@ export function FormEscritorio() {
         <div><label htmlFor="esc-doc">CNPJ (opcional)</label><input id="esc-doc" name="documento" type="text" inputMode="numeric" /></div>
         <div><label htmlFor="esc-gestor">Nome do gestor</label><input id="esc-gestor" name="nome" type="text" required /></div>
         <div><label htmlFor="esc-email">E-mail do gestor</label><input id="esc-email" name="email" type="email" required /></div>
-        <div><label htmlFor="esc-senha">Senha provisória</label><CampoSenha id="esc-senha" /></div>
+        <div><label htmlFor="esc-senha">Senha provisória (opcional)</label><CampoSenha id="esc-senha" opcional /></div>
       </div>
       <button type="submit" disabled={enviando}>{enviando ? "Criando…" : "Criar escritório e gestor"}</button>
     </form>
@@ -69,7 +69,7 @@ export function FormPessoa({ organizacoes }: { organizacoes?: Org[] }) {
         )}
         <div><label htmlFor="p-nome">Nome</label><input id="p-nome" name="nome" type="text" required /></div>
         <div><label htmlFor="p-email">E-mail</label><input id="p-email" name="email" type="email" required /></div>
-        <div><label htmlFor="p-senha">Senha provisória</label><CampoSenha id="p-senha" /></div>
+        <div><label htmlFor="p-senha">Senha provisória (opcional)</label><CampoSenha id="p-senha" opcional /></div>
       </div>
       <button type="submit" disabled={enviando}>{enviando ? "Criando…" : organizacoes ? "Criar acesso" : "Criar acesso do colaborador"}</button>
     </form>

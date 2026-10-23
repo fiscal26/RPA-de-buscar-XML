@@ -98,3 +98,31 @@ Os nomes da planilha são corrigidos ao entrar ("lidi@ne silv4" vira "Lidiane Si
 em maiúsculas). Em **Empresas**, o botão **Renomear** troca o nome; o nome renomeado não muda mais com a
 planilha. A pasta no PC do robô segue o nome: depois de renomear, os arquivos novos vão para a pasta com o
 nome novo.
+
+## 8. E-mails pela Brevo (acesso e alertas de MEI)
+
+O portal manda três e-mails, todos pela API da Brevo: **conta criada** (link para a pessoa criar a própria senha),
+**esqueci minha senha** e **alerta de limite do MEI** (para todas as pessoas do escritório; cada uma pode desligar
+em Meu perfil). Os documentos não vão por e-mail: chegam ao cliente pela pasta sincronizada no Drive.
+
+1. **Domínio na Brevo:** em *Senders, Domains & Dedicated IPs > Domains*, adicione `lotivisse.com.br` e crie no
+   DNS do domínio os registros que a Brevo mostrar (código da Brevo, DKIM e DMARC). Espere ficar *Authenticated*;
+   sem isso os e-mails caem no spam.
+2. **Remetente:** em *Senders*, cadastre por exemplo `avisos@lotivisse.com.br` com o nome LotiVisse.
+3. **Chave:** em *SMTP & API > API Keys*, gere uma chave. Ela vai só na Vercel (não mande por chat nem e-mail).
+4. **Vercel > Settings > Environment Variables** (depois, faça um *Redeploy*):
+   - `BREVO_API_KEY` = a chave do passo 3;
+   - `EMAIL_REMETENTE` = `avisos@lotivisse.com.br`; `EMAIL_REMETENTE_NOME` = `LotiVisse` (opcional);
+   - `CRON_SECRET` = uma senha longa qualquer (protege o alerta diário);
+   - `NEXT_PUBLIC_SITE_URL` = `https://xml.lotivisse.com.br` (endereço dos links dos e-mails).
+5. **Supabase:** rode de novo o `schema.sql` (tabela `xml_mei_alertas` e a opção `alertas_mei` das pessoas). Em
+   *Authentication > Providers > Email*, aumente *Email OTP Expiration* para `86400` (o link de criar senha vale 24 h).
+6. **Teste:**
+   - em Equipe, crie um colaborador **sem** senha provisória: chega o e-mail "Seu acesso à LotiVisse";
+   - no login, use "Esqueci minha senha": chega o e-mail "Crie sua senha nova" (o link abre em qualquer navegador);
+   - alerta de MEI: roda todo dia às 8h (Brasília) pelo *Cron Job* da Vercel e logo depois de cada lançamento
+     manual. Para rodar na hora: `curl -H "Authorization: Bearer SEU_CRON_SECRET" https://xml.lotivisse.com.br/api/cron/alertas-mei`.
+     Na primeira vez, saem os alertas de todos os MEIs que já estão perto ou acima do limite.
+
+Sem a Brevo configurada, o portal continua funcionando: "Esqueci minha senha" usa o e-mail padrão do Supabase e
+a criação de acesso exige a senha provisória.

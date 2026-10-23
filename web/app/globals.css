@@ -689,3 +689,5 @@ a.ranking-linha:hover { background: var(--carbono); }
 .numero-filtro.ativo { border-color: var(--forte); box-shadow: 0 0 0 1.5px var(--forte) inset; }
 .ranking-linha.linha-apagada { opacity: 0.4; }
 .ranking-linha.linha-apagada:hover { opacity: 1; }
+.caixa-marcar { display: flex; align-items: flex-start; gap: 0.55rem; font-weight: 500; color: var(--forte); cursor: pointer; }
+.caixa-marcar input { width: auto; margin-top: 0.2rem; accent-color: var(--acao); }

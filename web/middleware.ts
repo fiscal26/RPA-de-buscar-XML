@@ -28,8 +28,10 @@ export async function middleware(request: NextRequest) {
   const caminho = request.nextUrl.pathname;
   if (caminho.startsWith("/sair")) return resposta;
   const login = caminho.startsWith("/login");
-  // abertas a todos: a apresentação, o login, o pedido de senha nova e o retorno do link do e-mail
-  const publico = login || caminho === "/" || caminho.startsWith("/esqueci-senha") || caminho.startsWith("/auth/");
+  // abertas a todos: a apresentação, o login, o pedido de senha nova e o retorno do link do e-mail;
+  // /api/cron confere o CRON_SECRET da Vercel
+  const publico = login || caminho === "/" || caminho.startsWith("/esqueci-senha") || caminho.startsWith("/auth/")
+    || caminho.startsWith("/api/cron/");
 
   if (!user && !publico) {
     const url = request.nextUrl.clone();

@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState } from "react";
-import { salvarNome, trocarMinhaSenha, type EstadoPerfil } from "./actions";
+import { salvarAlertas, salvarNome, trocarMinhaSenha, type EstadoPerfil } from "./actions";
 
 function Aviso({ estado }: { estado: EstadoPerfil }) {
   if (!estado) return null;
@@ -32,6 +32,20 @@ export function FormSenhaPropria() {
       <label htmlFor="repetida" style={{ marginTop: "0.9rem" }}>Repita a senha nova</label>
       <input id="repetida" name="repetida" type="password" autoComplete="new-password" minLength={8} required />
       <p><button type="submit" disabled={enviando} style={{ marginTop: "1rem" }}>{enviando ? "Trocando…" : "Trocar senha"}</button></p>
+    </form>
+  );
+}
+
+export function FormAlertas({ ligado }: { ligado: boolean }) {
+  const [estado, acao, enviando] = useActionState(salvarAlertas, undefined);
+  return (
+    <form action={acao} className="formulario">
+      <Aviso estado={estado} />
+      <label className="caixa-marcar">
+        <input type="checkbox" name="alertas_mei" defaultChecked={ligado} />
+        Receber por e-mail os alertas de limite dos MEIs do escritório
+      </label>
+      <p><button type="submit" disabled={enviando} style={{ marginTop: "1rem" }}>{enviando ? "Salvando…" : "Salvar"}</button></p>
     </form>
   );
 }

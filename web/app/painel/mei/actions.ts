@@ -1,6 +1,8 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
+import { verificarAlertasMei } from "@/lib/alertas-mei";
 import { contexto } from "@/lib/sessao";
 import { clienteAdmin } from "@/lib/supabase/admin";
 
@@ -43,6 +45,8 @@ export async function adicionarAjuste(_: EstadoAjuste, form: FormData): Promise<
   });
   if (error) return { erro: `Não foi possível salvar: ${error.message}` };
   revalidatePath("/painel/mei", "layout");
+  // o lançamento pode levar o MEI a um novo nível: avisa a equipe sem esperar o agendamento diário
+  after(() => verificarAlertasMei({ org, ie }).catch((e) => console.error("alertas MEI:", e)));
   return { ok: "Lançamento incluído." };
 }
 
