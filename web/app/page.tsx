@@ -44,10 +44,6 @@ export default function Inicio() {
         </section>
 
         <section id="servicos" className="secao">
-          <div className="secao-cabeca">
-            <h2>O que o robô busca</h2>
-            <p>Uma coluna da planilha para cada serviço. Escolha um para ver como o ATF entrega e onde o robô guarda.</p>
-          </div>
           <ServicosInterativos />
         </section>
 

@@ -134,6 +134,42 @@ create table if not exists public.xml_robos (
   info         jsonb not null default '{}'::jsonb
 );
 
+-- ------------------------------------------------------------------------- Monitoramento MEI
+-- Um mês do Dossiê MEI (Docs fiscais do ATF) por empresa: o robô grava o ano inteiro a cada consulta.
+create table if not exists public.xml_mei_meses (
+  org_id           uuid not null references public.organizacoes(id) on delete cascade,
+  ie               text not null check (ie ~ '^[0-9]{9}$'),
+  nome             text not null default '',
+  competencia      date not null check (extract(day from competencia) = 1),  -- 1º dia do mês
+  saidas           numeric(14,2),            -- notas de saída (faturamento pelas notas)
+  entradas         numeric(14,2),            -- notas de entrada (compras)
+  qtd_saidas       integer,
+  qtd_entradas     integer,
+  cartao           numeric(14,2),            -- vendas no cartão (à parte: podem estar ou não nas notas)
+  qtd_cartao       integer,
+  sem_movimento    boolean,
+  simei            boolean,
+  inicio_atividade date,
+  itens            jsonb not null default '[]'::jsonb,  -- uma linha por tipo de documento (NFEs, NFCEs...)
+  consultado_em    timestamptz,
+  atualizado_em    timestamptz not null default now(),
+  primary key (org_id, ie, competencia)
+);
+
+-- Lançamentos manuais do escritório: receita sem nota/cartão, compra que o ATF não mostra, correções
+create table if not exists public.xml_mei_ajustes (
+  id           uuid primary key default gen_random_uuid(),
+  org_id       uuid not null references public.organizacoes(id) on delete cascade,
+  ie           text not null check (ie ~ '^[0-9]{9}$'),
+  competencia  date not null check (extract(day from competencia) = 1),
+  tipo         text not null check (tipo in ('receita', 'compra')),
+  descricao    text not null check (length(descricao) between 1 and 120),
+  valor        numeric(14,2) not null check (valor <> 0),  -- negativo = correção para menos
+  criado_por   uuid references auth.users(id) on delete set null,
+  criado_em    timestamptz not null default now()
+);
+create index if not exists xml_mei_ajustes_idx on public.xml_mei_ajustes (org_id, ie, competencia);
+
 -- ------------------------------------------------------------------------- fila do robô
 -- Lote de tarefas liberadas (executar_em já chegou) de UM login do contador e UMA competência:
 -- o robô envia todas as consultas desse login e depois recolhe os XML em "Minhas Mensagens".
@@ -210,6 +246,35 @@ begin
   return n;
 end $$;
 
+-- Robô: grava o ano do Dossiê MEI. Escritório, IE e nome saem da tarefa (o robô não escolhe a organização).
+create or replace function public.xml_mei_registrar(p_tarefa uuid, p_meses jsonb, p_inicio_atividade date default null)
+returns integer language plpgsql security definer set search_path = public as $$
+declare
+  v_org uuid; v_ie text; v_nome text; v_mes text; v_d jsonb; n integer := 0;
+begin
+  select org_id, ie, nome into v_org, v_ie, v_nome from public.xml_tarefas where id = p_tarefa;
+  if v_org is null then raise exception 'tarefa % não encontrada', p_tarefa; end if;
+  for v_mes, v_d in select * from jsonb_each(coalesce(p_meses, '{}'::jsonb)) loop
+    continue when v_mes !~ '^[0-9]{4}-(0[1-9]|1[0-2])$';
+    insert into public.xml_mei_meses as m (org_id, ie, nome, competencia, saidas, entradas, qtd_saidas, qtd_entradas,
+                                           cartao, qtd_cartao, sem_movimento, simei, inicio_atividade, itens, consultado_em)
+    values (v_org, v_ie, v_nome, (v_mes || '-01')::date,
+            nullif(v_d->>'saidas', '')::numeric, nullif(v_d->>'entradas', '')::numeric,
+            nullif(v_d->>'qtd_saidas', '')::numeric::integer, nullif(v_d->>'qtd_entradas', '')::numeric::integer,
+            nullif(v_d->'cartao'->>'valor', '')::numeric, nullif(v_d->'cartao'->>'qtd', '')::numeric::integer,
+            (v_d->>'sem_movimento')::boolean, (v_d->>'simei')::boolean, p_inicio_atividade,
+            coalesce(v_d->'itens', '[]'::jsonb), nullif(v_d->>'consultado_em', '')::timestamp at time zone 'America/Fortaleza')
+    on conflict (org_id, ie, competencia) do update set
+      nome = excluded.nome, saidas = excluded.saidas, entradas = excluded.entradas,
+      qtd_saidas = excluded.qtd_saidas, qtd_entradas = excluded.qtd_entradas, cartao = excluded.cartao,
+      qtd_cartao = excluded.qtd_cartao, sem_movimento = excluded.sem_movimento, simei = excluded.simei,
+      inicio_atividade = coalesce(excluded.inicio_atividade, m.inicio_atividade), itens = excluded.itens,
+      consultado_em = excluded.consultado_em, atualizado_em = now();
+    n := n + 1;
+  end loop;
+  return n;
+end $$;
+
 -- ------------------------------------------------------------------------- segurança (RLS)
 -- Leitura pelo portal com a sessão do usuário; gravação pelo servidor do portal (chave secreta),
 -- depois de conferir a organização de quem enviou, e pelo robô.
@@ -220,6 +285,8 @@ alter table public.xml_empresas     enable row level security;
 alter table public.xml_agendamentos enable row level security;
 alter table public.xml_tarefas      enable row level security;
 alter table public.xml_robos        enable row level security;
+alter table public.xml_mei_meses    enable row level security;
+alter table public.xml_mei_ajustes  enable row level security;
 
 drop policy if exists org_ler on public.organizacoes;
 create policy org_ler on public.organizacoes for select to authenticated
@@ -252,9 +319,19 @@ create policy xml_tarefas_ler on public.xml_tarefas for select to authenticated
 drop policy if exists xml_robos_ler on public.xml_robos;
 create policy xml_robos_ler on public.xml_robos for select to authenticated using (true);
 
+drop policy if exists xml_mei_meses_ler on public.xml_mei_meses;
+create policy xml_mei_meses_ler on public.xml_mei_meses for select to authenticated
+  using (public.sou_admin() or org_id = public.minha_org());
+
+drop policy if exists xml_mei_ajustes_ler on public.xml_mei_ajustes;
+create policy xml_mei_ajustes_ler on public.xml_mei_ajustes for select to authenticated
+  using (public.sou_admin() or org_id = public.minha_org());
+
 -- funções: quem pode chamar
 revoke all on function public.xml_pegar_lote(text, text, integer) from public, anon, authenticated;
 grant execute on function public.xml_pegar_lote(text, text, integer) to service_role;
+revoke all on function public.xml_mei_registrar(uuid, jsonb, date) from public, anon, authenticated;
+grant execute on function public.xml_mei_registrar(uuid, jsonb, date) to service_role;
 revoke all on function public.xml_cancelar_agendamento(uuid) from public, anon;
 grant execute on function public.xml_cancelar_agendamento(uuid) to authenticated;
 

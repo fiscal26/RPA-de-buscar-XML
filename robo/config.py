@@ -12,6 +12,61 @@ from pathlib import Path
 RAIZ = Path(__file__).resolve().parent
 ARQUIVO_CONFIG = RAIZ / "config.json"
 
+
+def pasta_documentos() -> Path:
+    """A pasta Documentos de verdade deste computador. No Windows pergunta ao próprio sistema (com o
+    OneDrive ligado ela fica em ...\\OneDrive\\Documentos); se não der, usa <usuário>\\Documents."""
+    if os.name == "nt":
+        try:
+            import ctypes
+            from ctypes import wintypes
+            buf = ctypes.create_unicode_buffer(wintypes.MAX_PATH)
+            # CSIDL_PERSONAL = 5 (Documentos), SHGFP_TYPE_CURRENT = 0
+            if ctypes.windll.shell32.SHGetFolderPathW(None, 5, None, 0, buf) == 0 and buf.value:
+                return Path(buf.value)
+        except Exception:
+            pass
+    documentos = Path.home() / "Documents"
+    return documentos if documentos.is_dir() or not (Path.home() / "Documentos").is_dir() else Path.home() / "Documentos"
+
+
+DESTINO_PADRAO = pasta_documentos() / "XML SEFAZ-PB"
+
+
+def _pasta_gravavel(pasta: Path) -> bool:
+    """Cria a pasta (se faltar) e testa a gravação de um arquivo."""
+    try:
+        pasta.mkdir(parents=True, exist_ok=True)
+        teste = pasta / ".teste_gravacao"
+        teste.write_text("ok", encoding="utf-8")
+        teste.unlink()
+        return True
+    except OSError:
+        return False
+
+
+def resolver_pastas(cfg: dict) -> list[str]:
+    """Garante uma pasta de destino que existe e aceita gravação NESTE computador. Destino vazio, com o
+    exemplo ("SEU-USUARIO") ou que não dá para gravar: usa a pasta Documentos deste computador.
+    Devolve avisos para mostrar na tela."""
+    avisos = []
+    pastas = cfg["pastas"]
+    pedido = os.path.expandvars(os.path.expanduser(str(pastas.get("destino") or "").strip()))
+    destino = Path(pedido) if pedido else DESTINO_PADRAO
+    if pedido and ("SEU-USUARIO" in pedido.upper() or not _pasta_gravavel(destino)):
+        avisos.append(f"Não consigo gravar em \"{pedido}\" (pasta de outro computador ou do exemplo). "
+                      f"Os arquivos vão para {DESTINO_PADRAO}.")
+        destino = DESTINO_PADRAO
+    if not _pasta_gravavel(destino):
+        raise ConfigInvalida(f"Não consigo criar nem gravar na pasta {destino}. Escolha outra em "
+                             f"\"pastas\" > \"destino\" no config.json.")
+    pastas["destino"] = str(destino)
+    # diagnóstico: dentro do destino, a não ser que o config.json escolha outro lugar gravável
+    diag = os.path.expandvars(os.path.expanduser(str(pastas.get("diagnostico") or "").strip()))
+    if not diag or not _pasta_gravavel(Path(diag)):
+        pastas["diagnostico"] = str(destino / "_diagnostico")
+    return avisos
+
 PADRAO = {
     "chrome": {
         "porta": 9222,
@@ -20,9 +75,11 @@ PADRAO = {
         "fechar_abas": True,
     },
     "pastas": {
-        # Onde os XML ficam: <destino>/<ID> - <Nome fantasia>/<AAAA-MM>/<NF-e Saida | NF-e Entrada | NFC-e>/
-        "destino": str(Path.home() / "Documents" / "XML SEFAZ-PB"),
-        "diagnostico": str(Path.home() / "Documents" / "XML SEFAZ-PB" / "_diagnostico"),
+        # Onde os arquivos ficam. Vazio = pasta Documentos deste computador / XML SEFAZ-PB
+        # (a mesma onde o robô roda). Dentro dela: Arquivos baixados/<ID>-<Nome>/<AAAA-MM>/...
+        "destino": "",
+        # Pacotes de diagnóstico. Vazio = <destino>/_diagnostico
+        "diagnostico": "",
     },
     "chaves": {
         # Chave privada que abre as senhas do ATF cifradas pelo portal (gerada com --gerar-chaves)
@@ -196,6 +253,7 @@ def carregar() -> dict:
                 ) from e
         _mesclar(cfg, dados)
 
+    cfg["_avisos"] = resolver_pastas(cfg)
     portal = cfg["portal"]
     portal["supabase_url"] = os.environ.get("SUPABASE_URL", portal["supabase_url"])
     portal["chave_service_role"] = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", portal["chave_service_role"])

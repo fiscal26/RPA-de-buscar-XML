@@ -5,7 +5,7 @@ Robô que entra no **ATF da SEFAZ-PB com o login do contador**, pesquisa cada em
 faturas, extrato de pagamentos, omissão e inadimplência e certidão de débitos:
 
 ```
-<pasta destino>/                   (padrão: Documentos\XML SEFAZ-PB)
+<pasta destino>/                   (padrão: a pasta Documentos do PC onde o robô roda \ XML SEFAZ-PB)
   Arquivos baixados/
     5-joao/                        (ID-NOME FANTASIA da planilha; sem ID, só o nome)
       2026-09/
@@ -142,7 +142,7 @@ Faça uma cópia de segurança da chave privada: sem ela, as senhas precisam ser
 ```bash
 cd robo
 pip install -r requirements.txt
-copy config.exemplo.json config.json     # e ajuste a pasta destino e o portal
+copy config.exemplo.json config.json     # e preencha o portal (a pasta destino já é a deste PC)
 gerar_chaves.bat                         # uma vez só: cria a chave e mostra a pública para a Vercel
 abrir_chrome.bat                         # Chrome com a porta 9222 e perfil próprio
 iniciar_robo.bat                         # liga o robô do portal (deixe a janela aberta)
