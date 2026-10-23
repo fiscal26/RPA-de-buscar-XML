@@ -129,7 +129,7 @@ export default function GraficoMei(p: Props) {
       <p className="suave grafico-nota">
         {vista === "mes"
           ? "Barra em destaque: mês acima da média do limite (R$ 6.750 de faturamento ou R$ 5.400 de compras)."
-          : "Linha tracejada: projeção até dezembro mantida a média dos meses."}
+          : "Linha tracejada: projeção até dezembro, mantida a média mensal."}
       </p>
     </div>
   );

@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { contexto } from "@/lib/sessao";
 import { clienteAdmin } from "@/lib/supabase/admin";
+import { corrigirNome } from "@/lib/nomes";
 
 export type EstadoEquipe = { ok?: string; erro?: string } | undefined;
 
@@ -10,7 +11,7 @@ const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function campos(form: FormData) {
   return {
-    nome: String(form.get("nome") ?? "").trim().slice(0, 80),
+    nome: corrigirNome(String(form.get("nome") ?? ""), 80),
     email: String(form.get("email") ?? "").trim().toLowerCase(),
     senha: String(form.get("senha") ?? ""),
   };
@@ -45,7 +46,7 @@ async function criarAcesso(dados: ReturnType<typeof campos>, orgId: string, pape
 export async function criarEscritorio(_: EstadoEquipe, form: FormData): Promise<EstadoEquipe> {
   const { admin } = await contexto();
   if (!admin) return { erro: "Só o administrador cria escritórios." };
-  const escritorio = String(form.get("escritorio") ?? "").trim().slice(0, 120);
+  const escritorio = corrigirNome(String(form.get("escritorio") ?? ""), 120);
   const documento = String(form.get("documento") ?? "").replace(/\D/g, "").slice(0, 14);
   const gestor = campos(form);
   if (!escritorio) return { erro: "Informe o nome do escritório." };

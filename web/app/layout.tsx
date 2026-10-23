@@ -4,7 +4,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "LotiVisse — robô do ATF da SEFAZ-PB para escritórios contábeis",
   description:
-    "XML de NF-e, NFC-e e CT-e, faturas, extratos, certidões e o faturamento dos MEI, buscados no ATF da SEFAZ-PB e organizados por empresa e competência.",
+    "XML de NF-e, NFC-e e CT-e, faturas, extratos, certidões e o faturamento dos MEIs, buscados no ATF da SEFAZ-PB e organizados por empresa e competência.",
 };
 
 export const viewport: Viewport = { themeColor: "#13294B" };

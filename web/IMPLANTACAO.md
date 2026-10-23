@@ -80,9 +80,21 @@ precisam ser enviadas de novo. Para ver a pública de novo: `python robo_xml.py 
 ## 6. Monitoramento de Faturamento MEI
 
 1. **Atualize o banco:** no **SQL Editor**, rode de novo todo o `web/supabase/schema.sql` (cria as tabelas
-   `xml_mei_meses` e `xml_mei_ajustes` e a função `xml_mei_registrar`; não apaga nada).
-2. **Atualize o robô** no PC (copie a pasta `robo/` nova). A cada Dossiê MEI ele grava no portal o ano inteiro
-   da empresa, inclusive os meses buscados antes desta versão.
-3. No portal, **Monitoramento MEI** mostra a carteira (faturamento e compras contra o limite) e, ao clicar,
-   o painel de cada MEI com medidores, gráfico mês a mês/acumulado e **lançamentos manuais** (receita ou
-   compra que o ATF não mostra; valor negativo corrige para menos).
+   `xml_mei_meses` e `xml_mei_ajustes`, as funções `xml_mei_registrar`/`xml_mei_registrar_ie` e a coluna
+   `nome_fixo` das empresas; não apaga nada).
+2. **Atualize o robô** no PC (copie a pasta `robo/` nova) e ligue-o de novo. Ao ligar, ele manda ao painel o
+   faturamento MEI que já está salvo no PC (`Arquivos baixados/<empresa>/Dossiê MEI/*.json`); depois, a cada
+   Dossiê MEI, manda o ano inteiro da empresa. Para só enviar o histórico, sem processar a fila:
+   `python robo_xml.py --enviar-mei`. No log aparece "Monitoramento MEI: N de M empresa(s) enviadas ao painel".
+3. Enquanto o banco ou o robô não forem atualizados, o painel usa o resumo do mês guardado em cada execução do
+   Dossiê MEI (sem o detalhe por documento).
+4. No portal, **Monitoramento MEI** lista todos os MEIs do maior para o menor faturamento no ano (barras na
+   mesma escala, com as linhas de 80%, do limite e de +20%); ao clicar, o painel do MEI mostra o uso dos
+   limites de faturamento e de compras, o gráfico mês a mês/acumulado e os **lançamentos manuais**.
+
+## 7. Nomes das empresas
+
+Os nomes da planilha são corrigidos ao entrar ("lidi@ne silv4" vira "Lidiane Silva"; LTDA, ME, EPP e MEI ficam
+em maiúsculas). Em **Empresas**, o botão **Renomear** troca o nome; o nome renomeado não muda mais com a
+planilha. A pasta no PC do robô segue o nome: depois de renomear, os arquivos novos vão para a pasta com o
+nome novo.

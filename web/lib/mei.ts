@@ -14,6 +14,7 @@ export type MesAtf = {
   cartao: number | null; qtd_cartao: number | null; sem_movimento: boolean | null; simei: boolean | null;
   inicio_atividade: string | null; itens?: { tipo: string; entradas?: number | null; saidas?: number | null;
     qtd_entradas?: number | null; qtd_saidas?: number | null }[]; consultado_em?: string | null;
+  origem?: "atf" | "execucao";  // execucao = só o resumo do mês guardado na tarefa (sem detalhe por documento)
 };
 /** Linha de xml_mei_ajustes (lançamento manual do escritório). */
 export type Ajuste = { id: string; org_id: string; ie: string; competencia: string; tipo: "receita" | "compra";
@@ -109,9 +110,9 @@ export function explicacao(a: AnoMei): string {
   if (c.nivel === "excedeu20" || c.nivel === "excedeu") return "As compras passaram de 80% do limite de faturamento. Verifique o desenquadramento do SIMEI.";
   if (f.nivel === "atencao") return "O faturamento já usou 80% ou mais do limite do ano. Acompanhe os próximos meses de perto.";
   if (c.nivel === "atencao") return "As compras já usaram 80% ou mais do limite de compras.";
-  if (f.nivel === "ritmo" || c.nivel === "ritmo") return "Mantida a média dos meses, o limite é ultrapassado até dezembro.";
+  if (f.nivel === "ritmo" || c.nivel === "ritmo") return "Mantida a média mensal, o limite será ultrapassado até dezembro.";
   if (a.nivel === "sem_dados") return "Ainda não há consulta do Dossiê MEI neste ano.";
-  return "Faturamento e compras dentro do limite e num ritmo que cabe no ano.";
+  return "Faturamento e compras estão dentro do limite, num ritmo compatível com o ano.";
 }
 
 export const reais = (v: number, casas = 2) =>

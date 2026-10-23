@@ -212,7 +212,7 @@ def interpretar(linhas) -> Leitura:
         # o modelo já vem com os "X" marcados: linha sem nenhum dado da empresa é linha livre
         if not any(_texto(campo(valores, c)) for c in _CAMPOS_EMPRESA):
             continue
-        nome = _texto(campo(valores, "nome fantasia"))
+        nome = corrigir_nome(_texto(campo(valores, "nome fantasia")))  # "lidi@ne silv4" -> "Lidiane Silva"
         rotulo = nome or f"linha {n}"
         if marcado(campo(valores, "ativa")) is False:
             leitura.avisos.append(f"Linha {n}: {rotulo} está como inativa; ignorada")
@@ -252,3 +252,33 @@ def copiar_modelo(pasta: str | Path) -> Path:
     destino.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(MODELO, destino)
     return destino
+
+
+# ---------------------------------------------------------------- nomes (mesma regra do portal, web/lib/nomes.ts)
+_TROCA = {"@": "a", "4": "a", "3": "e", "1": "i", "!": "i", "0": "o", "5": "s", "$": "s", "7": "t"}
+_MINUSCULAS = {"de", "da", "do", "das", "dos", "e", "di", "du", "del", "van", "von"}
+_SIGLAS = {"ltda", "me", "epp", "mei", "eireli", "sa", "s/a", "s.a.", "s.a", "ss", "slu", "ltda.", "me.", "epp."}
+
+
+def corrigir_nome(texto: str, limite: int = 60) -> str:
+    """"lidi@ne silv4" -> "Lidiane Silva": número/símbolo encostado em letra é letra trocada; maiúscula no começo
+    de cada palavra; de/da/do/das/dos/e minúsculas; LTDA, ME, EPP, MEI, S/A maiúsculas; "3M" e "2000" ficam."""
+    import re
+
+    saida = []
+    for i, p in enumerate(str(texto or "").split()):
+        letras = sum(c.isalpha() for c in p)
+        if letras < 2:
+            saida.append(p.upper() if any(c.isdigit() for c in p) else p.lower() if i else p.capitalize())
+            continue
+        chars = list(p)
+        p = "".join(_TROCA[c] if c in _TROCA and ((j and chars[j - 1].isalpha()) or (j + 1 < len(chars) and chars[j + 1].isalpha()))
+                    else c for j, c in enumerate(chars))
+        baixa = p.lower()
+        if baixa in _SIGLAS:
+            saida.append(baixa.upper())
+        elif i and baixa in _MINUSCULAS:
+            saida.append(baixa)
+        else:
+            saida.append(re.sub(r"(^|[-'’])(\w)", lambda m: m.group(1) + m.group(2).upper(), baixa))
+    return " ".join(saida)[:limite].strip()

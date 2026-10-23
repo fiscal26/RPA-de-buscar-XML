@@ -2,6 +2,7 @@ import "server-only";
 import readXlsxFile from "read-excel-file/node";
 import { formatarIe, normalizarDocumento, normalizarIe } from "@/lib/documentos";
 import { TIPOS } from "@/lib/xml";
+import { corrigirNome } from "@/lib/nomes";
 
 /** Linha lida da planilha. A senha em texto só existe dentro do servidor, durante a leitura. */
 export type LinhaEmpresa = {
@@ -87,10 +88,10 @@ function interpretar(linhas: Linha[]): Leitura {
   for (const { n, valores } of linhas.slice(inicio + 1)) {
     // o modelo já vem com os "X" marcados: linha sem nenhum dado da empresa é linha livre
     if (!CAMPOS_EMPRESA.some((c) => texto(campo(valores, c)))) continue;
-    const nome = texto(campo(valores, "nome fantasia"));
+    const nome = corrigirNome(texto(campo(valores, "nome fantasia")));  // "lidi@ne silv4" -> "Lidiane Silva"
     const rotulo = nome || `linha ${n}`;
     if (marcado(campo(valores, "ativa")) === false) {
-      leitura.avisos.push(`Linha ${n}: ${rotulo} está como inativa; ignorada`);
+      leitura.avisos.push(`Linha ${n}: ${rotulo} está como inativa e foi ignorada`);
       continue;
     }
     const { ie, erro } = normalizarIe(campo(valores, "inscricao estadual"));
@@ -102,10 +103,10 @@ function interpretar(linhas: Linha[]): Leitura {
     if (!login) { leitura.erros.push(`Linha ${n}: ${nome}: informe o LOGIN do ATF`); continue; }
     const tipos = TIPOS.filter((t) => marcado(campo(valores, t.coluna))).map((t) => t.id as string);
     if (!tipos.length) {
-      leitura.avisos.push(`Linha ${n}: ${nome}: nenhum serviço marcado com X; ignorada`);
+      leitura.avisos.push(`Linha ${n}: ${nome}: nenhum serviço marcado com X; a linha foi ignorada`);
       continue;
     }
-    if (vistas.has(ie)) { leitura.avisos.push(`Linha ${n}: IE ${formatarIe(ie)} repetida; usada só uma vez`); continue; }
+    if (vistas.has(ie)) { leitura.avisos.push(`Linha ${n}: IE ${formatarIe(ie)} repetida; foi considerada só uma vez`); continue; }
     vistas.add(ie);
     leitura.empresas.push({
       ie, nome: nome.slice(0, 60), cnpj: doc.doc, codigo: texto(campo(valores, "id")).slice(0, 20),

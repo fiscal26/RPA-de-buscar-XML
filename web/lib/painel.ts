@@ -33,7 +33,7 @@ function acaoDe(t: TarefaPainel): Omit<Acao, "ie" | "nome" | "quando"> | null {
   }
   if (erros.length && t.status !== "pendente" && t.status !== "processando") {
     return { motivo: `${erros.map((e) => nomeTipo(e.tipo)).join(", ")} não ${erros.length > 1 ? "saíram" : "saiu"}.`,
-      oQueFazer: "Agende de novo. Se repetir, fale com a LotiVisse.", link: "/painel/agendar", botao: "Agendar de novo" };
+      oQueFazer: "Agende de novo. Se o erro se repetir, fale com a LotiVisse.", link: "/painel/agendar", botao: "Agendar de novo" };
   }
   return null;
 }

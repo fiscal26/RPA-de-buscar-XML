@@ -4,7 +4,7 @@ import { contexto } from "@/lib/sessao";
 import { dataBR, dataHoraBR, formatarIe } from "@/lib/documentos";
 import { carregarMeis } from "@/lib/mei-dados";
 import { MESES, MESES_LONGOS, NIVEIS, explicacao, pct, reais } from "@/lib/mei";
-import Medidor from "@/components/mei/Medidor";
+import BarraLimite from "@/components/mei/BarraLimite";
 import GraficoMei from "@/components/mei/GraficoMei";
 import SeletorAno from "../SeletorAno";
 import FormAjuste from "./FormAjuste";
@@ -19,7 +19,7 @@ export default async function PainelMei({ params, searchParams }: {
   const { supabase } = await contexto();
   const atual = new Date().getFullYear();
   const ano = Number(sp.ano) >= 2018 && Number(sp.ano) <= atual ? Number(sp.ano) : atual;
-  const lista = await carregarMeis(supabase, ano, ie);
+  const { meis: lista } = await carregarMeis(supabase, ano, ie);
   const mei = lista.find((m) => m.org === sp.org) ?? lista[0];
   if (!mei) notFound();
   const a = mei.ano;
@@ -57,9 +57,14 @@ export default async function PainelMei({ params, searchParams }: {
       </div>
 
       <div className="mei-topo">
-        <section className="cartao mei-medidores">
-          <Medidor titulo="Faturamento" medida={a.faturamento} serie="fat" />
-          <Medidor titulo="Compras" medida={a.compras} serie="comp" />
+        <section className="cartao mei-barras">
+          <h2 className="titulo-cartao">Uso do limite no ano</h2>
+          <BarraLimite titulo="Faturamento" medida={a.faturamento} serie="fat"
+            detalhe={a.decorridos ? `Projeção para dezembro: ${reais(a.faturamento.projecao, 0)} (${pct(a.faturamento.projecao / a.faturamento.limite)} do limite).` : undefined} />
+          <BarraLimite titulo="Compras" medida={a.compras} serie="comp"
+            detalhe={a.decorridos ? `Projeção para dezembro: ${reais(a.compras.projecao, 0)} (${pct(a.compras.projecao / a.compras.limite)} do limite).` : undefined} />
+          <p className="suave legenda-barra"><i className="esperado" /> média esperada até o último mês consultado
+            {mei.meses.some((m) => m.origem === "execucao") && " · alguns meses vieram só do resumo da execução (sem detalhe por documento)"}</p>
         </section>
         <section className="cartao mei-resumo">
           <h2 className="titulo-cartao">No ano</h2>
@@ -69,7 +74,6 @@ export default async function PainelMei({ params, searchParams }: {
             <dt>Receitas manuais</dt><dd>{reais(a.receitaManual)}</dd>
             <dt>Notas de entrada</dt><dd>{reais(a.entradas)}</dd>
             <dt>Compras manuais</dt><dd>{reais(a.compraManual)}</dd>
-            <dt>Projeção em dezembro</dt><dd>{a.decorridos ? reais(a.faturamento.projecao, 0) : "—"}</dd>
             <dt>Disponível no ano</dt>
             <dd className={a.faturamento.limite - a.faturamento.total < 0 ? "negativo" : ""}>{reais(a.faturamento.limite - a.faturamento.total, 0)}</dd>
           </dl>

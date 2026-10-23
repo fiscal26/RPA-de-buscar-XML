@@ -7,7 +7,7 @@ export default function BotaoRemover({ apelido }: { apelido: string }) {
       type="submit"
       className="perigo pequeno"
       onClick={(e) => {
-        if (!confirm(`Remover ${apelido} e a senha do ATF guardada?`)) e.preventDefault();
+        if (!confirm(`Remover ${apelido} do cadastro?`)) e.preventDefault();
       }}
     >
       Remover

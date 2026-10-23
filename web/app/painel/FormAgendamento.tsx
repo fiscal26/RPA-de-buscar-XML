@@ -73,12 +73,12 @@ export default function FormAgendamento({ organizacoes, competencia }: { organiz
         <div style={{ marginTop: "1.5rem" }}>
           <h2>Confira a planilha {previa.nomeArquivo}</h2>
           <p>
-            <b>{previa.itens.length}</b> empresa(s) · competência <b>{competenciaBR(previa.competencia)}</b> ·{" "}
+            <b>{previa.itens.length}</b> {previa.itens.length === 1 ? "empresa" : "empresas"} · competência <b>{competenciaBR(previa.competencia)}</b> ·{" "}
             {previa.executarEm ? `começa em ${dataHoraBR(previa.executarEm)}` : "começa assim que possível"}.
           </p>
           <p className="suave">
             {contagem.filter((t) => t.n).map((t) => `${t.nome}: ${t.n}`).join(" · ")}
-            {novas > 0 && ` · ${novas} empresa(s) nova(s) no cadastro`}
+            {novas > 0 && ` · ${novas} ${novas === 1 ? "empresa nova" : "empresas novas"} no cadastro`}
           </p>
           {!!previa.acessos?.length && (
             <p className="suave">
@@ -88,7 +88,7 @@ export default function FormAgendamento({ organizacoes, competencia }: { organiz
           )}
           {!!previa.erros?.length && (
             <div className="faixa erro">
-              <b>{previa.erros.length} linha(s) ignorada(s):</b>
+              <b>{previa.erros.length === 1 ? "1 linha ignorada:" : `${previa.erros.length} linhas ignoradas:`}</b>
               <ul>{previa.erros.slice(0, 50).map((e) => <li key={e}>{e}</li>)}</ul>
             </div>
           )}

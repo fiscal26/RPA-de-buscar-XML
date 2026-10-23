@@ -25,8 +25,8 @@ export const ORDEM_TAREFAS = TIPOS.flatMap((t) => SUBTIPOS[t.id] ?? [t.id]);
 /** Situação de cada tarefa (empresa x serviço), gravada pelo robô à medida que avança. */
 export const SITUACAO: Record<string, { nome: string; classe: string }> = {
   fila: { nome: "Na fila", classe: "st-neutro" },
-  andamento: { nome: "Fazendo", classe: "st-fila st-vivo" },
-  aguardando: { nome: "Aguardando ATF", classe: "st-alerta" },
+  andamento: { nome: "Em andamento", classe: "st-fila st-vivo" },
+  aguardando: { nome: "Aguardando o ATF", classe: "st-alerta" },
   concluido: { nome: "Concluído", classe: "st-ok" },
   sem_movimento: { nome: "Sem movimento", classe: "st-calmo" },
   erro: { nome: "Erro", classe: "st-erro" },
@@ -40,12 +40,28 @@ type TarefaBase = { status: string; mensagem?: string; detalhes?: Record<string,
 /** Situação de um serviço de uma empresa: a que o robô gravou, ou a deduzida da situação da empresa. */
 export function situacaoTarefa(t: TarefaBase, tipo: string): { chave: string; mensagem: string } {
   const d = t.detalhes?.[tipo];
-  if (d?.situacao) return { chave: d.situacao, mensagem: d.mensagem ?? "" };
-  if (t.status === "pendente" || t.status === "processando") return { chave: "fila", mensagem: "" };
+  const emCurso = t.status === "pendente" || t.status === "processando";
+  // a empresa já terminou, mas o serviço ficou "fazendo/aguardando": a execução parou no meio
+  if (d?.situacao && (emCurso || !SITUACOES_ABERTAS.includes(d.situacao))) return { chave: d.situacao, mensagem: d.mensagem ?? "" };
+  if (emCurso) return { chave: "fila", mensagem: "" };
   if (t.status === "cancelado") return { chave: "cancelado", mensagem: "" };
   if (d && ((d.arquivos ?? 0) > 0 || (d.repetidos ?? 0) > 0)) return { chave: "concluido", mensagem: "" };
   if (d?.sem_notas || t.status === "sem_notas") return { chave: "sem_movimento", mensagem: "" };
-  return { chave: "erro", mensagem: t.mensagem ?? "" };
+  return { chave: "erro", mensagem: motivoDoTipo(t, tipo) };
+}
+
+const XML = ["nfe_saida", "nfe_entrada", "nfce", "cte_rem", "cte_dest"];
+
+/** Só o pedaço da mensagem da empresa que fala deste serviço (ex.: "Faturas: ..."), nunca o erro inteiro. */
+function motivoDoTipo(t: TarefaBase, tipo: string): string {
+  const nome = nomeTipo(tipo).toLowerCase();
+  const partes = (t.mensagem ?? "").split(/;\s*|\.\s+(?=[A-ZÀ-Ú])/).map((p) => p.trim().replace(/\.$/, "")).filter(Boolean);
+  const propria = partes.find((p) => p.toLowerCase().startsWith(`${nome}:`));
+  if (propria) return propria.slice(nome.length + 1).trim();
+  if (partes.some((p) => p.toLowerCase().includes(nome) && /n[aã]o entregou/i.test(p))) return "o ATF não entregou em Minhas Mensagens";
+  if (t.status === "senha_invalida") return "login recusado pelo ATF";
+  if (t.status === "fora_do_ar") return "ATF fora do ar; agende de novo mais tarde";
+  return XML.includes(tipo) ? "o ATF não devolveu o XML" : "não foi concluído nesta execução";
 }
 
 export const STATUS: Record<string, { nome: string; classe: string }> = {
