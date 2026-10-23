@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { contexto } from "@/lib/sessao";
 import { clienteAdmin } from "@/lib/supabase/admin";
 import { corrigirNome } from "@/lib/nomes";
+import { emailConfigurado, enderecoSite, enviarEmail, linkCriarSenha } from "@/lib/email";
 
 export type EstadoEquipe = { ok?: string; erro?: string } | undefined;
 
@@ -20,14 +21,17 @@ function campos(form: FormData) {
 function conferir({ nome, email, senha }: ReturnType<typeof campos>): string | null {
   if (!nome) return "Informe o nome.";
   if (!EMAIL.test(email)) return "Informe um e-mail válido.";
-  if (senha.length < 8) return "A senha provisória precisa de pelo menos 8 caracteres.";
+  if (senha && senha.length < 8) return "A senha provisória precisa de pelo menos 8 caracteres.";
+  if (!senha && !emailConfigurado()) return "Defina uma senha provisória: o envio de e-mail ainda não está configurado.";
   return null;
 }
 
 /** Cria o login (já confirmado) e o perfil. Se o perfil falhar, o login é desfeito. */
 async function criarAcesso(dados: ReturnType<typeof campos>, orgId: string, papel: "gestor" | "usuario"): Promise<string | null> {
   const db = clienteAdmin();
-  const { data, error } = await db.auth.admin.createUser({ email: dados.email, password: dados.senha, email_confirm: true });
+  // sem senha provisória, a pessoa cria a própria senha pelo link do e-mail de boas-vindas
+  const senha = dados.senha || Array.from(crypto.getRandomValues(new Uint8Array(24)), (b) => b.toString(36)).join("");
+  const { data, error } = await db.auth.admin.createUser({ email: dados.email, password: senha, email_confirm: true });
   if (error || !data.user) {
     return /already|registered|exists/i.test(error?.message ?? "")
       ? `Já existe um acesso com o e-mail ${dados.email}.`
@@ -40,6 +44,23 @@ async function criarAcesso(dados: ReturnType<typeof campos>, orgId: string, pape
     return `Não consegui salvar o perfil: ${erroPerfil.message}.`;
   }
   return null;
+}
+
+/** Boas-vindas com o link para criar a senha. Devolve o texto para quem cadastrou. */
+async function boasVindas(dados: ReturnType<typeof campos>, escritorio: string): Promise<string> {
+  const comSenha = dados.senha ? " Também dá para entrar com a senha provisória." : "";
+  if (!emailConfigurado()) return `${dados.nome} já pode entrar com ${dados.email} e a senha provisória.`;
+  const link = await linkCriarSenha(dados.email);
+  const falha = link ? await enviarEmail({
+    para: { email: dados.email, nome: dados.nome }, assunto: "Seu acesso à LotiVisse", titulo: "Seu acesso foi criado",
+    paragrafos: [`Olá, ${dados.nome.split(" ")[0]}.`,
+      `Você agora tem acesso ao portal da LotiVisse${escritorio ? ` pelo escritório ${escritorio}` : ""}. Para começar, crie a sua senha pelo botão abaixo.`,
+      `Depois, entre sempre por ${await enderecoSite()}/login com o e-mail ${dados.email}. Se o link expirar, use "Esqueci minha senha" na tela de login.`],
+    botao: { texto: "Criar minha senha", url: link },
+  }) : "não consegui gerar o link";
+  return falha
+    ? `Acesso de ${dados.nome} criado, mas o e-mail não foi enviado (${falha}). Peça para usar "Esqueci minha senha".${comSenha}`
+    : `Acesso de ${dados.nome} criado. Enviamos para ${dados.email} o link para criar a senha.${comSenha}`;
 }
 
 /** Admin: novo escritório e o gestor dele. */
@@ -61,7 +82,7 @@ export async function criarEscritorio(_: EstadoEquipe, form: FormData): Promise<
     return { erro: falha };
   }
   revalidatePath("/painel/equipe");
-  return { ok: `Escritório ${escritorio} criado. ${gestor.nome} já pode entrar com ${gestor.email} e a senha provisória.` };
+  return { ok: `Escritório ${escritorio} criado. ${await boasVindas(gestor, escritorio)}` };
 }
 
 /** Admin: pessoa em qualquer escritório (gestor ou colaborador). Gestor: colaborador do próprio escritório. */
@@ -77,7 +98,8 @@ export async function criarPessoa(_: EstadoEquipe, form: FormData): Promise<Esta
   const falha = await criarAcesso(dados, orgId, papel);
   if (falha) return { erro: falha };
   revalidatePath("/painel/equipe");
-  return { ok: `${dados.nome} já pode entrar com ${dados.email} e a senha provisória.` };
+  const { data: org } = await clienteAdmin().from("organizacoes").select("nome").eq("id", orgId).maybeSingle();
+  return { ok: await boasVindas(dados, org?.nome ?? "") };
 }
 
 /** Confere se quem pede pode mexer nessa pessoa: admin em qualquer uma; gestor só nos colaboradores do escritório. */

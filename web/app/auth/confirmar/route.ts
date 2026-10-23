@@ -1,19 +1,25 @@
 import { NextResponse, type NextRequest } from "next/server";
+import type { EmailOtpType } from "@supabase/supabase-js";
 import { criarCliente } from "@/lib/supabase/server";
 
-// Link do e-mail (redefinição de senha): troca o código pela sessão e segue para a próxima tela.
+// Link dos e-mails (conta nova, senha nova): abre a sessão e segue para a próxima tela.
+// token_hash: links enviados pela LotiVisse (abrem em qualquer navegador); code: links antigos do Supabase.
 export async function GET(request: NextRequest) {
   const url = request.nextUrl.clone();
   const codigo = url.searchParams.get("code");
-  const proximo = url.searchParams.get("proximo") ?? "/painel";
+  const tokenHash = url.searchParams.get("token_hash");
+  const tipo = (url.searchParams.get("type") ?? "recovery") as EmailOtpType;
+  const pedido = url.searchParams.get("proximo") ?? "/painel";
+  // só caminhos do próprio site (nada de "//outro-site")
+  const proximo = pedido.startsWith("/") && !pedido.startsWith("//") ? pedido : "/painel";
   url.search = "";
-  if (codigo) {
-    const supabase = await criarCliente();
-    const { error } = await supabase.auth.exchangeCodeForSession(codigo);
-    if (!error) {
-      url.pathname = proximo.startsWith("/") ? proximo : "/painel";
-      return NextResponse.redirect(url);
-    }
+  const supabase = await criarCliente();
+  let ok = false;
+  if (tokenHash) ok = !(await supabase.auth.verifyOtp({ type: tipo, token_hash: tokenHash })).error;
+  else if (codigo) ok = !(await supabase.auth.exchangeCodeForSession(codigo)).error;
+  if (ok) {
+    url.pathname = proximo;
+    return NextResponse.redirect(url);
   }
   url.pathname = "/login";
   url.search = "?erro=link";

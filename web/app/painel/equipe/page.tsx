@@ -46,7 +46,7 @@ export default async function Equipe() {
         <section className="cartao">
           <h2 className="titulo-cartao">{admin ? "Nova pessoa num escritório" : "Novo colaborador"}</h2>
           <FormPessoa organizacoes={admin ? escritorios.filter((e) => e.ativo) : undefined} />
-          <p className="suave">Envie o e-mail e a senha provisória para a pessoa; ela entra em {"/login"}.</p>
+          <p className="suave">A pessoa recebe por e-mail o link para criar a própria senha. A senha provisória é opcional: se preenchida, passe-a para a pessoa por outro meio.</p>
         </section>
       </div>
 

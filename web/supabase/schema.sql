@@ -36,6 +36,9 @@ create table if not exists public.perfis (
   check (papel = 'admin' or org_id is not null)
 );
 
+-- e-mail de alerta do Monitoramento MEI (cada pessoa pode desligar em Meu perfil)
+alter table public.perfis add column if not exists alertas_mei boolean not null default true;
+
 create or replace function public.minha_org() returns uuid
 language sql stable security definer set search_path = public as $$
   select org_id from public.perfis where id = auth.uid() and ativo
@@ -172,6 +175,19 @@ create table if not exists public.xml_mei_ajustes (
   criado_em    timestamptz not null default now()
 );
 create index if not exists xml_mei_ajustes_idx on public.xml_mei_ajustes (org_id, ie, competencia);
+
+-- Alertas de limite do MEI já enviados: cada nível sai uma vez por ano, por MEI e por medida
+create table if not exists public.xml_mei_alertas (
+  org_id       uuid not null references public.organizacoes(id) on delete cascade,
+  ie           text not null,
+  ano          integer not null,
+  medida       text not null check (medida in ('faturamento', 'compras')),
+  nivel        text not null check (nivel in ('ritmo', 'atencao', 'excedeu', 'excedeu20')),
+  percentual   numeric(7,2),
+  destinatarios integer not null default 0,
+  enviado_em   timestamptz not null default now(),
+  primary key (org_id, ie, ano, medida, nivel)
+);
 
 -- ------------------------------------------------------------------------- fila do robô
 -- Lote de tarefas liberadas (executar_em já chegou) de UM login do contador e UMA competência:
@@ -311,6 +327,7 @@ alter table public.xml_tarefas      enable row level security;
 alter table public.xml_robos        enable row level security;
 alter table public.xml_mei_meses    enable row level security;
 alter table public.xml_mei_ajustes  enable row level security;
+alter table public.xml_mei_alertas  enable row level security;
 
 drop policy if exists org_ler on public.organizacoes;
 create policy org_ler on public.organizacoes for select to authenticated
@@ -349,6 +366,10 @@ create policy xml_mei_meses_ler on public.xml_mei_meses for select to authentica
 
 drop policy if exists xml_mei_ajustes_ler on public.xml_mei_ajustes;
 create policy xml_mei_ajustes_ler on public.xml_mei_ajustes for select to authenticated
+  using (public.sou_admin() or org_id = public.minha_org());
+
+drop policy if exists xml_mei_alertas_ler on public.xml_mei_alertas;
+create policy xml_mei_alertas_ler on public.xml_mei_alertas for select to authenticated
   using (public.sou_admin() or org_id = public.minha_org());
 
 -- funções: quem pode chamar
