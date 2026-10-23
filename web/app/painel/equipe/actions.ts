@@ -139,3 +139,39 @@ export async function alternarEscritorio(form: FormData) {
   await clienteAdmin().from("organizacoes").update({ ativo: !org.ativo }).eq("id", id);
   revalidatePath("/painel/equipe");
 }
+
+/** Exclui o acesso de vez (o login some e a pessoa não entra mais). Admin: qualquer pessoa; gestor: só colaboradores. */
+export async function excluirPessoa(_: EstadoEquipe, form: FormData): Promise<EstadoEquipe> {
+  const alvo = await alvoPermitido(String(form.get("id") ?? ""));
+  if (!alvo) return { erro: "Você não pode excluir essa pessoa." };
+  // apagar o login apaga o perfil junto; o que ela agendou ou lançou fica, sem o autor
+  const { error } = await clienteAdmin().auth.admin.deleteUser(alvo.id);
+  if (error) return { erro: `Não consegui excluir: ${error.message}.` };
+  revalidatePath("/painel/equipe");
+  return { ok: `${alvo.nome || "Acesso"} excluído.` };
+}
+
+/**
+ * Admin: exclui o escritório inteiro — pessoas, empresas, logins do ATF, agendamentos e o Monitoramento MEI.
+ * Pede o nome do escritório digitado como confirmação. Os arquivos já baixados no PC do robô não são apagados.
+ */
+export async function excluirEscritorio(_: EstadoEquipe, form: FormData): Promise<EstadoEquipe> {
+  const { admin } = await contexto();
+  if (!admin) return { erro: "Só o administrador exclui escritórios." };
+  const id = String(form.get("id") ?? "");
+  const db = clienteAdmin();
+  const { data: org } = await db.from("organizacoes").select("id, nome").eq("id", id).maybeSingle();
+  if (!org) return { erro: "Escritório não encontrado." };
+  const digitado = String(form.get("confirmacao") ?? "").trim().toLocaleLowerCase("pt-BR");
+  if (digitado !== org.nome.trim().toLocaleLowerCase("pt-BR")) return { erro: `Para excluir, digite o nome exato: ${org.nome}.` };
+
+  const { data: pessoas } = await db.from("perfis").select("id").eq("org_id", id);
+  for (const p of pessoas ?? []) {
+    const { error } = await db.auth.admin.deleteUser(p.id);
+    if (error) return { erro: `Não consegui excluir um dos acessos (${error.message}); nada mais foi apagado.` };
+  }
+  const { error } = await db.from("organizacoes").delete().eq("id", id);  // o resto sai em cascata
+  if (error) return { erro: `Não consegui excluir o escritório: ${error.message}.` };
+  revalidatePath("/painel", "layout");
+  return { ok: `Escritório ${org.nome} excluído.` };
+}

@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState, useRef } from "react";
-import { criarEscritorio, criarPessoa, trocarSenha, type EstadoEquipe } from "./actions";
+import { criarEscritorio, criarPessoa, excluirEscritorio, excluirPessoa, trocarSenha, type EstadoEquipe } from "./actions";
 
 type Org = { id: string; nome: string };
 
@@ -84,6 +84,39 @@ export function FormSenha({ id }: { id: string }) {
       <CampoSenha id={`senha-${id}`} />
       <button type="submit" className="pequeno" disabled={enviando}>{enviando ? "Salvando…" : "Definir senha"}</button>
       <Aviso estado={estado} />
+    </form>
+  );
+}
+
+/** Excluir uma pessoa: pede confirmação e apaga o acesso de vez. */
+export function ExcluirPessoa({ id, nome }: { id: string; nome: string }) {
+  const [estado, acao, enviando] = useActionState(excluirPessoa, undefined);
+  return (
+    <form action={acao} onSubmit={(e) => {
+      if (!confirm(`Excluir o acesso de ${nome}? A pessoa não consegue mais entrar. Para só bloquear por um tempo, use Desativar.`)) e.preventDefault();
+    }}>
+      <input type="hidden" name="id" value={id} />
+      <button type="submit" className="perigo pequeno" disabled={enviando}>{enviando ? "Excluindo…" : "Excluir"}</button>
+      {estado?.erro && <span className="erro-texto">{estado.erro}</span>}
+    </form>
+  );
+}
+
+/** Excluir o escritório inteiro: só com o nome digitado. */
+export function ExcluirEscritorio({ id, nome }: { id: string; nome: string }) {
+  const [estado, acao, enviando] = useActionState(excluirEscritorio, undefined);
+  const campo = useRef<HTMLInputElement>(null);
+  return (
+    <form action={acao} onSubmit={(e) => {
+      const digitado = prompt(`Excluir o escritório ${nome} de vez? Saem as pessoas, as empresas, os logins do ATF, os agendamentos `
+        + `e o Monitoramento MEI. Os arquivos já salvos no PC do robô ficam.\n\nPara confirmar, digite o nome do escritório:`);
+      if (!digitado) { e.preventDefault(); return; }
+      if (campo.current) campo.current.value = digitado;
+    }}>
+      <input type="hidden" name="id" value={id} />
+      <input ref={campo} type="hidden" name="confirmacao" />
+      <button type="submit" className="perigo pequeno" disabled={enviando}>{enviando ? "Excluindo…" : "Excluir escritório"}</button>
+      {estado?.erro && <span className="erro-texto">{estado.erro}</span>}
     </form>
   );
 }
