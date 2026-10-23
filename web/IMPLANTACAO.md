@@ -124,5 +124,12 @@ em Meu perfil). Os documentos não vão por e-mail: chegam ao cliente pela pasta
      manual. Para rodar na hora: `curl -H "Authorization: Bearer SEU_CRON_SECRET" https://xml.lotivisse.com.br/api/cron/alertas-mei`.
      Na primeira vez, saem os alertas de todos os MEIs que já estão perto ou acima do limite.
 
+**Login e porta (SMTP) não são usados pelo portal**: ele fala com a Brevo pela API, só com a chave. O SMTP é
+opcional, para os e-mails que o próprio Supabase manda (o "esqueci minha senha" quando a Brevo não está na
+Vercel): em *Supabase > Authentication > Emails > SMTP Settings*, ative o SMTP próprio com host
+`smtp-relay.brevo.com`, porta `587`, usuário = o login SMTP da Brevo (*SMTP & API > aba SMTP*, algo como
+`xxxx@smtp-brevo.com`), senha = uma **chave SMTP** gerada nessa mesma aba (é diferente da chave de API) e o mesmo
+remetente `avisos@lotivisse.com.br`.
+
 Sem a Brevo configurada, o portal continua funcionando: "Esqueci minha senha" usa o e-mail padrão do Supabase e
 a criação de acesso exige a senha provisória.

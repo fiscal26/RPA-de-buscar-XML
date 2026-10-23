@@ -11,6 +11,13 @@ import { clienteAdmin } from "@/lib/supabase/admin";
  */
 export const emailConfigurado = () => !!(process.env.BREVO_API_KEY && process.env.EMAIL_REMETENTE);
 
+/** O endereço do remetente, aceitando também "LotiVisse <avisos@...>", aspas ou espaços colados junto. */
+export function remetente(): string | null {
+  const bruto = (process.env.EMAIL_REMETENTE ?? "").trim().replace(/^["']|["']$/g, "");
+  const email = (bruto.match(/<([^>]+)>/)?.[1] ?? bruto).trim().toLowerCase();
+  return /^[^\s@<>"]+@[^\s@<>"]+\.[a-z]{2,}$/.test(email) ? email : null;
+}
+
 export type Email = { para: { email: string; nome?: string }; assunto: string; titulo: string; paragrafos: string[];
   botao?: { texto: string; url: string }; rodape?: string };
 
@@ -38,19 +45,26 @@ function montar(e: Email) {
 /** Envia um e-mail. Devolve o motivo quando não envia (sem configuração ou recusado pela Brevo). */
 export async function enviarEmail(e: Email): Promise<string | null> {
   if (!emailConfigurado()) return "envio de e-mail não configurado (BREVO_API_KEY e EMAIL_REMETENTE)";
+  const de = remetente();
+  if (!de) return `EMAIL_REMETENTE inválido na Vercel ("${process.env.EMAIL_REMETENTE}"): use só o endereço, por exemplo avisos@lotivisse.com.br`;
   const { html, texto } = montar(e);
   try {
+    let corpo = "";
     const r = await fetch("https://api.brevo.com/v3/smtp/email", {
       method: "POST",
-      headers: { "api-key": process.env.BREVO_API_KEY!, "content-type": "application/json", accept: "application/json" },
+      headers: { "api-key": process.env.BREVO_API_KEY!.trim().replace(/^["']|["']$/g, ""), "content-type": "application/json", accept: "application/json" },
       body: JSON.stringify({
-        sender: { email: process.env.EMAIL_REMETENTE, name: process.env.EMAIL_REMETENTE_NOME || MARCA },
+        sender: { email: de, name: (process.env.EMAIL_REMETENTE_NOME ?? "").trim() || MARCA },
         to: [{ email: e.para.email, ...(e.para.nome ? { name: e.para.nome } : {}) }],
         subject: e.assunto, htmlContent: html, textContent: texto,
       }),
       cache: "no-store",
     });
-    if (!r.ok) return `Brevo recusou (${r.status}): ${(await r.text()).slice(0, 200)}`;
+    if (r.status === 401) return "a Brevo não reconheceu a BREVO_API_KEY (use a chave de API, que começa com xkeysib-, não a chave SMTP)";
+    if (r.status === 400 && /sender/i.test(corpo = await r.text())) {
+      return `a Brevo não aceitou o remetente ${de}: cadastre e confirme esse endereço em Remetentes na Brevo (ou autentique o domínio)`;
+    }
+    if (!r.ok) return `Brevo recusou (${r.status}): ${(corpo || await r.text()).slice(0, 200)}`;
     return null;
   } catch (erro) {
     return `sem contato com a Brevo: ${(erro as Error).message}`;
