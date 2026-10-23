@@ -5,22 +5,31 @@ import { carregarMeis } from "@/lib/mei-dados";
 import { FRACAO_COMPRAS, LIMITE_ANO, MESES_LONGOS, NIVEIS, mil, pct, reais } from "@/lib/mei";
 import SeletorAno from "./SeletorAno";
 
-export default async function MonitoramentoMei({ searchParams }: { searchParams: Promise<{ ano?: string }> }) {
+export default async function MonitoramentoMei({ searchParams }: { searchParams: Promise<{ ano?: string; filtro?: string }> }) {
   const { supabase, admin } = await contexto();
   const atual = new Date().getFullYear();
-  const pedido = Number((await searchParams).ano);
+  const sp = await searchParams;
+  const pedido = Number(sp.ano);
   const ano = pedido >= 2018 && pedido <= atual ? pedido : atual;
   const { meis, erros } = await carregarMeis(supabase, ano);
 
   const conta = (...n: string[]) => meis.filter((m) => n.includes(m.ano.nivel)).length;
   const ultimo = Math.max(-1, ...meis.map((m) => m.ano.ultimo));
-  const totalFat = meis.reduce((s, m) => s + m.ano.faturamento.total, 0);
+  // cada caixa é um filtro: clicar sobe os MEIs daquela situação; clicar de novo limpa
+  const FILTROS: Record<string, string[]> = {
+    dentro: ["ok"], perto: ["atencao", "ritmo"], passou: ["excedeu", "excedeu20"], sem: ["sem_dados"],
+  };
+  const filtro = sp.filtro && FILTROS[sp.filtro] ? sp.filtro : null;
+  const noFiltro = (m: (typeof meis)[number]) => !!filtro && FILTROS[filtro].includes(m.ano.nivel);
+  const posicao = new Map(meis.map((m, i) => [m, i + 1]));  // posição pelo faturamento, mesmo com filtro
+  if (filtro) meis.sort((a, b) => Number(noFiltro(b)) - Number(noFiltro(a)));  // estável: dentro de cada grupo, maior faturamento primeiro
   const numeros = [
-    { nome: "MEIs monitorados", valor: String(meis.length), sub: conta("sem_dados") ? `${conta("sem_dados")} sem consulta ainda` : "todos já consultados", classe: "" },
-    { nome: "Faturamento da carteira", valor: mil(totalFat), sub: `em ${ano}, somando todos os MEIs`, classe: "" },
-    { nome: "Perto do limite", valor: String(conta("atencao", "ritmo")), sub: "80% ou no ritmo de passar", classe: "mei-alerta" },
-    { nome: "Passaram do limite", valor: String(conta("excedeu", "excedeu20")), sub: "faturamento ou compras", classe: "mei-erro" },
+    { id: "sem", nome: "MEIs monitorados", valor: meis.length, sub: conta("sem_dados") ? `${conta("sem_dados")} sem consulta ainda` : "todos já consultados", classe: "" },
+    { id: "dentro", nome: "Dentro do limite", valor: conta("ok"), sub: "abaixo de 80% e no ritmo", classe: "mei-ok" },
+    { id: "perto", nome: "Perto do limite", valor: conta("atencao", "ritmo"), sub: "80% ou no ritmo de passar", classe: "mei-alerta" },
+    { id: "passou", nome: "Passaram do limite", valor: conta("excedeu", "excedeu20"), sub: "faturamento ou compras", classe: "mei-erro" },
   ];
+  const link = (f: string | null) => `/painel/mei?ano=${ano}${f ? `&filtro=${f}` : ""}`;
   // escala comum a todas as linhas: dá para comparar os MEIs entre si
   const fim = Math.max(LIMITE_ANO * 1.25, ...meis.map((m) => Math.max(m.ano.faturamento.total, m.ano.compras.total))) * 1.04;
   const x = (v: number) => `${(Math.max(v, 0) / fim) * 100}%`;
@@ -52,16 +61,30 @@ export default async function MonitoramentoMei({ searchParams }: { searchParams:
       )}
 
       <div className="mei-numeros">
-        {numeros.map((i) => (
-          <div key={i.nome} className={`numero-cartao ${i.classe}`}>
-            <span className="nome">{i.nome}</span><span className="valor">{i.valor}</span><span className="suave">{i.sub}</span>
-          </div>
-        ))}
+        {numeros.map((i) => {
+          // "MEIs monitorados" filtra os que ainda não têm consulta; sem nenhum, só limpa o filtro
+          const alvo = i.id === "sem" && !conta("sem_dados") ? null : i.id;
+          const ativo = filtro === i.id;
+          return (
+            <Link key={i.id} href={link(ativo ? null : alvo)} scroll={false} aria-pressed={ativo}
+              className={`numero-cartao numero-filtro ${i.classe} ${ativo ? "ativo" : ""}`}
+              title={ativo ? "Limpar o filtro" : alvo ? `Mostrar primeiro: ${i.nome.toLowerCase()}` : "Mostrar todos"}>
+              <span className="nome">{i.nome}{ativo && <span aria-hidden="true"> ✕</span>}</span>
+              <span className="valor">{i.valor}</span><span className="suave">{i.sub}</span>
+            </Link>
+          );
+        })}
       </div>
 
       <section className="cartao">
         <div className="cartao-topo">
           <h2 className="titulo-cartao">Faturamento acumulado no ano, do maior para o menor</h2>
+          {filtro && (
+            <span className="suave">
+              {(() => { const n = meis.filter(noFiltro).length; return `${n} ${n === 1 ? "MEI" : "MEIs"} no topo · `; })()}
+              <Link href={link(null)} scroll={false}>limpar filtro</Link>
+            </span>
+          )}
           <span className="legenda"><i className="s-fat" /> Faturamento <i className="s-comp" /> Compras</span>
         </div>
         {meis.length === 0 ? (
@@ -82,13 +105,13 @@ export default async function MonitoramentoMei({ searchParams }: { searchParams:
               <span role="columnheader" className="num">Compras</span>
               <span role="columnheader">Situação</span>
             </div>
-            {meis.map((m, i) => {
+            {meis.map((m) => {
               const nivel = NIVEIS[m.ano.nivel];
               const f = m.ano.faturamento, c = m.ano.compras;
               return (
-                <Link key={`${m.org}${m.ie}`} role="row" className="ranking-linha"
+                <Link key={`${m.org}${m.ie}`} role="row" className={`ranking-linha ${filtro ? (noFiltro(m) ? "linha-filtrada" : "linha-apagada") : ""}`}
                   href={`/painel/mei/${m.ie}?ano=${ano}${admin ? `&org=${m.org}` : ""}`}>
-                  <span role="cell" className="ranking-pos">{i + 1}</span>
+                  <span role="cell" className="ranking-pos">{posicao.get(m)}</span>
                   <span role="cell" className="ranking-nome">
                     <b>{m.nome || "MEI"}</b>
                     <span className="suave">IE {formatarIe(m.ie)}{m.ano.primeiroMes > 0 ? ` · abriu em ${MESES_LONGOS[m.ano.primeiroMes]}` : ""}</span>

@@ -14,8 +14,12 @@ type Tarefa = {
 // ordem dos contadores no topo
 const RESUMO = ["concluido", "sem_movimento", "erro", "aguardando", "andamento", "fila", "cancelado"];
 
-export default async function DetalheAgendamento({ params }: { params: Promise<{ id: string }> }) {
+export default async function DetalheAgendamento({ params, searchParams }: {
+  params: Promise<{ id: string }>; searchParams: Promise<{ filtro?: string }>;
+}) {
   const { id } = await params;
+  const pedido = (await searchParams).filtro;
+  const filtro = pedido && SITUACAO[pedido] ? pedido : null;
   const { supabase } = await contexto();
   const { data: ag } = await supabase
     .from("xml_agendamentos").select("id, nome_arquivo, competencia, executar_em, criado_em").eq("id", id).maybeSingle();
@@ -31,6 +35,9 @@ export default async function DetalheAgendamento({ params }: { params: Promise<{
     const tipos = expandirTipos(e.tipos);
     return { e, celulas: colunas.map((tipo) => (tipos.includes(tipo) ? situacaoTarefa(e, tipo) : null)) };
   });
+  // filtro pelos contadores: as empresas com essa situação sobem (as com mais tarefas nela primeiro)
+  const naSituacao = (l: (typeof linhas)[number]) => l.celulas.filter((c) => c?.chave === filtro).length;
+  if (filtro) linhas.sort((a, b) => naSituacao(b) - naSituacao(a));
   const todas = linhas.flatMap((l) => l.celulas.filter((c): c is { chave: string; mensagem: string } => c !== null));
   const conta = (chave: string) => todas.filter((c) => c.chave === chave).length;
   const abertas = todas.filter((c) => SITUACOES_ABERTAS.includes(c.chave)).length;
@@ -74,13 +81,28 @@ export default async function DetalheAgendamento({ params }: { params: Promise<{
         </div>
         <ul className="contadores">
           {RESUMO.filter((k) => conta(k)).map((k) => (
-            <li key={k} className={`status ${SITUACAO[k].classe}`}>{SITUACAO[k].nome}: {conta(k)}</li>
+            <li key={k}>
+              {/* clicar filtra; clicar de novo limpa o filtro */}
+              <Link href={filtro === k ? `/painel/agendamentos/${id}` : `/painel/agendamentos/${id}?filtro=${k}`} scroll={false}
+                className={`status ${SITUACAO[k].classe} contador ${filtro === k ? "ativo" : ""}`} aria-pressed={filtro === k}
+                title={filtro === k ? "Limpar o filtro" : `Mostrar primeiro as empresas com ${SITUACAO[k].nome.toLowerCase()}`}>
+                {SITUACAO[k].nome}: {conta(k)}{filtro === k && <span aria-hidden="true"> ✕</span>}
+              </Link>
+            </li>
           ))}
         </ul>
       </section>
 
       <section className="cartao">
-        <h2 className="titulo-cartao">{empresas.length} empresa{empresas.length === 1 ? "" : "s"}</h2>
+        <div className="cartao-topo">
+          <h2 className="titulo-cartao">{empresas.length} empresa{empresas.length === 1 ? "" : "s"}</h2>
+          {filtro && (
+            <span className="suave">
+              {(() => { const n = linhas.filter((l) => naSituacao(l) > 0).length; return `${n} ${n === 1 ? "empresa" : "empresas"} com ${SITUACAO[filtro].nome.toLowerCase()} no topo · `; })()}
+              <Link href={`/painel/agendamentos/${id}`} scroll={false}>limpar filtro</Link>
+            </span>
+          )}
+        </div>
         <div className="tabela-rolagem grade-tarefas">
           <table>
             <thead>
@@ -88,7 +110,7 @@ export default async function DetalheAgendamento({ params }: { params: Promise<{
             </thead>
             <tbody>
               {linhas.map(({ e, celulas }) => (
-                <tr key={e.id}>
+                <tr key={e.id} className={filtro ? (celulas.some((c) => c?.chave === filtro) ? "linha-filtrada" : "linha-apagada") : undefined}>
                   <td className="grade-empresa">
                     <b>{e.nome}</b>
                     <span>{e.codigo && `${e.codigo}, `}IE {formatarIe(e.ie)}</span>
@@ -97,7 +119,7 @@ export default async function DetalheAgendamento({ params }: { params: Promise<{
                   {celulas.map((c, i) => (
                     <td key={colunas[i]}>
                       {c && (
-                        <span className={`celula-tarefa status ${SITUACAO[c.chave]?.classe ?? "st-neutro"}`} title={c.mensagem || undefined}>
+                        <span className={`celula-tarefa status ${SITUACAO[c.chave]?.classe ?? "st-neutro"}${filtro === c.chave ? " destaque" : ""}`} title={c.mensagem || undefined}>
                           {SITUACAO[c.chave]?.nome ?? c.chave}
                         </span>
                       )}
