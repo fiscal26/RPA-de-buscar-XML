@@ -17,10 +17,13 @@ type Linha = { n: number; valores: unknown[] };
  *  As colunas são achadas pelo nome (ATIVA, ID, ID_FILIAL, CNPJ, INSCRICAO ESTADUAL, NOME FANTASIA,
  *  LOGIN, SENHA e os serviços: NF-e Saida, NF-e Entrada, NFC-e, CT-e, Download Faturas, Extrato de Pagamentos,
  *  Omissão e Inadimplência, Certidão de Débitos, Conferência Cartão de Credito, Dossiê MEI). */
+const MAX_LINHAS = 5000;
+
 export async function lerPlanilha(arquivo: File): Promise<Leitura> {
   const nome = arquivo.name.toLowerCase();
   const bytes = Buffer.from(await arquivo.arrayBuffer());
   const linhas = nome.endsWith(".xlsx") || nome.endsWith(".xlsm") ? await linhasExcel(bytes) : linhasTexto(bytes);
+  if (linhas.length > MAX_LINHAS) throw new Error(`a planilha tem mais de ${MAX_LINHAS} linhas; divida em partes`);
   return interpretar(linhas);
 }
 

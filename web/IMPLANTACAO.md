@@ -133,3 +133,20 @@ remetente `avisos@lotivisse.com.br`.
 
 Sem a Brevo configurada, o portal continua funcionando: "Esqueci minha senha" usa o e-mail padrão do Supabase e
 a criação de acesso exige a senha provisória.
+
+## 9. Segurança (conferir uma vez)
+
+1. **Supabase > Authentication > Sign In / Providers > Email:** desligue **"Allow new users to sign up"**. As contas
+   são criadas só pela tela Equipe; com o cadastro aberto, qualquer pessoa conseguiria criar um login (não veria
+   nenhum dado, mas ocuparia a base). Em *Password*, deixe o mínimo de 8 caracteres.
+2. **Rode de novo o `schema.sql`:** ele traz as regras novas (escritório suspenso não enxerga nada nem pela API, o
+   estado do robô só para o administrador, freio de tentativas de login e de "esqueci minha senha", índices).
+3. **Chaves:** `SUPABASE_SERVICE_ROLE_KEY`, `BREVO_API_KEY` e `CRON_SECRET` ficam só na Vercel; nunca em código,
+   chat ou e-mail. Se alguma vazar, gere outra e troque na Vercel.
+4. **PC do robô:** o `config.json` tem a chave `service_role` e a chave privada das senhas do ATF. Use um usuário
+   do Windows com senha, mantenha o disco cifrado (BitLocker) e guarde a cópia da chave privada fora do PC.
+
+O que o portal já faz: cabeçalhos de segurança (não abre dentro de outro site, CSP, HSTS), páginas do painel sem
+cache compartilhado, cada escritório só enxerga os próprios dados (regras no banco), 5 senhas erradas por e-mail
+bloqueiam o login por 15 minutos, no máximo 2 links de senha nova por e-mail a cada 15 minutos, o agendamento
+diário dos alertas exige o `CRON_SECRET` e os links dos e-mails só levam para páginas do próprio site.

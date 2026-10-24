@@ -30,5 +30,7 @@ export async function contexto() {
     const { data } = await supabase.from("organizacoes").select("id, nome, ativo").eq("id", perfil.org_id).maybeSingle<Organizacao>();
     org = data;
   }
+  // escritório suspenso: ninguém dele usa o portal (o banco também esconde os dados)
+  if (perfil.papel !== "admin" && (!org || !org.ativo)) redirect("/sair?motivo=suspenso");
   return { supabase, user, perfil, org, admin: perfil.papel === "admin" };
 }

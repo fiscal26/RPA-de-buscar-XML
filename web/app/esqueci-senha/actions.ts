@@ -3,14 +3,18 @@
 import { criarCliente } from "@/lib/supabase/server";
 import { clienteAdmin } from "@/lib/supabase/admin";
 import { emailConfigurado, enderecoSite, enviarEmail, linkCriarSenha } from "@/lib/email";
+import { dentroDoLimite, registrarTentativa } from "@/lib/freio";
 
 export type EstadoEsqueci = { ok?: string; erro?: string } | undefined;
 
 /** Envia o link de redefinição. A resposta é a mesma exista ou não o e-mail (não revela quem tem acesso). */
 export async function pedirLink(_: EstadoEsqueci, form: FormData): Promise<EstadoEsqueci> {
-  const email = String(form.get("email") ?? "").trim().toLowerCase();
+  const email = String(form.get("email") ?? "").trim().toLowerCase().slice(0, 254);
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { erro: "Informe um e-mail válido." };
   const resposta = { ok: `Se ${email} tiver acesso ao portal, chegará em instantes um link para criar a senha nova.` };
+  // freio: no máximo 2 links por e-mail a cada 15 minutos (a resposta é a mesma, para não revelar nada)
+  if (!(await dentroDoLimite("senha", email))) return resposta;
+  await registrarTentativa("senha", email);
 
   if (!emailConfigurado()) {  // sem a Brevo: o e-mail padrão do Supabase (abre só no mesmo navegador)
     const supabase = await criarCliente();
