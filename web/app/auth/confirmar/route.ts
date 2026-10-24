@@ -10,8 +10,8 @@ export async function GET(request: NextRequest) {
   const tokenHash = url.searchParams.get("token_hash");
   const tipo = (url.searchParams.get("type") ?? "recovery") as EmailOtpType;
   const pedido = url.searchParams.get("proximo") ?? "/painel";
-  // só caminhos do próprio site (nada de "//outro-site")
-  const proximo = pedido.startsWith("/") && !pedido.startsWith("//") ? pedido : "/painel";
+  // só caminhos simples do próprio site (nada de "//outro-site", "/\\outro-site" nem parâmetros)
+  const proximo = /^\/(?![\/\\])[\w\-/]*$/.test(pedido) ? pedido : "/painel";
   url.search = "";
   const supabase = await criarCliente();
   let ok = false;

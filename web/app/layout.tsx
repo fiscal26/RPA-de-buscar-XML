@@ -1,10 +1,23 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import { DESCRICAO, SITE_URL } from "@/lib/site";
+
+const TITULO = "LotiVisse — robô do ATF da SEFAZ-PB para escritórios contábeis";
 
 export const metadata: Metadata = {
-  title: "LotiVisse — robô do ATF da SEFAZ-PB para escritórios contábeis",
-  description:
-    "XML de NF-e, NFC-e e CT-e, faturas, extratos, certidões e o faturamento dos MEIs, buscados no ATF da SEFAZ-PB e organizados por empresa e competência.",
+  metadataBase: new URL(SITE_URL),
+  title: { default: TITULO, template: "%s | LotiVisse" },
+  description: DESCRICAO,
+  applicationName: "LotiVisse",
+  keywords: ["ATF SEFAZ-PB", "XML NF-e Paraíba", "baixar XML SEFAZ PB", "NFC-e", "CT-e", "certidão de débitos SEFAZ-PB",
+    "faturamento MEI", "limite do MEI", "escritório contábil", "robô contábil", "automação contábil", "LotiVisse"],
+  alternates: { canonical: "/" },
+  openGraph: { type: "website", locale: "pt_BR", siteName: "LotiVisse", url: SITE_URL, title: TITULO, description: DESCRICAO },
+  twitter: { card: "summary_large_image", title: TITULO, description: DESCRICAO },
+  robots: { index: true, follow: true },
+  // Google Search Console: código da verificação por meta tag (variável na Vercel)
+  ...(process.env.GOOGLE_SITE_VERIFICATION ? { verification: { google: process.env.GOOGLE_SITE_VERIFICATION } } : {}),
+  category: "business",
 };
 
 export const viewport: Viewport = { themeColor: "#13294B" };

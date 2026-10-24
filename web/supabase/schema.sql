@@ -41,7 +41,8 @@ alter table public.perfis add column if not exists alertas_mei boolean not null 
 
 create or replace function public.minha_org() returns uuid
 language sql stable security definer set search_path = public as $$
-  select org_id from public.perfis where id = auth.uid() and ativo
+  select p.org_id from public.perfis p join public.organizacoes o on o.id = p.org_id
+   where p.id = auth.uid() and p.ativo and o.ativo
 $$;
 
 create or replace function public.meu_papel() returns text
@@ -131,6 +132,9 @@ create table if not exists public.xml_tarefas (
 create index if not exists xml_tarefas_fila_idx on public.xml_tarefas (criado_em) where status = 'pendente';
 create index if not exists xml_tarefas_agendamento_idx on public.xml_tarefas (agendamento_id);
 create index if not exists xml_agendamentos_org_idx on public.xml_agendamentos (org_id, criado_em desc);
+create index if not exists xml_tarefas_org_idx on public.xml_tarefas (org_id, criado_em desc);
+create index if not exists xml_tarefas_empresa_idx on public.xml_tarefas (empresa_id);
+create index if not exists xml_empresas_acesso_idx on public.xml_empresas (acesso_id);
 
 -- Robôs (o programa que roda no PC e baixa os XML)
 create table if not exists public.xml_robos (
@@ -188,6 +192,15 @@ create table if not exists public.xml_mei_alertas (
   enviado_em   timestamptz not null default now(),
   primary key (org_id, ie, ano, medida, nivel)
 );
+
+-- Tentativas de login e pedidos de senha nova: só o servidor do portal lê e grava (sem regra para usuários)
+create table if not exists public.xml_tentativas (
+  id         bigint generated always as identity primary key,
+  tipo       text not null check (tipo in ('login', 'senha')),
+  chave      text not null,                -- e-mail ou "ip:<endereço>"
+  criado_em  timestamptz not null default now()
+);
+create index if not exists xml_tentativas_idx on public.xml_tentativas (tipo, chave, criado_em desc);
 
 -- ------------------------------------------------------------------------- fila do robô
 -- Lote de tarefas liberadas (executar_em já chegou) de UM login do contador e UMA competência:
@@ -260,7 +273,7 @@ declare n integer;
 begin
   update public.xml_tarefas set status = 'cancelado', concluido_em = now(), mensagem = 'Cancelado pelo usuário.'
    where agendamento_id = p_id and status = 'pendente'
-     and (org_id = public.minha_org() or public.sou_admin());
+     and (org_id = (select public.minha_org()) or public.sou_admin());
   get diagnostics n = row_count;
   return n;
 end $$;
@@ -328,49 +341,51 @@ alter table public.xml_robos        enable row level security;
 alter table public.xml_mei_meses    enable row level security;
 alter table public.xml_mei_ajustes  enable row level security;
 alter table public.xml_mei_alertas  enable row level security;
+alter table public.xml_tentativas   enable row level security;
+revoke all on public.xml_tentativas from anon, authenticated;
 
 drop policy if exists org_ler on public.organizacoes;
 create policy org_ler on public.organizacoes for select to authenticated
-  using (public.sou_admin() or id = public.minha_org());
+  using ((select public.sou_admin()) or id = (select public.minha_org()));
 
 drop policy if exists perfis_ler on public.perfis;
 create policy perfis_ler on public.perfis for select to authenticated
-  using (public.sou_admin() or id = auth.uid()
-         or (org_id = public.minha_org() and public.meu_papel() = 'gestor'));
+  using ((select public.sou_admin()) or id = (select auth.uid())
+         or (org_id = (select public.minha_org()) and (select public.meu_papel()) = 'gestor'));
 
 drop policy if exists xml_acessos_ler on public.xml_acessos;
 create policy xml_acessos_ler on public.xml_acessos for select to authenticated
-  using (public.sou_admin() or org_id = public.minha_org());
+  using ((select public.sou_admin()) or org_id = (select public.minha_org()));
 -- a senha cifrada não sai para o navegador: só as colunas abaixo podem ser lidas pelo usuário
 revoke select on public.xml_acessos from anon, authenticated;
 grant select (id, org_id, login, criado_em, atualizado_em) on public.xml_acessos to authenticated;
 
 drop policy if exists xml_empresas_ler on public.xml_empresas;
 create policy xml_empresas_ler on public.xml_empresas for select to authenticated
-  using (public.sou_admin() or org_id = public.minha_org());
+  using ((select public.sou_admin()) or org_id = (select public.minha_org()));
 
 drop policy if exists xml_agendamentos_ler on public.xml_agendamentos;
 create policy xml_agendamentos_ler on public.xml_agendamentos for select to authenticated
-  using (public.sou_admin() or org_id = public.minha_org());
+  using ((select public.sou_admin()) or org_id = (select public.minha_org()));
 
 drop policy if exists xml_tarefas_ler on public.xml_tarefas;
 create policy xml_tarefas_ler on public.xml_tarefas for select to authenticated
-  using (public.sou_admin() or org_id = public.minha_org());
+  using ((select public.sou_admin()) or org_id = (select public.minha_org()));
 
 drop policy if exists xml_robos_ler on public.xml_robos;
-create policy xml_robos_ler on public.xml_robos for select to authenticated using (true);
+create policy xml_robos_ler on public.xml_robos for select to authenticated using ((select public.sou_admin()));
 
 drop policy if exists xml_mei_meses_ler on public.xml_mei_meses;
 create policy xml_mei_meses_ler on public.xml_mei_meses for select to authenticated
-  using (public.sou_admin() or org_id = public.minha_org());
+  using ((select public.sou_admin()) or org_id = (select public.minha_org()));
 
 drop policy if exists xml_mei_ajustes_ler on public.xml_mei_ajustes;
 create policy xml_mei_ajustes_ler on public.xml_mei_ajustes for select to authenticated
-  using (public.sou_admin() or org_id = public.minha_org());
+  using ((select public.sou_admin()) or org_id = (select public.minha_org()));
 
 drop policy if exists xml_mei_alertas_ler on public.xml_mei_alertas;
 create policy xml_mei_alertas_ler on public.xml_mei_alertas for select to authenticated
-  using (public.sou_admin() or org_id = public.minha_org());
+  using ((select public.sou_admin()) or org_id = (select public.minha_org()));
 
 -- funções: quem pode chamar
 revoke all on function public.xml_pegar_lote(text, text, integer) from public, anon, authenticated;

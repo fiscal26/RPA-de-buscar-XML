@@ -32,7 +32,9 @@ function capitalizar(palavra: string, primeira: boolean): string {
 }
 
 export function corrigirNome(texto: string, limite = 60): string {
-  const palavras = String(texto ?? "").normalize("NFC").replace(/[\u0000-\u001f]/g, " ").trim().split(/\s+/).filter(Boolean);
+  // sem =, +, - ou @ no começo: o nome vai para planilhas do Excel e não pode virar fórmula
+  const palavras = String(texto ?? "").normalize("NFC").replace(/[\u0000-\u001f]/g, " ").trim().replace(/^[=+\-@\s]+/, "")
+    .split(/\s+/).filter(Boolean);
   return palavras.map((p, i) => {
     if (/\d/.test(p) && [...p].filter((c) => LETRA.test(c)).length < 2) return p.toLocaleUpperCase("pt-BR");  // "3M", "2000"
     return capitalizar(desfazerTrocas(p), i === 0);
