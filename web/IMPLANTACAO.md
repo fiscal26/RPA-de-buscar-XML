@@ -150,3 +150,18 @@ O que o portal já faz: cabeçalhos de segurança (não abre dentro de outro sit
 cache compartilhado, cada escritório só enxerga os próprios dados (regras no banco), 5 senhas erradas por e-mail
 bloqueiam o login por 15 minutos, no máximo 2 links de senha nova por e-mail a cada 15 minutos, o agendamento
 diário dos alertas exige o `CRON_SECRET` e os links dos e-mails só levam para páginas do próprio site.
+
+## 10. Google (busca)
+
+O site já publica `https://xml.lotivisse.com.br/robots.txt` e `/sitemap.xml`, título e descrição, imagem de
+compartilhamento e os dados estruturados (o que é o site). A área logada e as telas de senha ficam fora da busca.
+
+1. Entre em **search.google.com/search-console** > *Adicionar propriedade* > **Prefixo do URL** >
+   `https://xml.lotivisse.com.br`.
+2. Verifique pela **Tag HTML**: copie só o código do `content="..."` e crie na Vercel a variável
+   `GOOGLE_SITE_VERIFICATION` com esse código; faça o *Redeploy* e clique em *Verificar*.
+   (Se o domínio estiver no Search Console como *Domínio*, a verificação por DNS também serve.)
+3. Em **Sitemaps**, envie `sitemap.xml`. Em **Inspeção de URL**, cole o endereço da página inicial e clique em
+   *Solicitar indexação*. O Google costuma levar de alguns dias a algumas semanas para mostrar o site.
+4. Ajuda muito ter links apontando para o site: no site principal da LotiVisse, no Instagram/LinkedIn e no
+   perfil da empresa no Google (Google Meu Negócio).

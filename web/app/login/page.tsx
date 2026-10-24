@@ -1,5 +1,8 @@
+import type { Metadata } from "next";
 import FormLogin from "./FormLogin";
 import Entrada from "@/components/Entrada";
+
+export const metadata: Metadata = { title: "Entrar no portal", alternates: { canonical: "/login" } };
 
 export default async function Login({ searchParams }: { searchParams: Promise<{ erro?: string; senha?: string }> }) {
   const { erro, senha } = await searchParams;

@@ -1,8 +1,11 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import Logo from "@/components/Logo";
 import MenuPerfil from "@/components/MenuPerfil";
 import MenuLateral from "@/components/MenuLateral";
 import { contexto } from "@/lib/sessao";
+
+export const metadata: Metadata = { title: "Painel", robots: { index: false, follow: false } };
 
 const ITENS = [
   { href: "/painel", nome: "Início", icone: "inicio" },
