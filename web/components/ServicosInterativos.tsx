@@ -41,7 +41,7 @@ export default function ServicosInterativos() {
       <div className="servicos-texto">
         <h2>O que o robô busca e onde guarda</h2>
         <p>
-          Uma pasta por empresa e, dentro dela, uma por competência. O XML vem como o ATF entregou e o valor das notas
+          Uma pasta por empresa e, dentro dela, uma por competência. O XML vem como a SEFAZ entregou e o valor das notas
           vai no nome da pasta, pronto para levar ao sistema contábil.
         </p>
         <ul className="etiquetas" aria-label="Serviços">
@@ -56,7 +56,7 @@ export default function ServicosInterativos() {
           ))}
         </ul>
         <p className="legenda">
-          <span><span className="ponto ponto-xml" />XML do ATF</span>
+          <span><span className="ponto ponto-xml" />XML da SEFAZ</span>
           <span><span className="ponto ponto-pdf" />PDF na hora</span>
           <span><span className="ponto ponto-mei" />Planilha do MEI</span>
         </p>

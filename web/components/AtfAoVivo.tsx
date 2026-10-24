@@ -77,7 +77,7 @@ export default function AtfAoVivo() {
           </li>
         ))}
       </ul>
-      <figcaption>O ZIP fica como veio do ATF; o valor no nome da pasta soma as notas autorizadas, sem as canceladas.</figcaption>
+      <figcaption>O ZIP fica como veio da SEFAZ; o valor no nome da pasta soma as notas autorizadas, sem as canceladas.</figcaption>
     </figure>
   );
 }
