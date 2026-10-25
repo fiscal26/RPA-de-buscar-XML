@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useActionState, useState } from "react";
 import Icone from "@/components/Icones";
 import { entrar } from "./actions";
+import { CHAVE_ATIVIDADE } from "@/components/Inatividade";
 
 export function CampoSenha({ id, nome, autoComplete, minLength }: { id: string; nome: string; autoComplete: string; minLength?: number }) {
   const [ver, setVer] = useState(false);
@@ -20,7 +21,8 @@ export function CampoSenha({ id, nome, autoComplete, minLength }: { id: string; 
 export default function FormLogin() {
   const [estado, acao, enviando] = useActionState(entrar, undefined);
   return (
-    <form action={acao} className="form-entrada">
+    <form action={acao} className="form-entrada"
+      onSubmit={() => { try { localStorage.setItem(CHAVE_ATIVIDADE, String(Date.now())); } catch {} }}>
       {estado?.erro && <div className="faixa erro">{estado.erro}</div>}
       <label htmlFor="email">E-mail</label>
       <input id="email" name="email" type="email" autoComplete="username" required />

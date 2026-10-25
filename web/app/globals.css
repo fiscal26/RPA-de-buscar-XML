@@ -705,3 +705,12 @@ a.ranking-linha:hover { background: var(--carbono); }
 .perguntas summary { margin: 0; font-size: 1.02rem; }
 .perguntas details p { margin: 0.6rem 0 0.2rem; color: var(--suave); }
 @media (max-width: 760px) { .cobertura { grid-template-columns: minmax(0, 1fr); } }
+
+/* aviso de inatividade */
+.inatividade-fundo { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 1rem;
+  background: color-mix(in srgb, var(--noite) 55%, transparent); backdrop-filter: blur(2px); }
+.inatividade-caixa { background: var(--superficie); border: 1px solid var(--linha); border-radius: 14px; padding: 1.75rem;
+  max-width: 400px; width: 100%; box-shadow: 0 24px 60px -20px var(--sombra); text-align: center; }
+.inatividade-caixa h2 { margin: 0 0 0.5rem; font-size: 1.3rem; }
+.inatividade-caixa p { color: var(--suave); margin: 0 0 1.25rem; }
+.inatividade-caixa b { color: var(--forte); font-variant-numeric: tabular-nums; }

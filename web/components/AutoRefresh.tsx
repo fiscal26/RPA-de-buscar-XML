@@ -8,7 +8,8 @@ export default function AutoRefresh({ ativo, segundos = 5 }: { ativo: boolean; s
   const router = useRouter();
   useEffect(() => {
     if (!ativo) return;
-    const t = setInterval(() => router.refresh(), segundos * 1000);
+    // aba escondida não atualiza: economiza servidor e banco
+    const t = setInterval(() => { if (document.visibilityState === "visible") router.refresh(); }, segundos * 1000);
     return () => clearInterval(t);
   }, [ativo, segundos, router]);
   return null;

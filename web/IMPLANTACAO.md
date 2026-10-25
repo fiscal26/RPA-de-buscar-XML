@@ -146,6 +146,10 @@ a criação de acesso exige a senha provisória.
 4. **PC do robô:** o `config.json` tem a chave `service_role` e a chave privada das senhas do ATF. Use um usuário
    do Windows com senha, mantenha o disco cifrado (BitLocker) e guarde a cópia da chave privada fora do PC.
 
+5. **Sessão:** o portal encerra a sessão após **15 minutos sem uso** (aviso 2 minutos antes; vale para todas as
+   abas e para a aba esquecida aberta). No plano Pro do Supabase dá para reforçar no servidor, em *Authentication >
+   Sessions* (*Inactivity timeout*), com um valor igual ou maior.
+
 O que o portal já faz: cabeçalhos de segurança (não abre dentro de outro site, CSP, HSTS), páginas do painel sem
 cache compartilhado, cada escritório só enxerga os próprios dados (regras no banco), 5 senhas erradas por e-mail
 bloqueiam o login por 15 minutos, no máximo 2 links de senha nova por e-mail a cada 15 minutos, o agendamento
