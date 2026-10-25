@@ -1,7 +1,7 @@
 import { ImageResponse } from "next/og";
 
 // Imagem que aparece quando o link é compartilhado (WhatsApp, LinkedIn, Google).
-export const alt = "LotiVisse: documentos do ATF da SEFAZ-PB organizados por empresa e competência";
+export const alt = "LotiVisse: robô para baixar notas fiscais e capturar XML";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
@@ -18,8 +18,8 @@ export default function Imagem() {
           <div style={{ display: "flex", fontSize: 56, fontWeight: 800 }}>Loti<span style={{ color: "#f6d35b" }}>Visse</span></div>
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-          <div style={{ fontSize: 60, fontWeight: 800, lineHeight: 1.1 }}>O ATF da SEFAZ-PB, empresa por empresa, sem ninguém precisar clicar.</div>
-          <div style={{ fontSize: 30, color: "#c9d6ea" }}>XMLs de NF-e, NFC-e e CT-e, faturas, certidões e faturamento dos MEIs</div>
+          <div style={{ fontSize: 60, fontWeight: 800, lineHeight: 1.1 }}>O robô que baixa as notas fiscais e captura os XMLs, empresa por empresa.</div>
+          <div style={{ fontSize: 30, color: "#c9d6ea" }}>NF-e, NFC-e, CT-e, guias, certidões e faturamento dos MEIs, direto da SEFAZ</div>
         </div>
         <div style={{ display: "flex", fontSize: 26, color: "#f6d35b" }}>xml.lotivisse.com.br</div>
       </div>

@@ -13,8 +13,8 @@ export default function Vitrine() {
     <aside className="vitrine">
       <Logo />
       <div className="vitrine-texto">
-        <h2>Os documentos da SEFAZ-PB chegam sozinhos.</h2>
-        <p>Você envia a planilha das empresas. O robô entra no ATF com o login do contador e guarda notas, guias e certidões na pasta de cada empresa.</p>
+        <h2>Suas notas fiscais chegam sozinhas.</h2>
+        <p>Você envia a planilha das empresas. O robô entra na SEFAZ com o login do contador e guarda notas, guias e certidões na pasta de cada empresa.</p>
       </div>
       <div className="vitrine-cena" aria-hidden="true">
         <div className="mini-planilha">

@@ -1,16 +1,15 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
-import { DESCRICAO, SITE_URL } from "@/lib/site";
-
-const TITULO = "LotiVisse — robô do ATF da SEFAZ-PB para escritórios contábeis";
+import { DESCRICAO, SITE_URL, TITULO } from "@/lib/site";
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
   title: { default: TITULO, template: "%s | LotiVisse" },
   description: DESCRICAO,
   applicationName: "LotiVisse",
-  keywords: ["ATF SEFAZ-PB", "XML NF-e Paraíba", "baixar XML SEFAZ PB", "NFC-e", "CT-e", "certidão de débitos SEFAZ-PB",
-    "faturamento MEI", "limite do MEI", "escritório contábil", "robô contábil", "automação contábil", "LotiVisse"],
+  keywords: ["robô para baixar nota fiscal", "robô de capturar XML", "baixar XML de notas fiscais", "download automático de XML",
+    "captura de XML NF-e", "XML NF-e", "NFC-e", "CT-e", "NFS-e", "SEFAZ", "ATF SEFAZ-PB", "certidão negativa de débitos",
+    "faturamento MEI", "limite do MEI", "robô contábil", "automação para escritório contábil", "RPA contábil", "LotiVisse"],
   alternates: { canonical: "/" },
   openGraph: { type: "website", locale: "pt_BR", siteName: "LotiVisse", url: SITE_URL, title: TITULO, description: DESCRICAO },
   twitter: { card: "summary_large_image", title: TITULO, description: DESCRICAO },
