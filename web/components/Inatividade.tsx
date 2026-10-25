@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 /** Sem usar o portal por este tempo, a sessão é encerrada (com aviso antes). */
-export const MINUTOS_INATIVIDADE = 30;
+export const MINUTOS_INATIVIDADE = 15;
 const AVISO_SEGUNDOS = 120;
 export const CHAVE_ATIVIDADE = "lv_ultima_atividade";  // compartilhada entre as abas abertas
 
