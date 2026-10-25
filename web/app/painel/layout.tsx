@@ -3,6 +3,7 @@ import Link from "next/link";
 import Logo from "@/components/Logo";
 import MenuPerfil from "@/components/MenuPerfil";
 import MenuLateral from "@/components/MenuLateral";
+import Inatividade from "@/components/Inatividade";
 import { contexto } from "@/lib/sessao";
 
 export const metadata: Metadata = { title: "Painel", robots: { index: false, follow: false } };
@@ -30,6 +31,7 @@ export default async function LayoutPainel({ children }: { children: React.React
         {org && !org.ativo && <div className="faixa erro">Acesso suspenso. Fale com o responsável pelo site.</div>}
         {children}
       </main>
+      <Inatividade />
     </div>
   );
 }

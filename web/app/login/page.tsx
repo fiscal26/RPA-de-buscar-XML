@@ -11,6 +11,7 @@ export default async function Login({ searchParams }: { searchParams: Promise<{ 
       <h1>Boas-vindas à LotiVisse</h1>
       <p className="entrada-sub">Entre com o e-mail e a senha do seu acesso.</p>
       {erro === "sem-acesso" && <div className="faixa erro">Seu usuário está sem acesso. Fale com o gestor do escritório.</div>}
+      {erro === "inatividade" && <div className="faixa alerta">Sua sessão foi encerrada após 30 minutos sem uso. Entre de novo.</div>}
       {erro === "suspenso" && <div className="faixa erro">O acesso do seu escritório está suspenso. Fale com a LotiVisse.</div>}
       {erro === "link" && <div className="faixa erro">O link de redefinição expirou ou já foi usado. Peça outro em "Esqueci minha senha".</div>}
       {senha === "nova" && <div className="faixa ok">Senha nova salva. Entre com ela.</div>}
