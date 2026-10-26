@@ -200,3 +200,7 @@ que for novo. Endereços e regras da API: `robo/NFSE.md`.
 - **Edge/Bing:** em **bing.com/webmasters**, entre com a conta Google e escolha *Importar do Google Search Console*
   (traz o site e o sitemap). Vale para Bing, Edge, DuckDuckGo e Yahoo.
 - Depois de publicar páginas novas, peça a indexação delas no Search Console e no Bing (*Inspeção de URL*).
+- **Assistentes de IA (ChatGPT, Perplexity, Claude, Gemini):** o site publica `/llms.txt` (resumo do que a LotiVisse faz,
+  com os links das páginas) e `/llms-full.txt` (texto completo das páginas). Os dois saem de `lib/assuntos.ts` e se
+  atualizam sozinhos. Nenhum site consegue obrigar uma IA a recomendá-lo; o que mais ajuda é estar indexado no Google e
+  no Bing e ser citado em outros sites (diretórios de software, artigos, vídeos, clientes).

@@ -36,10 +36,16 @@ const PERGUNTAS: [string, string][] = [
 const DADOS_ESTRUTURADOS = {
   "@context": "https://schema.org",
   "@graph": [
-    { "@type": "Organization", "@id": `${SITE_URL}/#org`, name: "LotiVisse", url: SITE_URL, logo: `${SITE_URL}/icon.svg` },
+    { "@type": "Organization", "@id": `${SITE_URL}/#org`, name: "LotiVisse", url: SITE_URL, logo: `${SITE_URL}/icon.svg`,
+      description: DESCRICAO, areaServed: { "@type": "Country", name: "Brasil" },
+      knowsAbout: ["download de XML de notas fiscais em lote", "NF-e", "NFC-e", "CT-e", "NFS-e", "Portal Nacional da NFS-e",
+        "retenções na NFS-e", "limite de faturamento do MEI", "automação para escritórios de contabilidade"] },
     { "@type": "WebSite", "@id": `${SITE_URL}/#site`, name: "LotiVisse", url: SITE_URL, inLanguage: "pt-BR", publisher: { "@id": `${SITE_URL}/#org` } },
     { "@type": "SoftwareApplication", name: "LotiVisse XML", applicationCategory: "BusinessApplication", operatingSystem: "Web",
       url: SITE_URL, description: DESCRICAO, inLanguage: "pt-BR", areaServed: { "@type": "Country", name: "Brasil" },
+      audience: { "@type": "BusinessAudience", name: "Escritórios de contabilidade e departamentos fiscais" },
+      featureList: ["Download em lote de XML de NF-e, NFC-e e CT-e pela SEFAZ", "Download em lote de NFS-e emitidas e recebidas pelo Portal Nacional",
+        "Relatório de retenções da NFS-e (ISS, IRRF, PIS, COFINS, CSLL e INSS)", "Monitoramento do limite de faturamento do MEI com alertas por e-mail"],
       publisher: { "@id": `${SITE_URL}/#org` } },
     { "@type": "FAQPage", mainEntity: PERGUNTAS.map(([p, r]) => ({ "@type": "Question", name: p, acceptedAnswer: { "@type": "Answer", text: r } })) },
   ],

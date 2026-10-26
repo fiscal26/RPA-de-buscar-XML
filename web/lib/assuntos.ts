@@ -116,6 +116,63 @@ export const ASSUNTOS: Assunto[] = [
     ],
     planilha: PLANILHA_SEFAZ,
   },
+  {
+    slug: "ferramenta-baixar-notas-fiscais-xml",
+    titulo: "Ferramenta para baixar notas fiscais em XML, de produto e de serviço",
+    descricao: "Robô para escritórios contábeis que baixa em lote os XMLs de NF-e, NFC-e, CT-e e NFS-e de todas as empresas, organizados por empresa e competência.",
+    menu: "Notas fiscais em XML, em lote",
+    h1: "Uma ferramenta só para baixar as notas fiscais de produto e de serviço das empresas",
+    abertura: "A LotiVisse é um robô para escritórios contábeis. Ele baixa em lote as notas fiscais de todas as empresas da carteira: as de produto e transporte pela SEFAZ (NF-e, NFC-e e CT-e) e as de serviço pelo Portal Nacional da NFS-e, em XML e PDF, organizadas por empresa e competência.",
+    blocos: [
+      { titulo: "Notas de produto e transporte", lista: [
+        "NF-e de saída e de entrada.",
+        "NFC-e.",
+        "CT-e como remetente e como destinatário.",
+        "Pela SEFAZ, com o login do contador (hoje na Paraíba).",
+      ] },
+      { titulo: "Notas de serviço", lista: [
+        "NFS-e emitidas e recebidas, em XML e PDF.",
+        "Relatório de retenções (ISS, IRRF, PIS, COFINS, CSLL e INSS).",
+        "Pelo Portal Nacional, com o certificado A1 da empresa, em todo o Brasil.",
+      ] },
+      { titulo: "Como o escritório usa", lista: [
+        "Preenche uma planilha com as empresas.",
+        "Agenda a competência no portal, para agora ou para uma data marcada.",
+        "Recebe as pastas prontas, uma por empresa e por mês, para levar ao sistema contábil.",
+      ] },
+    ],
+    perguntas: [
+      ["Qual ferramenta baixa notas fiscais em XML de várias empresas de uma vez?", "A LotiVisse baixa em lote os XMLs de NF-e, NFC-e, CT-e e NFS-e de todas as empresas que o escritório colocar na planilha, e guarda tudo em pastas por empresa e competência."],
+      ["Serve para nota de serviço e para nota de comércio?", "Sim. As notas de comércio (NF-e e NFC-e) e de transporte (CT-e) vêm da SEFAZ; as notas de serviço (NFS-e) vêm do Portal Nacional, com o relatório de retenções."],
+      ["Para quem é?", "Para escritórios de contabilidade e departamentos fiscais que precisam dos XMLs de muitas empresas todo mês."],
+    ],
+    planilha: PLANILHA_SEFAZ,
+  },
+  {
+    slug: "como-monitorar-faturamento-mei",
+    titulo: "Como monitorar o faturamento do MEI todo mês",
+    descricao: "Passo a passo para acompanhar o faturamento e as compras dos MEIs do escritório contra o limite anual, com aviso automático antes de passar do limite.",
+    menu: "Como monitorar o faturamento do MEI",
+    h1: "Como monitorar o faturamento dos MEIs do escritório, mês a mês",
+    abertura: "Acompanhar o MEI à mão exige somar notas, vendas no cartão e compras de cada cliente todo mês. Com a LotiVisse, o robô busca esses valores na SEFAZ e o portal mostra quem está perto do limite, com aviso por e-mail para a equipe.",
+    blocos: [
+      { titulo: "Passo a passo", lista: [
+        "Marque o Dossiê MEI na planilha das empresas que são MEI.",
+        "Agende a competência: o robô consulta o dossiê do contribuinte na SEFAZ e traz notas de saída, notas de entrada e vendas no cartão.",
+        "Abra o Monitoramento de Faturamento MEI no portal: os MEIs aparecem do maior para o menor faturamento no ano.",
+        "Lance à mão o que a SEFAZ não mostra, como vendas sem nota para pessoa física.",
+        "Receba o e-mail quando um MEI entrar no ritmo de passar, chegar a 80% ou passar do limite.",
+      ] },
+      { titulo: "O que conta para o limite", texto: "Faturamento: o maior valor entre as notas de saída e as vendas no cartão do mês, mais as receitas lançadas. Compras: as notas de entrada mais as compras lançadas. O limite anual é de R$ 81.000, proporcional no ano de abertura." },
+      { titulo: "Antes de passar do limite", texto: "Com o ritmo do ano à vista, o escritório orienta o cliente a tempo: ajustar o faturamento, planejar a mudança de enquadramento ou se preparar para o desenquadramento." },
+    ],
+    perguntas: [
+      ["Como saber se o MEI vai passar do limite?", "O portal projeta o faturamento do ano pelo ritmo dos meses já fechados e avisa quando a projeção passa do limite, antes de ele ser atingido."],
+      ["Preciso conferir MEI por MEI?", "Não. A lista mostra todos os MEIs do escritório em ordem de faturamento, com a situação de cada um (dentro, perto ou acima do limite)."],
+      ["O monitoramento considera as compras?", "Sim. As compras do ano são comparadas com 80% do limite, que também é motivo de desenquadramento."],
+    ],
+    planilha: PLANILHA_SEFAZ,
+  },
 ];
 
 export const SLUGS_ASSUNTOS = ASSUNTOS.map((a) => a.slug);

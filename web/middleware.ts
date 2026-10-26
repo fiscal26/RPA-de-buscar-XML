@@ -51,5 +51,5 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   // arquivos públicos sem passar pelo login: ícone, imagem de compartilhamento, robots.txt e sitemap.xml
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|icon.svg|opengraph-image|robots.txt|sitemap.xml|modelos/).*)"],
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|icon.svg|opengraph-image|robots.txt|sitemap.xml|llms.txt|llms-full.txt|modelos/).*)"],
 };
