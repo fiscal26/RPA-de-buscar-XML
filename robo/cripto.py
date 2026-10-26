@@ -13,6 +13,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
 PREFIXO = "v1:"
+PREFIXO_ARQUIVO = "v2:"
 _OAEP = padding.OAEP(mgf=padding.MGF1(algorithm=hashes.SHA256()), algorithm=hashes.SHA256(), label=None)
 
 
@@ -62,3 +63,29 @@ def decifrar(cifrada: str, privada) -> str:
     except Exception as e:
         raise SenhaIlegivel("não consegui abrir a senha: ela foi cifrada com outra chave. "
                             "Confira a XML_CHAVE_PUBLICA na Vercel e cadastre a senha de novo.") from e
+
+
+def cifrar_arquivo(dados: bytes, publica_b64: str) -> str:
+    """Usado nos testes; no dia a dia quem cifra o certificado A1 é o portal (web/lib/cripto.ts)."""
+    import os
+
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+    publica = serialization.load_pem_public_key(base64.b64decode(publica_b64))
+    chave, iv = os.urandom(32), os.urandom(12)
+    partes = (publica.encrypt(chave, _OAEP), iv, AESGCM(chave).encrypt(iv, dados, None))
+    return PREFIXO_ARQUIVO + ".".join(base64.b64encode(p).decode() for p in partes)
+
+
+def decifrar_arquivo(cifrado: str, privada) -> bytes:
+    """Certificado A1 guardado pelo portal: "v2:<chave AES em RSA-OAEP>.<iv>.<arquivo em AES-256-GCM + tag>"."""
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+    if not cifrado or not cifrado.startswith(PREFIXO_ARQUIVO):
+        raise SenhaIlegivel("certificado guardado em formato desconhecido; envie o certificado de novo no portal.")
+    try:
+        chave_c, iv, dados = (base64.b64decode(p) for p in cifrado[len(PREFIXO_ARQUIVO):].split("."))
+        return AESGCM(privada.decrypt(chave_c, _OAEP)).decrypt(iv, dados, None)
+    except Exception as e:
+        raise SenhaIlegivel("não consegui abrir o certificado: ele foi cifrado com outra chave. "
+                            "Confira a XML_CHAVE_PUBLICA na Vercel e envie o certificado de novo.") from e

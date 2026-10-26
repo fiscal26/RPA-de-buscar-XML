@@ -1,0 +1,14 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "overused-font",
+        "value": "arial",
+        "createdAt": "2026-10-26T03:25:59.926Z",
+        "reason": "Claude: e-mail transacional precisa de fonte segura de cliente de e-mail (Arial/Helvetica); não é tela do site"
+      }
+    ]
+  }
+}

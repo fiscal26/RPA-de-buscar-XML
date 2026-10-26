@@ -35,3 +35,24 @@ O robô terá implementação própria; aqui ficam só os endereços e as regras
 - Erros: JSON `{"Erros":[{"Codigo":"E…","Descricao":"…"}]}`. 429/502/503/504 são passageiros: esperar
   (respeitar `Retry-After`) e repetir; em 429 aumentar o intervalo entre chamadas (começar em ~0,7 s).
 - O XML vem no campo `ArquivoXml` de cada item do lote, compactado (gzip) e em base64.
+
+## Onde está no código
+
+| O quê | Arquivo |
+|---|---|
+| Cliente da API (mTLS, lotes por NSU, espera e repetição, DANFSe) | `robo/nfse.py` (`ClienteADN`, `contexto_tls`, `sessao_com_certificado`) |
+| Leitura do XML e das retenções | `robo/nfse.py` (`ler_nfse`, `NotaServico`) |
+| Pastas, cache por CNPJ e relatório de retenções | `robo/nfse.py` (`baixar_competencia`, `Cache`, `relatorio_retencoes`) |
+| Tarefa vinda do portal | `robo/robo_xml.py` (`executar_nfse`, `Robo.processar_nfse`, `Portal.pegar_lote_nfse`) |
+| Teste com um .pfx do PC | `robo/testar_nfse.bat` → `robo_xml.py --nfse-teste` (`testar_nfse`) |
+| Certificado cifrado (v2) | `web/lib/cripto.ts` (`cifrarArquivo`) e `robo/cripto.py` (`decifrar_arquivo`) |
+| Envio e conferência do .pfx | `web/lib/certificado.ts`, `web/app/painel/certificados/`, `web/app/painel/actions-nfse.ts` |
+| Planilha e agendamento da NFS-e | `web/lib/planilha-nfse.ts`, `web/app/painel/FormAgendamentoNfse.tsx`, `web/app/painel/agendar/page.tsx` |
+| Banco (tabelas e fila) | `web/supabase/schema.sql` (`xml_nfse_certificados`, `xml_nfse_empresas`, `xml_nfse_pegar_lote`) |
+| Testes | `robo/tests/test_nfse.py` |
+
+## Documentação oficial
+
+- Portal da NFS-e, documentação técnica (leiaute do XML, manuais da API e do ADN): https://www.gov.br/nfse
+  → *Biblioteca* → *Documentação técnica*.
+- Ambiente de testes (produção restrita) do ADN: `https://adn.producaorestrita.nfse.gov.br` (mesmos caminhos).

@@ -226,3 +226,78 @@ def test_le_cnpj_do_certificado_e_abre_o_tls():
         assert ctx is not None
     with pytest.raises(nfse.ErroADN, match="senha"):
         nfse.dados_do_certificado(pfx, "errada")
+
+
+# ---------------------------------------------------------------- tarefa do portal (robô)
+@pytest.fixture
+def chaves():
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    import cripto
+    privada = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    return privada, cripto.publica_de(privada)
+
+
+def tarefa(chaves, tipos, pfx=None, senha="1234", cnpj=DONO, certificado_cnpj=DONO):
+    import cripto
+    _, publica = chaves
+    pfx = pfx or _pfx(f"LOTIVISSE LTDA:{certificado_cnpj}", senha)
+    return {"id": "t1", "cnpj": cnpj, "nome": "Lotivisse", "codigo": "7", "tipos": tipos, "data_inicio": "2026-09-01",
+            "certificado_cnpj": certificado_cnpj, "pfx_cifrado": cripto.cifrar_arquivo(pfx, publica),
+            "senha_cifrada": cripto.cifrar(senha, publica)}
+
+
+@pytest.fixture
+def cfg_nfse(tmp_path, monkeypatch):
+    monkeypatch.setattr(nfse, "CACHE", tmp_path / "cache")
+    monkeypatch.setattr(nfse.ClienteADN.__init__, "__defaults__", ("", nfse.ADN, 0, lambda s: None))  # sem esperas
+    return {"pastas": {"destino": str(tmp_path / "destino")}}
+
+
+def test_tarefa_do_portal_baixa_e_conta_por_servico(chaves, cfg_nfse):
+    import robo_xml
+    portal = PortalFalso(documentos_exemplo())
+    r = robo_xml.executar_nfse(cfg_nfse, tarefa(chaves, ["nfse_emitidas", "nfse_recebidas", "nfse_pdf", "nfse_retencoes"]),
+                               chaves[0], sessao_falsa=portal)
+    assert r.status == "concluido" and r.qtd_xml == 3 and r.pasta == "7-Lotivisse"
+    assert r.detalhes["nfse_emitidas"] == {"situacao": "concluido", "mensagem": "2 nota(s)", "arquivos": 2}
+    assert r.detalhes["nfse_recebidas"]["arquivos"] == 1 and r.detalhes["nfse_pdf"]["arquivos"] == 3
+    assert r.detalhes["nfse_retencoes"]["situacao"] == "concluido"
+    assert "1 cancelada(s) fora" in r.mensagem
+    assert all("cnpjConsulta" not in p[1] for p in portal.pedidos)
+
+
+def test_filial_usa_o_certificado_da_matriz_com_cnpj_consulta(chaves, cfg_nfse):
+    import robo_xml
+    filial = "11222333000262"
+    portal = PortalFalso([])
+    r = robo_xml.executar_nfse(cfg_nfse, tarefa(chaves, ["nfse_emitidas"], cnpj=filial), chaves[0], sessao_falsa=portal)
+    assert r.status == "sem_notas" and r.detalhes["nfse_emitidas"]["situacao"] == "sem_movimento"
+    assert portal.pedidos[0][1]["cnpjConsulta"] == filial
+
+
+def test_so_emitidas_sem_relatorio_nem_pdf(chaves, cfg_nfse, tmp_path):
+    import robo_xml
+    portal = PortalFalso(documentos_exemplo())
+    r = robo_xml.executar_nfse(cfg_nfse, tarefa(chaves, ["nfse_emitidas"]), chaves[0], sessao_falsa=portal)
+    assert r.qtd_xml == 2 and set(r.detalhes) == {"nfse_emitidas"}
+    pasta = tmp_path / "destino" / "Arquivos baixados" / "7-Lotivisse" / "2026-09"
+    assert not (pasta / nfse.PASTA_RECEBIDAS).exists() and not list(pasta.glob("*.xlsx"))
+    assert not list(pasta.rglob("*.pdf")) and not any("/danfse/" in p[0] for p in portal.pedidos)
+
+
+def test_certificado_com_senha_errada(chaves, cfg_nfse):
+    import robo_xml
+    t = tarefa(chaves, ["nfse_emitidas"])
+    t["senha_cifrada"] = __import__("cripto").cifrar("errada", chaves[1])
+    r = robo_xml.executar_nfse(cfg_nfse, t, chaves[0], sessao_falsa=PortalFalso([]))
+    assert r.status == "certificado" and "senha" in r.mensagem and r.detalhes["nfse_emitidas"]["situacao"] == "erro"
+
+
+def test_portal_recusa_o_certificado_e_fora_do_ar(chaves, cfg_nfse):
+    import robo_xml
+    recusa = PortalFalso([], falhas=[Resposta(403, {"Erros": [{"Codigo": "E0", "Descricao": "x"}]})])
+    r = robo_xml.executar_nfse(cfg_nfse, tarefa(chaves, ["nfse_emitidas"]), chaves[0], sessao_falsa=recusa)
+    assert r.status == "certificado"
+    instavel = PortalFalso([], falhas=[Resposta(400, {"Erros": [{"Codigo": "E2214", "Descricao": "Cadeia"}]})])
+    r = robo_xml.executar_nfse(cfg_nfse, tarefa(chaves, ["nfse_emitidas"]), chaves[0], sessao_falsa=instavel)
+    assert r.status == "fora_do_ar" and "agende de novo" in r.detalhes["nfse_emitidas"]["mensagem"]

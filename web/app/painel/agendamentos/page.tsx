@@ -5,7 +5,7 @@ import { competenciaBR, dataHoraBR } from "@/lib/documentos";
 import { EM_ANDAMENTO } from "@/lib/xml";
 
 type Agendamento = {
-  id: string; nome_arquivo: string; competencia: string;
+  id: string; nome_arquivo: string; competencia: string; origem: string;
   executar_em: string; total: number; criado_em: string; organizacoes?: { nome: string } | null;
 };
 type Contagem = { prontas: number; fila: number; problemas: number; xml: number };
@@ -16,7 +16,7 @@ export default async function Agendamentos() {
   const { supabase, admin } = await contexto();
   const { data } = await supabase
     .from("xml_agendamentos")
-    .select("id, nome_arquivo, competencia, executar_em, total, criado_em, organizacoes(nome)")
+    .select("id, nome_arquivo, competencia, origem, executar_em, total, criado_em, organizacoes(nome)")
     .order("criado_em", { ascending: false })
     .limit(30);
   const agendamentos = (data ?? []) as unknown as Agendamento[];
@@ -61,6 +61,7 @@ export default async function Agendamentos() {
                   <th>Criado em</th>
                   {admin && <th>Organização</th>}
                   <th>Competência</th>
+                  <th>Origem</th>
                   <th>Arquivo</th>
                   <th>Início</th>
                   <th>Andamento</th>
@@ -76,6 +77,7 @@ export default async function Agendamentos() {
                       <td>{dataHoraBR(a.criado_em)}</td>
                       {admin && <td>{a.organizacoes?.nome}</td>}
                       <td>{competenciaBR(a.competencia)}</td>
+                      <td>{a.origem === "nfse" ? "Portal Nacional (NFS-e)" : "SEFAZ do estado"}</td>
                       <td className="suave">{a.nome_arquivo}</td>
                       <td>{dataHoraBR(a.executar_em)}</td>
                       <td>

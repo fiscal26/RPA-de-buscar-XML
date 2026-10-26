@@ -11,7 +11,7 @@ export type LinhaEmpresa = {
 };
 export type Leitura = { empresas: LinhaEmpresa[]; erros: string[]; avisos: string[] };
 
-type Linha = { n: number; valores: unknown[] };
+export type Linha = { n: number; valores: unknown[] };
 
 /** Lê a planilha modelo (.xlsx, primeira aba) ou um .csv com os mesmos cabeçalhos.
  *  As colunas são achadas pelo nome (ATIVA, ID, ID_FILIAL, CNPJ, INSCRICAO ESTADUAL, NOME FANTASIA,
@@ -20,11 +20,16 @@ type Linha = { n: number; valores: unknown[] };
 const MAX_LINHAS = 5000;
 
 export async function lerPlanilha(arquivo: File): Promise<Leitura> {
+  return interpretar(await linhasDoArquivo(arquivo));
+}
+
+/** Linhas da primeira aba (.xlsx) ou do .csv, com o número da linha. */
+export async function linhasDoArquivo(arquivo: File): Promise<Linha[]> {
   const nome = arquivo.name.toLowerCase();
   const bytes = Buffer.from(await arquivo.arrayBuffer());
   const linhas = nome.endsWith(".xlsx") || nome.endsWith(".xlsm") ? await linhasExcel(bytes) : linhasTexto(bytes);
   if (linhas.length > MAX_LINHAS) throw new Error(`a planilha tem mais de ${MAX_LINHAS} linhas; divida em partes`);
-  return interpretar(linhas);
+  return linhas;
 }
 
 async function linhasExcel(bytes: Buffer): Promise<Linha[]> {
@@ -50,7 +55,7 @@ function linhasTexto(bytes: Buffer): Linha[] {
   return linhas;
 }
 
-const texto = (v: unknown) => (v === null || v === undefined ? "" : String(v).trim());
+export const texto = (v: unknown) => (v === null || v === undefined ? "" : String(v).trim());
 
 /** Cabeçalho comparável: sem acento, sem pontuação, minúsculo ("NF-e Saída" -> "nfe saida"). */
 export function chave(v: unknown) {

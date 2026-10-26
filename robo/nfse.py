@@ -476,11 +476,15 @@ def nome_do_arquivo(nota: NotaServico) -> str:
 
 
 def baixar_competencia(cliente: ClienteADN, cnpj: str, competencia: str, destino: str | Path, nome: str,
-                       codigo: str = "", pdf: bool = True, cache_raiz: Path = CACHE) -> ResultadoNfse:
+                       codigo: str = "", pdf: bool = True, cache_raiz: Path = CACHE, com_emitidas: bool = True,
+                       com_recebidas: bool = True, relatorio: bool = True) -> ResultadoNfse:
     """Atualiza o cache, salva os XML (e o PDF) da competência e gera o relatório de retenções."""
     cache = Cache(cnpj, cache_raiz)
     res = ResultadoNfse(novos_documentos=atualizar_cache(cliente, cache))
     emitidas, recebidas, res.canceladas = separar(cache, cnpj, competencia)
+    emitidas = emitidas if com_emitidas else []
+    recebidas = recebidas if com_recebidas else []
+    sem_pdf_no_portal = False  # o portal não entregou o PDF das primeiras notas: não insiste nas outras
     pasta_mes = pasta_empresa(destino, nome, cnpj, codigo) / competencia
     res.pasta = pasta_mes
     for lista, sub in ((emitidas, PASTA_EMITIDAS), (recebidas, PASTA_RECEBIDAS)):
@@ -496,15 +500,16 @@ def baixar_competencia(cliente: ClienteADN, cnpj: str, competencia: str, destino
                 if arq_pdf.exists():
                     res.pdfs += 1
                     continue
-                conteudo = cliente.danfse(nota.chave)
+                conteudo = None if sem_pdf_no_portal else cliente.danfse(nota.chave)
                 if conteudo:
                     arq_pdf.write_bytes(conteudo)
                     res.pdfs += 1
                 else:
                     res.pdfs_faltando += 1
+                    sem_pdf_no_portal = res.pdfs == 0 and res.pdfs_faltando >= 3
     res.emitidas = [n for n, _ in emitidas]
     res.recebidas = [n for n, _ in recebidas]
-    if res.emitidas or res.recebidas:
+    if relatorio and (res.emitidas or res.recebidas):
         pasta_mes.mkdir(parents=True, exist_ok=True)
         res.relatorio = relatorio_retencoes(res.emitidas, res.recebidas, pasta_mes / f"Retenções NFS-e {competencia}.xlsx",
                                             nome, competencia)

@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import AutoRefresh from "@/components/AutoRefresh";
 import { contexto } from "@/lib/sessao";
-import { competenciaBR, dataHoraBR, formatarIe } from "@/lib/documentos";
+import { competenciaBR, dataHoraBR, formatarDocumento, formatarIe } from "@/lib/documentos";
 import { ORDEM_TAREFAS, SITUACAO, SITUACOES_ABERTAS, expandirTipos, nomeTipo, situacaoTarefa } from "@/lib/xml";
 import { cancelarAgendamento } from "../../actions";
 
@@ -22,7 +22,7 @@ export default async function DetalheAgendamento({ params, searchParams }: {
   const filtro = pedido && SITUACAO[pedido] ? pedido : null;
   const { supabase } = await contexto();
   const { data: ag } = await supabase
-    .from("xml_agendamentos").select("id, nome_arquivo, competencia, executar_em, criado_em").eq("id", id).maybeSingle();
+    .from("xml_agendamentos").select("id, nome_arquivo, competencia, executar_em, criado_em, origem").eq("id", id).maybeSingle();
   if (!ag) notFound();
   const { data } = await supabase
     .from("xml_tarefas").select("id, ie, nome, codigo, tipos, status, mensagem, detalhes, concluido_em")
@@ -51,7 +51,7 @@ export default async function DetalheAgendamento({ params, searchParams }: {
       <p className="voltar"><Link href="/painel/agendamentos">Agendamentos</Link></p>
       <div className="cabeca-pagina">
         <div>
-          <h1>Competência {competenciaBR(ag.competencia)}</h1>
+          <h1>Competência {competenciaBR(ag.competencia)}{ag.origem === "nfse" && " · NFS-e"}</h1>
           <p className="suave">
             Agendado em {dataHoraBR(ag.criado_em)}, início {dataHoraBR(ag.executar_em)}{ag.nome_arquivo && `, ${ag.nome_arquivo}`}
           </p>
@@ -113,8 +113,8 @@ export default async function DetalheAgendamento({ params, searchParams }: {
                 <tr key={e.id} className={filtro ? (celulas.some((c) => c?.chave === filtro) ? "linha-filtrada" : "linha-apagada") : undefined}>
                   <td className="grade-empresa">
                     <b>{e.nome}</b>
-                    <span>{e.codigo && `${e.codigo}, `}IE {formatarIe(e.ie)}</span>
-                    {e.mensagem && ["senha_invalida", "fora_do_ar"].includes(e.status) && <span className="grade-aviso">{e.mensagem}</span>}
+                    <span>{e.codigo && `${e.codigo}, `}{e.ie.length === 14 ? `CNPJ ${formatarDocumento(e.ie)}` : `IE ${formatarIe(e.ie)}`}</span>
+                    {e.mensagem && ["senha_invalida", "fora_do_ar", "certificado"].includes(e.status) && <span className="grade-aviso">{e.mensagem}</span>}
                   </td>
                   {celulas.map((c, i) => (
                     <td key={colunas[i]}>

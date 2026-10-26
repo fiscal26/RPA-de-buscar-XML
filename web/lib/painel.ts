@@ -20,8 +20,13 @@ function acaoDe(t: TarefaPainel): Omit<Acao, "ie" | "nome" | "quando"> | null {
     return { motivo: `O ATF recusou o login${login ? ` ${login}` : ""}.`,
       oQueFazer: "Envie a planilha de novo com a senha atual desse login.", link: "/painel/agendar", botao: "Atualizar a senha" };
   }
+  const nfse = t.tipos.some((tipo) => tipo.startsWith("nfse"));
+  if (t.status === "certificado") {
+    return { motivo: t.mensagem || "O certificado A1 da empresa está ausente, vencido ou foi recusado.",
+      oQueFazer: "Envie o certificado A1 atual da empresa (ou da matriz) e agende de novo.", link: "/painel/certificados", botao: "Enviar o certificado" };
+  }
   if (t.status === "fora_do_ar") {
-    return { motivo: "A SEFAZ estava fora do ar ou instável.",
+    return { motivo: nfse ? "O Portal Nacional da NFS-e estava fora do ar ou instável." : "A SEFAZ estava fora do ar ou instável.",
       oQueFazer: "Agende essa competência de novo daqui a algumas horas.", link: "/painel/agendar", botao: "Agendar de novo" };
   }
   const tipos = expandirTipos(t.tipos);
@@ -56,7 +61,7 @@ export function resumoPainel(tarefas: TarefaPainel[], agendamentos: AgendamentoP
       else if (chave === "erro") { erros++; erroDaEmpresa = true; if (g) g.erros++; }
       else { realizadas++; if (g) g.realizadas++; }
     }
-    if (t.status === "senha_invalida" || t.status === "fora_do_ar") erroDaEmpresa = true;
+    if (t.status === "senha_invalida" || t.status === "fora_do_ar" || t.status === "certificado") erroDaEmpresa = true;
     if (g && t.status !== "cancelado") {
       g.empresas.add(t.ie);
       if (!erroDaEmpresa && !abertaDaEmpresa) g.ok.add(t.ie);
