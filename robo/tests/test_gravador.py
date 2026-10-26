@@ -80,6 +80,9 @@ def test_grava_passos_sem_senha(ambiente, tmp_path, monkeypatch):  # noqa: F811
     assert any(e["acao"] == "clique" and e["texto"] == "Pesquisar" for e in dados["eventos"])
     assert any(e.get("opcao") == "XML" for e in alterou)
     assert any("FISf_ConsultarNFeXml2" in t["url"] for t in dados["telas"])
+    # as chamadas das telas ficam registradas, com os nomes dos campos enviados e nunca os valores
+    assert any("FISf_ConsultarNFeXml2" in r["url"] for r in dados["rede"])
+    assert all("certa" not in json.dumps(r) for r in dados["rede"])
 
 
 def test_guarda_o_arquivo_baixado(ambiente, tmp_path, monkeypatch):  # noqa: F811
