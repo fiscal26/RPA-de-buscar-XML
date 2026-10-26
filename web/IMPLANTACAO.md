@@ -59,7 +59,7 @@ precisam ser enviadas de novo. Para ver a pública de novo: `python robo_xml.py 
 ## 4. Robô (seu PC)
 
 1. Copie `robo/config.exemplo.json` para `robo/config.json` e preencha:
-   - a pasta dos arquivos não precisa ser preenchida: o robô usa **Documentos\XML SEFAZ-PB deste
+   - a pasta dos arquivos não precisa ser preenchida: o robô usa **Documentos\RPA XML LotiVisse deste
      computador** (com OneDrive, a pasta Documentos dele). Para outro lugar, acrescente
      `"pastas": {"destino": "D:\\Clientes\\XML"}`; se a pasta não existir ou não aceitar gravação, o robô
      avisa ao ligar e volta para a pasta Documentos;

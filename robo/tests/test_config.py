@@ -16,3 +16,14 @@ def test_destino_vazio_e_destino_valido(tmp_path, monkeypatch):
     assert config.resolver_pastas(vazio) == [] and vazio["pastas"]["destino"] == str(tmp_path / "padrao")
     escolhido = {"pastas": {"destino": str(tmp_path / "Clientes" / "XML"), "diagnostico": ""}}
     assert config.resolver_pastas(escolhido) == [] and escolhido["pastas"]["destino"] == str(tmp_path / "Clientes" / "XML")
+
+
+def test_pasta_antiga_xml_sefaz_pb_vira_rpa_xml_lotivisse(tmp_path, monkeypatch):
+    antiga, nova = tmp_path / "XML SEFAZ-PB", tmp_path / "RPA XML LotiVisse"
+    (antiga / "Arquivos baixados" / "5-Joao").mkdir(parents=True)
+    monkeypatch.setattr(config, "DESTINO_PADRAO", nova)
+    monkeypatch.setattr(config, "DESTINO_ANTIGO", antiga)
+    cfg = {"pastas": {"destino": "", "diagnostico": ""}}
+    avisos = config.resolver_pastas(cfg)
+    assert cfg["pastas"]["destino"] == str(nova) and (nova / "Arquivos baixados" / "5-Joao").is_dir()
+    assert not antiga.exists() and avisos and "agora se chama" in avisos[0]

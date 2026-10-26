@@ -30,7 +30,8 @@ def pasta_documentos() -> Path:
     return documentos if documentos.is_dir() or not (Path.home() / "Documentos").is_dir() else Path.home() / "Documentos"
 
 
-DESTINO_PADRAO = pasta_documentos() / "XML SEFAZ-PB"
+DESTINO_PADRAO = pasta_documentos() / "RPA XML LotiVisse"
+DESTINO_ANTIGO = pasta_documentos() / "XML SEFAZ-PB"  # nome até 10/2026: é renomeada na primeira vez
 
 
 def _pasta_gravavel(pasta: Path) -> bool:
@@ -53,6 +54,14 @@ def resolver_pastas(cfg: dict) -> list[str]:
     pastas = cfg["pastas"]
     pedido = os.path.expandvars(os.path.expanduser(str(pastas.get("destino") or "").strip()))
     destino = Path(pedido) if pedido else DESTINO_PADRAO
+    if destino == DESTINO_PADRAO and not DESTINO_PADRAO.exists() and DESTINO_ANTIGO.is_dir():
+        try:  # a pasta antiga muda de nome com tudo dentro (as empresas, as competências, o diagnóstico)
+            DESTINO_ANTIGO.rename(DESTINO_PADRAO)
+            avisos.append(f"A pasta \"{DESTINO_ANTIGO.name}\" agora se chama \"{DESTINO_PADRAO.name}\" "
+                          f"(tudo o que estava nela continua lá).")
+        except OSError as e:
+            avisos.append(f"Não consegui renomear \"{DESTINO_ANTIGO}\" para \"{DESTINO_PADRAO.name}\" ({e}). "
+                          "Os arquivos novos vão para a pasta nova; feche o Explorer e a sincronização e tente de novo.")
     if pedido and ("SEU-USUARIO" in pedido.upper() or not _pasta_gravavel(destino)):
         avisos.append(f"Não consigo gravar em \"{pedido}\" (pasta de outro computador ou do exemplo). "
                       f"Os arquivos vão para {DESTINO_PADRAO}.")
@@ -75,7 +84,7 @@ PADRAO = {
         "fechar_abas": True,
     },
     "pastas": {
-        # Onde os arquivos ficam. Vazio = pasta Documentos deste computador / XML SEFAZ-PB
+        # Onde os arquivos ficam. Vazio = pasta Documentos deste computador / RPA XML LotiVisse
         # (a mesma onde o robô roda). Dentro dela: Arquivos baixados/<ID>-<Nome>/<AAAA-MM>/...
         "destino": "",
         # Pacotes de diagnóstico. Vazio = <destino>/_diagnostico

@@ -5,7 +5,7 @@ Robô que entra no **ATF da SEFAZ-PB com o login do contador**, pesquisa cada em
 faturas, extrato de pagamentos, omissão e inadimplência e certidão de débitos:
 
 ```
-<pasta destino>/                   (padrão: a pasta Documentos do PC onde o robô roda \ XML SEFAZ-PB)
+<pasta destino>/                   (padrão: a pasta Documentos do PC onde o robô roda \ RPA XML LotiVisse)
   Arquivos baixados/
     5-joao/                        (ID-NOME FANTASIA da planilha; sem ID, só o nome)
       2026-09/
