@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import re
 import time
+import traceback
 from datetime import datetime
 from pathlib import Path
 
@@ -148,6 +149,7 @@ class Gravador:
         self._paginas_com_escuta: set = set()
         self.arquivos: list[str] = []
         self.rede: list[dict] = []
+        self.erro = ""
 
     def _receber(self, origem, dados: str):
         try:
@@ -235,6 +237,17 @@ class Gravador:
                     pass
             self.telas.append(tela)
 
+    @staticmethod
+    def _esperar(paginas):
+        """Espera mantendo os eventos do Playwright rodando, numa aba comum do site (não da extensão)."""
+        for pagina in sorted(paginas, key=lambda p: not p.url.startswith("http")):
+            try:
+                pagina.wait_for_timeout(700)
+                return
+            except Exception:
+                continue
+        time.sleep(0.7)
+
     def gravar(self, segundos: float | None = None) -> Path:
         chrome = Chrome(self.cfg["chrome"]["porta"], fechar_abas=False)
         contexto = chrome.abrir()
@@ -252,16 +265,19 @@ class Gravador:
             while fim is None or time.time() < fim:
                 paginas = [p for p in contexto.pages if not p.is_closed()]
                 for pagina in paginas:
-                    self._escutar_downloads(pagina)
-                    self._injetar(pagina)  # páginas e quadros novos
-                    self._fotografar(pagina)
+                    try:  # aba que fecha ou muda no meio (loja de extensões, anúncio) não derruba a gravação
+                        self._escutar_downloads(pagina)
+                        self._injetar(pagina)  # páginas e quadros novos
+                        self._fotografar(pagina)
+                    except Exception:
+                        pass
                 self._guardar_downloads()
-                if paginas:
-                    paginas[0].wait_for_timeout(700)
-                else:
-                    time.sleep(0.7)
+                self._esperar(paginas)
         except KeyboardInterrupt:
             pass
+        except Exception:
+            self.erro = traceback.format_exc()[-2000:]
+            print(f"\nA gravação parou por um erro (vai junto no arquivo):\n{self.erro}")
         finally:
             self._guardar_downloads()
             arquivo = self.salvar()
@@ -275,7 +291,7 @@ class Gravador:
         PASTA.mkdir(parents=True, exist_ok=True)
         rotulo = f"_{self.servico}" if self.servico else ""
         arquivo = PASTA / f"gravacao{rotulo}_{datetime.now():%Y%m%d_%H%M%S}.zip"
-        dados = {"servico": self.servico, "eventos": self.eventos, "telas": self.telas, "rede": self.rede,
+        dados = {"servico": self.servico, "eventos": self.eventos, "telas": self.telas, "rede": self.rede, "erro": self.erro,
                  "arquivos_baixados": [f"baixados/{a}" for a in self.arquivos]}
         with zipfile.ZipFile(arquivo, "w", zipfile.ZIP_DEFLATED) as z:
             z.writestr("gravacao.json", json.dumps(dados, ensure_ascii=False, indent=1))
