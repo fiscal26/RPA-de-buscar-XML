@@ -731,3 +731,28 @@ td.doc { white-space: nowrap; font-variant-numeric: tabular-nums; }
 /* no celular a tabela rola de lado: estas colunas não espremem uma palavra por linha */
 td.servicos { min-width: 15rem; }
 td.nome-empresa { min-width: 10rem; }
+
+/* Páginas por assunto (/baixar-nfse-em-lote etc.): texto em uma coluna de leitura */
+.assunto { max-width: var(--largura); margin: 0 auto; padding: 2.5rem 1.5rem 4rem; }
+.trilha { display: flex; flex-wrap: wrap; gap: 0.5rem; font-size: 0.88rem; color: var(--suave); margin-bottom: 2.5rem; }
+.trilha a { color: var(--suave); }
+.assunto-cabeca { max-width: 62ch; padding-bottom: 3rem; }
+.assunto-cabeca h1 { font-size: clamp(2rem, 3.8vw, 2.9rem); line-height: 1.06; letter-spacing: -0.03em; font-weight: 800; margin: 0 0 1.2rem; }
+.assunto-abertura { font-size: 1.15rem; color: var(--suave); margin: 0 0 2rem; }
+.assunto-corpo { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 2rem; border-top: 2px solid var(--forte); }
+.assunto-bloco { padding-top: 1.5rem; margin-bottom: 3rem; }
+.assunto-bloco h2 { font-size: 1.3rem; margin: 0 0 0.7rem; letter-spacing: -0.015em; }
+.assunto-bloco p, .assunto-bloco li { color: var(--suave); }
+.assunto-bloco ul:not(.assuntos-lista) { margin: 0; padding-left: 1.1rem; display: grid; gap: 0.45rem; }
+.assunto > .assunto-bloco { max-width: 62ch; border-top: 1px solid var(--carbono); }
+.assunto > .assunto-bloco:last-child { max-width: none; margin-bottom: 0; }
+@media (max-width: 900px) { .assunto-corpo { grid-template-columns: minmax(0, 1fr); } }
+.assuntos-lista { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: 1rem; }
+.assuntos-lista a { display: flex; flex-direction: column; gap: 0.35rem; height: 100%; padding: 1.1rem 1.25rem; border: 1px solid var(--linha);
+  border-radius: 12px; background: var(--superficie); color: inherit; text-decoration: none; }
+.assuntos-lista a:hover { border-color: color-mix(in srgb, var(--forte) 40%, var(--linha)); }
+.assuntos-lista b { color: var(--forte); }
+.assuntos-lista span { color: var(--suave); font-size: 0.92rem; }
+.rodape-assuntos { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 0.4rem 1.5rem; margin-bottom: 0.75rem; }
+.rodape-assuntos a { color: var(--forte); text-decoration: none; font-weight: 500; }
+.rodape-assuntos a:hover { text-decoration: underline; }

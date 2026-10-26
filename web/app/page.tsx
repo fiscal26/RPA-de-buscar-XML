@@ -1,10 +1,10 @@
 import Link from "next/link";
 import { DESCRICAO, SITE_URL } from "@/lib/site";
-import Logo from "@/components/Logo";
-import Simbolo from "@/components/Simbolo";
 import AtfAoVivo from "@/components/AtfAoVivo";
 import ServicosInterativos from "@/components/ServicosInterativos";
-import BotaoTema from "@/components/BotaoTema";
+import SiteTopo from "@/components/site/SiteTopo";
+import SiteRodape from "@/components/site/SiteRodape";
+import { ASSUNTOS } from "@/lib/assuntos";
 
 const PLANILHA = "/modelos/modelo_empresas_sefaz_pb.xlsx";
 
@@ -48,18 +48,7 @@ const DADOS_ESTRUTURADOS = {
 export default function Inicio() {
   return (
     <div className="site">
-      <header className="site-topo">
-        <div className="site-faixa">
-          <Link href="/" className="marca" aria-label="LotiVisse, início"><Logo /></Link>
-          <nav className="site-nav" aria-label="Seções">
-            <a href="#servicos">Serviços</a>
-            <a href="#como-funciona">Como funciona</a>
-            <a href="#onde-funciona">Onde funciona</a>
-          </nav>
-          <BotaoTema />
-          <Link href="/login" className="botao">Entrar</Link>
-        </div>
-      </header>
+      <SiteTopo inicio />
 
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(DADOS_ESTRUTURADOS) }} />
       <main>
@@ -119,6 +108,18 @@ export default function Inicio() {
           </div>
         </section>
 
+        <section id="assuntos" className="secao">
+          <div className="secao-cabeca">
+            <h2>Para cada rotina do escritório</h2>
+            <p>O detalhe de cada serviço: o que vem, como fica e do que o robô precisa.</p>
+          </div>
+          <ul className="assuntos-lista">
+            {ASSUNTOS.map((a) => (
+              <li key={a.slug}><Link href={`/${a.slug}`}><b>{a.menu}</b><span>{a.descricao}</span></Link></li>
+            ))}
+          </ul>
+        </section>
+
         <section id="perguntas" className="secao">
           <div className="secao-cabeca"><h2>Perguntas frequentes</h2></div>
           <div className="perguntas">
@@ -138,13 +139,7 @@ export default function Inicio() {
         </section>
       </main>
 
-      <footer className="rodape">
-        <div className="site-faixa rodape-linha">
-          <p>lotivisse.com.br</p>
-          <p className="rodape-aviso">SEFAZ, ATF, o Portal Nacional da NFS-e e os portais das prefeituras são sistemas dos governos federal, estaduais e municipais. A LotiVisse não tem vínculo com esses órgãos.</p>
-        </div>
-        <p className="marca-gigante" aria-hidden="true"><Simbolo tamanho={120} /><span>Loti<span className="logo-v">Visse</span></span></p>
-      </footer>
+      <SiteRodape />
     </div>
   );
 }
