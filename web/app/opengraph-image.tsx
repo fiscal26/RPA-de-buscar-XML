@@ -19,7 +19,7 @@ export default function Imagem() {
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
           <div style={{ fontSize: 60, fontWeight: 800, lineHeight: 1.1 }}>O robô que baixa as notas fiscais e captura os XMLs, empresa por empresa.</div>
-          <div style={{ fontSize: 30, color: "#c9d6ea" }}>NF-e, NFC-e, CT-e, guias, certidões e faturamento dos MEIs, direto da SEFAZ</div>
+          <div style={{ fontSize: 30, color: "#c9d6ea" }}>NF-e, NFC-e, CT-e e NFS-e, guias, certidões, retenções e faturamento dos MEIs</div>
         </div>
         <div style={{ display: "flex", fontSize: 26, color: "#f6d35b" }}>xml.lotivisse.com.br</div>
       </div>

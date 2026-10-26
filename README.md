@@ -1,8 +1,10 @@
-# LotiVisse XML — robô de XML da SEFAZ-PB (piloto)
+# LotiVisse XML — robô de notas fiscais (SEFAZ-PB e NFS-e do Portal Nacional)
 
 Robô que entra no **ATF da SEFAZ-PB com o login do contador**, pesquisa cada empresa pela
 **inscrição estadual** e salva numa pasta do seu computador os XML da competência e os PDF de
-faturas, extrato de pagamentos, omissão e inadimplência e certidão de débitos:
+faturas, extrato de pagamentos, omissão e inadimplência e certidão de débitos. As **NFS-e** (emitidas
+e recebidas, com o relatório de retenções) vêm pela API oficial do **Portal Nacional**, com o certificado
+A1 da empresa: veja `robo/NFSE.md` e a seção 11 do `web/IMPLANTACAO.md`.
 
 ```
 <pasta destino>/                   (padrão: a pasta Documentos do PC onde o robô roda \ RPA XML LotiVisse)
@@ -19,6 +21,9 @@ faturas, extrato de pagamentos, omissão e inadimplência e certidão de débito
         Omissão e Inadimplência/       Omissão e Inadimplência 2026-09.pdf   (o relatório completo)
         Certidão de Débitos/           Certidão de Débitos 2026-09.pdf
         Conferência Cartão de Crédito/ Conferência Cartão de Crédito 2026-09.pdf
+        NFS-e Emitidas/                XML e PDF de cada nota (Portal Nacional, sem as canceladas)
+        NFS-e Recebidas/               XML e PDF de cada nota
+        Retenções NFS-e 2026-09.xlsx   ISS, IRRF, PIS, COFINS, CSLL e INSS por nota e em totais
       Dossiê MEI/                      Faturamento MEI 2026.xlsx e .json (um mês por linha; só Optante SIMEI)
     _sem_empresa/        arquivo de empresa fora da rodada (ex.: consulta feita à mão no mesmo login)
     _nao_identificados/  arquivo baixado que não é XML/ZIP (guardado como veio, para conferir)

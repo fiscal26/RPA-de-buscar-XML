@@ -6,7 +6,7 @@ export type TarefaPainel = {
   detalhes: Record<string, { situacao?: string; mensagem?: string }>; concluido_em: string | null;
   xml_empresas?: { xml_acessos?: { login: string } | null } | null;
 };
-export type AgendamentoPainel = { id: string; competencia: string; criado_em: string };
+export type AgendamentoPainel = { id: string; competencia: string; criado_em: string; origem?: string };
 
 /** O que o cliente precisa fazer para destravar uma empresa. */
 export type Acao = { ie: string; nome: string; motivo: string; oQueFazer: string; link: string; botao: string; quando: string | null };

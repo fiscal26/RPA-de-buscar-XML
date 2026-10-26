@@ -196,6 +196,16 @@ export async function renomearEmpresa(_: EstadoRenomear, form: FormData): Promis
   const id = String(form.get("id") ?? "");
   const nome = corrigirNome(String(form.get("nome") ?? ""));
   if (!nome) return { erro: "Informe o nome." };
+  if (form.get("origem") === "nfse") {
+    const { data: empresaNfse } = await supabase.from("xml_nfse_empresas").select("id").eq("id", id).maybeSingle();
+    if (!empresaNfse) return { erro: "Empresa não encontrada." };
+    const db = clienteAdmin();
+    const { error } = await db.from("xml_nfse_empresas").update({ nome, nome_fixo: true, atualizado_em: new Date().toISOString() }).eq("id", id);
+    if (error) return { erro: `Não consegui renomear: ${error.message}` };
+    await db.from("xml_tarefas").update({ nome }).eq("nfse_empresa_id", id).in("status", ["pendente", "processando"]);
+    revalidatePath("/painel", "layout");
+    return { ok: nome };
+  }
   // a leitura com a sessão do usuário confere se a empresa é do escritório dele (ou se é o administrador)
   const { data: empresa } = await supabase.from("xml_empresas").select("id, org_id, ie").eq("id", id).maybeSingle();
   if (!empresa) return { erro: "Empresa não encontrada." };
@@ -215,7 +225,8 @@ export async function removerEmpresa(form: FormData) {
   const { perfil, admin } = await contexto();
   const id = String(form.get("id") ?? "");
   if (!id) return;
-  const consulta = clienteAdmin().from("xml_empresas").delete().eq("id", id);
+  const tabela = form.get("origem") === "nfse" ? "xml_nfse_empresas" : "xml_empresas";
+  const consulta = clienteAdmin().from(tabela).delete().eq("id", id);
   // gestor/usuário só remove empresas da própria organização
   await (admin ? consulta : consulta.eq("org_id", perfil.org_id ?? ""));
   revalidatePath("/painel/empresas");
