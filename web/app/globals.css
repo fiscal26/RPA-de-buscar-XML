@@ -695,7 +695,7 @@ a.ranking-linha:hover { background: var(--carbono); }
 /* landing: onde funciona e perguntas frequentes */
 .heroi-cobertura { display: flex; align-items: center; gap: 0.55rem; margin: 1.4rem 0 0; font-size: 0.92rem; color: var(--suave); }
 .ponto-vivo { width: 8px; height: 8px; border-radius: 50%; background: var(--carimbo); box-shadow: 0 0 0 4px color-mix(in srgb, var(--carimbo) 22%, transparent); flex: none; }
-.cobertura { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+.cobertura { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; }
 .cobertura-item { background: var(--superficie); border: 1px solid var(--linha); border-radius: 14px; padding: 1.5rem; }
 .cobertura-item.disponivel { border-color: color-mix(in srgb, var(--carimbo) 45%, var(--linha)); }
 .cobertura-item h3 { margin: 0.8rem 0 0.4rem; font-size: 1.15rem; }
@@ -704,7 +704,7 @@ a.ranking-linha:hover { background: var(--carbono); }
 .perguntas details { background: var(--superficie); border: 1px solid var(--linha); border-radius: 12px; padding: 0.9rem 1.2rem; }
 .perguntas summary { margin: 0; font-size: 1.02rem; }
 .perguntas details p { margin: 0.6rem 0 0.2rem; color: var(--suave); }
-@media (max-width: 760px) { .cobertura { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 980px) { .cobertura { grid-template-columns: minmax(0, 1fr); } }
 
 /* aviso de inatividade */
 .inatividade-fundo { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 1rem;
@@ -724,3 +724,35 @@ a.ranking-linha:hover { background: var(--carbono); }
 .origem span { color: var(--suave); font-size: 0.88rem; }
 .origem:hover { border-color: color-mix(in srgb, var(--forte) 35%, var(--linha)); }
 .origem[aria-current="page"] { border-color: var(--forte); box-shadow: inset 0 0 0 1px var(--forte); }
+
+/* Texto curto sob o título da página e documentos (CNPJ, IE) que não quebram no meio */
+.introducao { margin: -0.5rem 0 1.5rem; max-width: 72ch; }
+td.doc { white-space: nowrap; font-variant-numeric: tabular-nums; }
+/* no celular a tabela rola de lado: estas colunas não espremem uma palavra por linha */
+td.servicos { min-width: 15rem; }
+td.nome-empresa { min-width: 10rem; }
+
+/* Páginas por assunto (/baixar-nfse-em-lote etc.): texto em uma coluna de leitura */
+.assunto { max-width: var(--largura); margin: 0 auto; padding: 2.5rem 1.5rem 4rem; }
+.trilha { display: flex; flex-wrap: wrap; gap: 0.5rem; font-size: 0.88rem; color: var(--suave); margin-bottom: 2.5rem; }
+.trilha a { color: var(--suave); }
+.assunto-cabeca { max-width: 62ch; padding-bottom: 3rem; }
+.assunto-cabeca h1 { font-size: clamp(2rem, 3.8vw, 2.9rem); line-height: 1.06; letter-spacing: -0.03em; font-weight: 800; margin: 0 0 1.2rem; }
+.assunto-abertura { font-size: 1.15rem; color: var(--suave); margin: 0 0 2rem; }
+.assunto-corpo { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 2rem; border-top: 2px solid var(--forte); }
+.assunto-bloco { padding-top: 1.5rem; margin-bottom: 3rem; }
+.assunto-bloco h2 { font-size: 1.3rem; margin: 0 0 0.7rem; letter-spacing: -0.015em; }
+.assunto-bloco p, .assunto-bloco li { color: var(--suave); }
+.assunto-bloco ul:not(.assuntos-lista) { margin: 0; padding-left: 1.1rem; display: grid; gap: 0.45rem; }
+.assunto > .assunto-bloco { max-width: 62ch; border-top: 1px solid var(--carbono); }
+.assunto > .assunto-bloco:last-child { max-width: none; margin-bottom: 0; }
+@media (max-width: 900px) { .assunto-corpo { grid-template-columns: minmax(0, 1fr); } }
+.assuntos-lista { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: 1rem; }
+.assuntos-lista a { display: flex; flex-direction: column; gap: 0.35rem; height: 100%; padding: 1.1rem 1.25rem; border: 1px solid var(--linha);
+  border-radius: 12px; background: var(--superficie); color: inherit; text-decoration: none; }
+.assuntos-lista a:hover { border-color: color-mix(in srgb, var(--forte) 40%, var(--linha)); }
+.assuntos-lista b { color: var(--forte); }
+.assuntos-lista span { color: var(--suave); font-size: 0.92rem; }
+.rodape-assuntos { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 0.4rem 1.5rem; margin-bottom: 0.75rem; }
+.rodape-assuntos a { color: var(--forte); text-decoration: none; font-weight: 500; }
+.rodape-assuntos a:hover { text-decoration: underline; }

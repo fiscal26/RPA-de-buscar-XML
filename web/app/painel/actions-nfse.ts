@@ -8,6 +8,7 @@ import { cifrarArquivo, cifrarSenha } from "@/lib/cripto";
 import { TAMANHO_MAXIMO, lerCertificado } from "@/lib/certificado";
 import { cnpjValido, formatarDocumento, soDigitos } from "@/lib/documentos";
 import { IDS_TIPOS_NFSE } from "@/lib/xml";
+import { certificadoDoCnpj } from "@/lib/nfse";
 import { corrigirNome } from "@/lib/nomes";
 
 /** Situação do certificado A1 de uma empresa: o dela, o da matriz (mesma raiz do CNPJ) ou nenhum. */
@@ -28,9 +29,8 @@ type Certificado = { cnpj: string; validade: string | null };
 
 /** O certificado que o robô vai usar para o CNPJ (o mesmo critério de xml_nfse_pegar_lote). */
 function certificadoPara(cnpj: string, certificados: Certificado[]): SituacaoCertificado {
-  const daRaiz = certificados.filter((c) => c.cnpj.slice(0, 8) === cnpj.slice(0, 8));
-  if (!daRaiz.length) return "falta";
-  const escolhido = daRaiz.find((c) => c.cnpj === cnpj) ?? daRaiz.find((c) => c.cnpj.slice(8, 12) === "0001") ?? daRaiz[0];
+  const escolhido = certificadoDoCnpj(cnpj, certificados);
+  if (!escolhido) return "falta";
   if (escolhido.validade && Date.parse(escolhido.validade) < Date.now()) return "vencido";
   return escolhido.cnpj === cnpj ? "proprio" : "matriz";
 }

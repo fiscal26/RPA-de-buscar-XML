@@ -7,14 +7,14 @@ const LINHAS = [
   ["X", "16.170.090-0", "Ateliê Ponto Fino", "X", "X", ""],
 ];
 
-/** Lado escuro do login: a planilha entra, o robô busca no ATF e as pastas saem prontas. */
+/** Lado escuro do login: a planilha entra, o robô busca nos portais e as pastas saem prontas. */
 export default function Vitrine() {
   return (
     <aside className="vitrine">
       <Logo />
       <div className="vitrine-texto">
         <h2>Suas notas fiscais chegam sozinhas.</h2>
-        <p>Você envia a planilha das empresas. O robô entra na SEFAZ com o login do contador e guarda notas, guias e certidões na pasta de cada empresa.</p>
+        <p>Você envia a planilha das empresas. O robô entra na SEFAZ e no Portal Nacional da NFS-e e guarda notas, guias, certidões e retenções na pasta de cada empresa.</p>
       </div>
       <div className="vitrine-cena" aria-hidden="true">
         <div className="mini-planilha">
@@ -29,6 +29,7 @@ export default function Vitrine() {
           <ul>
             <li>NF-e Saida - <mark>R$ 48.213,90</mark></li>
             <li>NFC-e - <mark>R$ 12.930,15</mark></li>
+            <li>NFS-e Emitidas</li>
             <li>Faturas 2026-09.pdf</li>
             <li>Certidão de Débitos 2026-09.pdf</li>
           </ul>

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 
-/** O robô trabalhando no ATF, ao vivo: cada passo do registro faz aparecer a pasta correspondente.
+/** O robô trabalhando no ATF e no Portal Nacional da NFS-e, ao vivo: cada passo do registro faz aparecer a pasta correspondente.
  *  Roda em ciclo (uma competência inteira) e, para quem pede menos movimento, mostra a pasta pronta. */
 type Linha = { nivel: number; nome: string; valor?: string; arquivo?: string };
 
@@ -16,6 +16,7 @@ const LINHAS: Linha[] = [
   { nivel: 3, nome: "CT-e Destinatario", valor: "R$ 1.450,00", arquivo: "CT-e Destinatario 2026-09.zip" },
   { nivel: 3, nome: "Faturas", arquivo: "Faturas 2026-09.pdf" },
   { nivel: 3, nome: "Certidão de Débitos", arquivo: "Certidão de Débitos 2026-09.pdf" },
+  { nivel: 3, nome: "NFS-e Emitidas", arquivo: "Retenções NFS-e 2026-09.xlsx" },
   { nivel: 1, nome: "021-Ateliê Ponto Fino" },
   { nivel: 2, nome: "Dossiê MEI", arquivo: "Faturamento MEI 2026.xlsx" },
 ];
@@ -30,8 +31,9 @@ const PASSOS: [string, number][] = [
   ["Minhas Mensagens: XMLs dos CT-e recebidos", 7],
   ["Faturas: DAR/PIX dos lançamentos em aberto emitido", 8],
   ["Certidão de débitos emitida", 9],
-  ["Ateliê Ponto Fino: faturamento MEI do ano atualizado", 11],
-  ["Competência 09/2026 concluída", 11],
+  ["Portal Nacional: NFS-e emitidas e retenções baixadas", 10],
+  ["Ateliê Ponto Fino: faturamento MEI do ano atualizado", 12],
+  ["Competência 09/2026 concluída", 12],
 ];
 const FINAL = PASSOS.length - 1;
 
@@ -59,7 +61,7 @@ export default function AtfAoVivo() {
   return (
     <figure className="ao-vivo" aria-label="Exemplo da pasta que o robô monta numa competência">
       <div className="ao-vivo-topo">
-        <span className={`ao-vivo-estado ${concluido ? "pronto" : ""}`}>{concluido ? "Concluído" : "Robô no ATF"}</span>
+        <span className={`ao-vivo-estado ${concluido ? "pronto" : ""}`}>{concluido ? "Concluído" : "Robô trabalhando"}</span>
         <span className="ao-vivo-log" key={passo} aria-live="off">{PASSOS[passo][0]}</span>
       </div>
       <ul className="arvore-lista">
@@ -77,7 +79,7 @@ export default function AtfAoVivo() {
           </li>
         ))}
       </ul>
-      <figcaption>O ZIP fica como veio da SEFAZ; o valor no nome da pasta soma as notas autorizadas, sem as canceladas.</figcaption>
+      <figcaption>O XML fica como veio do portal do governo; o valor no nome da pasta soma as notas autorizadas, sem as canceladas.</figcaption>
     </figure>
   );
 }

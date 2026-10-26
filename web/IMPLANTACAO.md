@@ -190,3 +190,13 @@ e sem captcha. O acesso é o **certificado digital A1 (e-CNPJ)** da empresa; o d
 
 O robô guarda no PC uma cópia das notas já recebidas (`robo/nfse_cache`, fora do git): a próxima busca traz só o
 que for novo. Endereços e regras da API: `robo/NFSE.md`.
+
+### Páginas por assunto e Bing (Edge)
+
+- Cada busca importante tem uma página própria: `/baixar-xml-nfe-sefaz`, `/baixar-nfse-em-lote`,
+  `/relatorio-retencoes-nfse` e `/limite-faturamento-mei`. Os textos ficam em `lib/assuntos.ts`; para criar uma página
+  nova, acrescente um item na lista (endereço, título, descrição, blocos e perguntas). Ela entra sozinha no sitemap,
+  nos links do rodapé e da página inicial.
+- **Edge/Bing:** em **bing.com/webmasters**, entre com a conta Google e escolha *Importar do Google Search Console*
+  (traz o site e o sitemap). Vale para Bing, Edge, DuckDuckGo e Yahoo.
+- Depois de publicar páginas novas, peça a indexação delas no Search Console e no Bing (*Inspeção de URL*).

@@ -1,5 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { SLUGS_ASSUNTOS } from "@/lib/assuntos";
 
 // Renova a sessão a cada acesso e manda para o login quem não estiver logado.
 export async function middleware(request: NextRequest) {
@@ -28,9 +29,9 @@ export async function middleware(request: NextRequest) {
   const caminho = request.nextUrl.pathname;
   if (caminho.startsWith("/sair")) return resposta;
   const login = caminho.startsWith("/login");
-  // abertas a todos: a apresentação, o login, o pedido de senha nova e o retorno do link do e-mail;
+  // abertas a todos: a apresentação, as páginas por assunto, o login, o pedido de senha nova e o retorno do link do e-mail;
   // /api/cron confere o CRON_SECRET da Vercel
-  const publico = login || caminho === "/" || caminho.startsWith("/esqueci-senha") || caminho.startsWith("/auth/")
+  const publico = login || caminho === "/" || SLUGS_ASSUNTOS.includes(caminho.slice(1)) || caminho.startsWith("/esqueci-senha") || caminho.startsWith("/auth/")
     || caminho.startsWith("/api/cron/");
 
   if (!user && !publico) {

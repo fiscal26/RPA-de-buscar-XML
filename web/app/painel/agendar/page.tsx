@@ -16,7 +16,7 @@ export default async function Agendar({ searchParams }: { searchParams: Promise<
       <nav className="origens" aria-label="De onde vêm as notas">
         <Link href="/painel/agendar" className="origem" aria-current={nfse ? undefined : "page"}>
           <b>SEFAZ do estado</b>
-          <span>NF-e, NFC-e, CT-e, guias, certidões e Dossiê MEI pelo ATF da SEFAZ-PB.</span>
+          <span>NF-e, NFC-e, CT-e, guias, certidões e Dossiê MEI pelo ATF, com o login do contador.</span>
         </Link>
         <Link href="/painel/agendar?origem=nfse" className="origem" aria-current={nfse ? "page" : undefined}>
           <b>Portal Nacional (NFS-e)</b>

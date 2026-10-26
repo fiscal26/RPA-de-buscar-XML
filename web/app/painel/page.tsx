@@ -1,7 +1,7 @@
 import Link from "next/link";
 import Icone from "@/components/Icones";
 import { contexto } from "@/lib/sessao";
-import { competenciaBR, dataHoraBR, formatarIe } from "@/lib/documentos";
+import { competenciaBR, dataHoraBR, formatarDocumento, formatarIe } from "@/lib/documentos";
 import { resumoPainel, type AgendamentoPainel, type TarefaPainel } from "@/lib/painel";
 
 const ROBO_ONLINE_SEGUNDOS = 120;
@@ -10,12 +10,13 @@ const numero = (n: number) => n.toLocaleString("pt-BR");
 export default async function Inicio() {
   const { supabase, perfil, admin } = await contexto();
   const gerencia = admin || perfil.papel === "gestor";
-  const [{ data: agendamentos }, { data: tarefas }, { count: empresas }, { data: robos }, { count: pessoas }] = await Promise.all([
-    supabase.from("xml_agendamentos").select("id, competencia, criado_em").order("criado_em", { ascending: false }).limit(50),
+  const [{ data: agendamentos }, { data: tarefas }, { count: empresasSefaz }, { count: empresasNfse }, { data: robos }, { count: pessoas }] = await Promise.all([
+    supabase.from("xml_agendamentos").select("id, competencia, criado_em, origem").order("criado_em", { ascending: false }).limit(50),
     supabase.from("xml_tarefas")
       .select("id, agendamento_id, ie, nome, status, mensagem, tipos, detalhes, concluido_em, xml_empresas(xml_acessos(login))")
       .order("criado_em", { ascending: false }).limit(5000),
     supabase.from("xml_empresas").select("id", { count: "exact", head: true }),
+    supabase.from("xml_nfse_empresas").select("id", { count: "exact", head: true }),
     // o robô é da operação: só o administrador consulta e vê
     admin ? supabase.from("xml_robos").select("id, ultimo_sinal").order("ultimo_sinal", { ascending: false }).limit(1)
           : Promise.resolve({ data: [] as { id: string; ultimo_sinal: string }[] }),
@@ -23,12 +24,13 @@ export default async function Inicio() {
   ]);
   const ags = (agendamentos ?? []) as AgendamentoPainel[];
   const r = resumoPainel((tarefas ?? []) as unknown as TarefaPainel[], ags);
+  const empresas = (empresasSefaz ?? 0) + (empresasNfse ?? 0);
   const robo = robos?.[0];
   const roboLigado = !!robo && Date.now() - Date.parse(robo.ultimo_sinal) < ROBO_ONLINE_SEGUNDOS * 1000;
 
   const passos = [
     { feito: !!empresas, titulo: "Preencher a planilha modelo",
-      texto: "Inscrição estadual, nome e o login do contador no ATF de cada empresa.", href: "/painel/agendar" },
+      texto: "SEFAZ: inscrição estadual e login do contador. NFS-e: CNPJ e o certificado A1 em Certificados.", href: "/painel/agendar" },
     // ligar o robô é com a LotiVisse: só o administrador vê esse passo
     ...(admin ? [{ feito: !!robo, titulo: "Ligar o robô",
       texto: "Ele roda junto com o Chrome e busca os agendamentos sozinho.", href: "/painel/agendamentos" }] : []),
@@ -45,7 +47,7 @@ export default async function Inicio() {
       <div className="cabeca-pagina">
         <div>
           <h1>Olá, {(perfil.nome || perfil.email).split(" ")[0]}</h1>
-          <p className="suave">O resumo das execuções no ATF da SEFAZ-PB.</p>
+          <p className="suave">O resumo das execuções na SEFAZ e no Portal Nacional da NFS-e.</p>
         </div>
         <Link href="/painel/agendar" className="botao">Agendar competência</Link>
       </div>
@@ -80,7 +82,7 @@ export default async function Inicio() {
           <span className="numero-icone"><Icone nome="empresas" /></span>
           <span className="nome">Empresas processadas</span>
           <span className="valor">{numero(r.empresasProcessadas)}</span>
-          <span className="suave">de {numero(empresas ?? 0)} cadastradas</span>
+          <span className="suave">de {numero(empresas)} cadastradas</span>
         </div>
         <div className="numero-cartao">
           <span className="numero-icone"><Icone nome="agendar" /></span>
@@ -125,7 +127,9 @@ export default async function Inicio() {
                 <span className="acao-sinal" aria-hidden="true">!</span>
                 <span className="acao-texto">
                   <b>{a.nome || "Empresa"}</b>
-                  <span className="suave">IE {formatarIe(a.ie)}{a.quando ? ` · ${dataHoraBR(a.quando)}` : ""}</span>
+                  <span className="suave">
+                    {a.ie.length === 14 ? `CNPJ ${formatarDocumento(a.ie)}` : `IE ${formatarIe(a.ie)}`}{a.quando ? `, ${dataHoraBR(a.quando)}` : ""}
+                  </span>
                   <span>{a.motivo} {a.oQueFazer}</span>
                 </span>
                 <Link href={a.link} className="botao secundario">{a.botao}</Link>
@@ -146,12 +150,13 @@ export default async function Inicio() {
           <div className="tabela-rolagem">
             <table>
               <thead>
-                <tr><th>Competência</th><th>Agendado em</th><th>Empresas</th><th>Tarefas realizadas</th><th>Empresas em dia</th><th>Taxa</th><th>Sua ação</th></tr>
+                <tr><th>Competência</th><th>Origem</th><th>Agendado em</th><th>Empresas</th><th>Tarefas realizadas</th><th>Empresas em dia</th><th>Taxa</th><th>Sua ação</th></tr>
               </thead>
               <tbody>
                 {r.execucoes.slice(0, 10).map((e) => (
                   <tr key={e.id}>
                     <td><Link href={`/painel/agendamentos/${e.id}`}>{competenciaBR(e.competencia)}</Link></td>
+                    <td>{e.origem === "nfse" ? "NFS-e" : "SEFAZ"}</td>
                     <td>{dataHoraBR(e.criado_em)}</td>
                     <td>{e.empresas}</td>
                     <td>{e.realizadas}{e.abertas > 0 && <span className="suave"> (+{e.abertas} em andamento)</span>}</td>

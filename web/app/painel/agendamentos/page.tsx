@@ -77,7 +77,7 @@ export default async function Agendamentos() {
                       <td>{dataHoraBR(a.criado_em)}</td>
                       {admin && <td>{a.organizacoes?.nome}</td>}
                       <td>{competenciaBR(a.competencia)}</td>
-                      <td>{a.origem === "nfse" ? "Portal Nacional (NFS-e)" : "SEFAZ do estado"}</td>
+                      <td title={a.origem === "nfse" ? "Portal Nacional da NFS-e" : "SEFAZ do estado"}>{a.origem === "nfse" ? "NFS-e" : "SEFAZ"}</td>
                       <td className="suave">{a.nome_arquivo}</td>
                       <td>{dataHoraBR(a.executar_em)}</td>
                       <td>
