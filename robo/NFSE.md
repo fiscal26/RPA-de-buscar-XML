@@ -34,4 +34,4 @@ O robô terá implementação própria; aqui ficam só os endereços e as regras
   Devolve os documentos com NSU maior que o informado; guardar o último NSU por empresa e continuar dele.
 - Erros: JSON `{"Erros":[{"Codigo":"E…","Descricao":"…"}]}`. 429/502/503/504 são passageiros: esperar
   (respeitar `Retry-After`) e repetir; em 429 aumentar o intervalo entre chamadas (começar em ~0,7 s).
-- O XML vem compactado (gzip + base64) em cada item do lote.
+- O XML vem no campo `ArquivoXml` de cada item do lote, compactado (gzip) e em base64.
