@@ -55,7 +55,7 @@ log = logging.getLogger("robo")
 
 @dataclass
 class Resultado:
-    status: str                      # concluido | sem_notas | senha_invalida | erro | fora_do_ar
+    status: str                      # concluido | sem_notas | senha_invalida | certificado | erro | fora_do_ar
     mensagem: str
     qtd_xml: int = 0
     detalhes: dict = field(default_factory=dict)
@@ -486,7 +486,8 @@ class Executor:
 
 
 FINAIS = ("concluido", "sem_movimento", "erro")
-MOTIVO_CURTO = {"senha_invalida": "login recusado pelo ATF", "fora_do_ar": "ATF fora do ar; agende de novo mais tarde"}
+MOTIVO_CURTO = {"senha_invalida": "login recusado pelo ATF", "fora_do_ar": "ATF fora do ar; agende de novo mais tarde",
+                "certificado": "certificado A1 ausente, vencido ou recusado"}
 
 
 def detalhes_finais(tipos: list[str], r: Resultado, andamento: dict) -> dict:
@@ -582,6 +583,10 @@ class Portal:
         return self._r("POST", "/rest/v1/rpc/xml_pegar_lote",
                        json={"p_robo": robo, "p_login": login_aberto, "p_max": maximo}).json() or []
 
+    def pegar_lote_nfse(self, robo: str, maximo: int) -> list[dict]:
+        """Tarefas liberadas da NFS-e (Portal Nacional), cada uma com o certificado A1 cifrado."""
+        return self._r("POST", "/rest/v1/rpc/xml_nfse_pegar_lote", json={"p_robo": robo, "p_max": maximo}).json() or []
+
     def atualizar_tarefa(self, tid: str, campos: dict):
         self._r("PATCH", f"/rest/v1/xml_tarefas?id=eq.{tid}", json=campos, headers={"Prefer": "return=minimal"})
 
@@ -655,6 +660,15 @@ class Robo:
         while not self.parar:
             try:
                 self._sinal()
+                lote_nfse = self.portal.pegar_lote_nfse(self.nome, 10)
+            except Exception as e:
+                log.warning("Sem contato com o portal: %s", e)
+                time.sleep(30)
+                continue
+            if lote_nfse:  # NFS-e não usa o Chrome: vai antes da fila do ATF
+                self.processar_nfse(lote_nfse)
+                continue
+            try:
                 lote = self.portal.pegar_lote(self.nome, self.executor.login_aberto, self.cfg["atf"]["empresas_por_rodada"])
             except Exception as e:
                 log.warning("Sem contato com o portal: %s", e)
@@ -727,6 +741,24 @@ class Robo:
             else:
                 self._finalizar(t, r)
 
+    def processar_nfse(self, lote: list[dict]):
+        log.info("NFS-e (Portal Nacional): %d empresa(s)", len(lote))
+        self.tarefas_atuais = lote
+        for t in lote:
+            if self.parar:
+                break
+            self.portal.atualizar_tarefa(t["id"], {"detalhes": {tipo: {"situacao": "andamento", "mensagem": ""}
+                                                                for tipo in t.get("tipos") or []}})
+            try:
+                r = executar_nfse(self.cfg, t, self.privada)
+            except Exception:
+                log.exception("Erro inesperado na NFS-e de %s", t["nome"])
+                r = Resultado("erro", "Falha inesperada ao buscar as NFS-e. Agende de novo; se repetir, fale com a LotiVisse.")
+            log.info("   %s -> %s: %s", t["nome"], r.status, r.mensagem)
+            self._finalizar(t, r)
+            self._sinal()
+        self.tarefas_atuais = []
+
     def _repescar(self, ler: bool = True):
         """Fila vazia: lê Minhas Mensagens mais uma vez para as tarefas que esperavam XML. Se ainda faltar,
         finaliza com o que chegou e o robô para de vez."""
@@ -775,6 +807,74 @@ class Robo:
                 pass
         self.executor.fechar()
         sys.exit(0)
+
+
+# ====================================================================== NFS-e (Portal Nacional)
+def executar_nfse(cfg: dict, t: dict, privada, sessao_falsa=None) -> Resultado:
+    """Uma tarefa da NFS-e: abre o certificado A1 (só na memória), busca as notas da competência pela API
+    oficial e devolve a situação de cada serviço (emitidas, recebidas, PDF, relatório de retenções)."""
+    import nfse
+
+    tipos = t.get("tipos") or []
+    competencia = str(t["data_inicio"])[:7]
+
+    def todos(situacao: str, mensagem: str) -> dict:
+        return {tipo: {"situacao": situacao, "mensagem": mensagem[:200]} for tipo in tipos}
+
+    try:
+        pfx = cripto.decifrar_arquivo(t["pfx_cifrado"], privada)
+        senha = cripto.decifrar(t["senha_cifrada"], privada)
+    except cripto.SenhaIlegivel as e:
+        return Resultado("certificado", f"Certificado não pôde ser aberto: {e}", detalhes=todos("erro", "certificado não pôde ser aberto"))
+    try:
+        info = nfse.dados_do_certificado(pfx, senha)
+    except nfse.ErroADN as e:
+        return Resultado("certificado", str(e), detalhes=todos("erro", "certificado recusado"))
+    validade = info["validade"]
+    if validade and validade.replace(tzinfo=validade.tzinfo or timezone.utc) < datetime.now(timezone.utc):
+        msg = f"O certificado A1 venceu em {validade:%d/%m/%Y}. Envie o certificado novo em Certificados."
+        return Resultado("certificado", msg, detalhes=todos("erro", "certificado vencido"))
+    cnpj = t["cnpj"]
+    consulta = cnpj if (t.get("certificado_cnpj") or info["cnpj"]) not in ("", cnpj) else ""  # filial com o da matriz
+    try:
+        with nfse.contexto_tls(pfx, senha) as ctx:
+            cliente = nfse.ClienteADN(sessao_falsa or nfse.sessao_com_certificado(ctx), cnpj_consulta=consulta)
+            r = nfse.baixar_competencia(cliente, cnpj, competencia, cfg["pastas"]["destino"], t["nome"], t.get("codigo") or "",
+                                        pdf="nfse_pdf" in tipos, com_emitidas="nfse_emitidas" in tipos,
+                                        com_recebidas="nfse_recebidas" in tipos, relatorio="nfse_retencoes" in tipos)
+    except nfse.ErroADN as e:
+        texto = str(e)
+        if "certificado" in texto.lower() and "E2214" not in texto:
+            return Resultado("certificado", texto, detalhes=todos("erro", "certificado recusado pelo Portal Nacional"))
+        if "fora do ar" in texto or "limitando" in texto or "E2214" in texto:
+            return Resultado("fora_do_ar", texto, detalhes=todos("erro", "Portal Nacional fora do ar; agende de novo mais tarde"))
+        return Resultado("erro", texto, detalhes=todos("erro", texto))
+    finally:
+        del pfx, senha
+
+    detalhes, partes = {}, []
+    for tipo, notas, rotulo in (("nfse_emitidas", r.emitidas, "emitida"), ("nfse_recebidas", r.recebidas, "recebida")):
+        if tipo in tipos:
+            detalhes[tipo] = ({"situacao": "concluido", "mensagem": f"{len(notas)} nota(s)", "arquivos": len(notas)} if notas
+                              else {"situacao": "sem_movimento", "mensagem": f"nenhuma nota {rotulo} na competência", "sem_notas": True})
+            partes.append(f"{len(notas)} {rotulo}(s)")
+    total = len(r.emitidas) + len(r.recebidas)
+    if "nfse_pdf" in tipos:
+        if not total:
+            detalhes["nfse_pdf"] = {"situacao": "sem_movimento", "mensagem": "sem notas na competência", "sem_notas": True}
+        elif r.pdfs_faltando:
+            detalhes["nfse_pdf"] = {"situacao": "erro" if not r.pdfs else "concluido",
+                                    "mensagem": f"o Portal Nacional não entregou {r.pdfs_faltando} PDF(s)", "arquivos": r.pdfs}
+        else:
+            detalhes["nfse_pdf"] = {"situacao": "concluido", "mensagem": f"{r.pdfs} PDF(s)", "arquivos": r.pdfs}
+    if "nfse_retencoes" in tipos:
+        detalhes["nfse_retencoes"] = ({"situacao": "concluido", "mensagem": "relatório salvo", "arquivos": 1} if r.relatorio
+                                      else {"situacao": "sem_movimento", "mensagem": "sem notas na competência", "sem_notas": True})
+    if r.canceladas:
+        partes.append(f"{r.canceladas} cancelada(s) fora")
+    pasta = r.pasta.parent.name if r.pasta else ""
+    return Resultado("concluido" if total else "sem_notas", "NFS-e: " + ", ".join(partes) if partes else "NFS-e: nada a baixar",
+                     qtd_xml=total, detalhes=detalhes, pasta=pasta)
 
 
 # ====================================================================== modo local

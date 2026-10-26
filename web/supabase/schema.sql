@@ -7,6 +7,7 @@
 --
 -- Senhas do ATF: chegam aqui já cifradas pelo portal com a chave pública do robô
 -- (coluna senha_cifrada, formato "v1:..."). Só o robô, no seu PC, tem a chave que abre.
+-- Certificados A1 da NFS-e: o arquivo em "v2:..." e a senha em "v1:...", pela mesma chave.
 --
 -- Papéis:
 --   admin   -> responsável pela plataforma (você): vê e gerencia todas as organizações
@@ -118,7 +119,7 @@ create table if not exists public.xml_tarefas (
   codigo          text not null default '',
   tipos           text[] not null,                            -- o que estava marcado ao agendar
   status          text not null default 'pendente' check (status in (
-                    'pendente', 'processando', 'concluido', 'sem_notas', 'senha_invalida',
+                    'pendente', 'processando', 'concluido', 'sem_notas', 'senha_invalida', 'certificado',
                     'erro', 'fora_do_ar', 'cancelado')),
   mensagem        text not null default '',
   qtd_xml         integer not null default 0,
@@ -193,6 +194,51 @@ create table if not exists public.xml_mei_alertas (
   primary key (org_id, ie, ano, medida, nivel)
 );
 
+-- ------------------------------------------------------------------------- NFS-e (Portal Nacional)
+-- Certificados A1 (e-CNPJ) das empresas, para a API oficial da NFS-e (ADN). O arquivo .pfx chega
+-- cifrado pelo portal com a chave pública do robô ("v2:...": AES-256-GCM, com a chave AES em RSA-OAEP)
+-- e a senha em "v1:...". Só o robô abre. Um certificado da matriz serve às filiais (mesma raiz do CNPJ).
+create table if not exists public.xml_nfse_certificados (
+  id             uuid primary key default gen_random_uuid(),
+  org_id         uuid not null references public.organizacoes(id) on delete cascade,
+  cnpj           text not null check (cnpj ~ '^[0-9]{14}$'),
+  nome           text not null default '',
+  validade       timestamptz,
+  pfx_cifrado    text not null check (pfx_cifrado like 'v2:%'),
+  senha_cifrada  text not null check (senha_cifrada like 'v1:%'),
+  criado_por     uuid references auth.users(id) on delete set null,
+  criado_em      timestamptz not null default now(),
+  atualizado_em  timestamptz not null default now(),
+  unique (org_id, cnpj)
+);
+
+-- Empresas da NFS-e (uma por CNPJ), separadas das empresas da SEFAZ (que são por inscrição estadual)
+create table if not exists public.xml_nfse_empresas (
+  id             uuid primary key default gen_random_uuid(),
+  org_id         uuid not null references public.organizacoes(id) on delete cascade,
+  cnpj           text not null check (cnpj ~ '^[0-9]{14}$'),
+  codigo         text not null default '',
+  nome           text not null check (length(nome) between 1 and 60),
+  nome_fixo      boolean not null default false,
+  tipos          text[] not null default '{}',
+  criado_em      timestamptz not null default now(),
+  atualizado_em  timestamptz not null default now(),
+  unique (org_id, cnpj),
+  constraint xml_nfse_empresas_tipos_check
+    check (tipos <@ array['nfse_emitidas', 'nfse_recebidas', 'nfse_pdf', 'nfse_retencoes'])
+);
+
+-- De onde vem o agendamento: SEFAZ do estado (ATF) ou Portal Nacional da NFS-e
+alter table public.xml_agendamentos add column if not exists origem text not null default 'sefaz';
+alter table public.xml_agendamentos drop constraint if exists xml_agendamentos_origem_check;
+alter table public.xml_agendamentos add constraint xml_agendamentos_origem_check check (origem in ('sefaz', 'nfse'));
+alter table public.xml_tarefas add column if not exists nfse_empresa_id uuid references public.xml_nfse_empresas(id) on delete set null;
+create index if not exists xml_tarefas_nfse_empresa_idx on public.xml_tarefas (nfse_empresa_id);
+-- situação nova: certificado A1 ausente, vencido ou recusado
+alter table public.xml_tarefas drop constraint if exists xml_tarefas_status_check;
+alter table public.xml_tarefas add constraint xml_tarefas_status_check check (status in (
+  'pendente', 'processando', 'concluido', 'sem_notas', 'senha_invalida', 'certificado', 'erro', 'fora_do_ar', 'cancelado'));
+
 -- Tentativas de login e pedidos de senha nova: só o servidor do portal lê e grava (sem regra para usuários)
 create table if not exists public.xml_tentativas (
   id         bigint generated always as identity primary key,
@@ -228,6 +274,7 @@ begin
   update public.xml_tarefas t set status = 'erro', concluido_em = now(),
          mensagem = 'Empresa ou login do ATF removido do cadastro; envie a planilha de novo.'
    where t.status = 'pendente'
+     and exists (select 1 from public.xml_agendamentos a where a.id = t.agendamento_id and a.origem = 'sefaz')
      and not exists (select 1 from public.xml_empresas e join public.xml_acessos c on c.id = e.acesso_id
                       where e.id = t.empresa_id);
 
@@ -262,6 +309,63 @@ begin
     join public.xml_agendamentos a on a.id = t.agendamento_id
     join public.xml_empresas e on e.id = t.empresa_id
     join public.xml_acessos c on c.id = e.acesso_id
+   where t.id = any(v_ids)
+   order by t.criado_em;
+end $$;
+
+-- Fila da NFS-e: tarefas liberadas do Portal Nacional, cada uma com o certificado A1 da empresa
+-- (o do próprio CNPJ ou, para filial, o da matriz). Não depende de login nem de sessão aberta.
+drop function if exists public.xml_nfse_pegar_lote(text, integer);
+create or replace function public.xml_nfse_pegar_lote(p_robo text, p_max integer default 10)
+returns table (id uuid, cnpj text, nome text, codigo text, tipos text[], data_inicio date, data_fim date,
+               certificado_cnpj text, pfx_cifrado text, senha_cifrada text)
+language plpgsql security definer set search_path = public as $$
+#variable_conflict use_column
+declare
+  v_ids uuid[];
+begin
+  update public.xml_tarefas set status = 'pendente', iniciado_em = null, robo = null
+   where xml_tarefas.status = 'processando' and xml_tarefas.nfse_empresa_id is not null
+     and xml_tarefas.iniciado_em < now() - interval '90 minutes';
+
+  -- empresa apagada depois do agendamento
+  update public.xml_tarefas t set status = 'erro', concluido_em = now(),
+         mensagem = 'Empresa removida do cadastro da NFS-e; envie a planilha de novo.'
+   where t.status = 'pendente' and t.nfse_empresa_id is null
+     and exists (select 1 from public.xml_agendamentos a where a.id = t.agendamento_id and a.origem = 'nfse');
+
+  -- sem certificado para o CNPJ nem para a matriz
+  update public.xml_tarefas t set status = 'certificado', concluido_em = now(),
+         mensagem = 'Sem certificado A1 cadastrado para este CNPJ (nem para a matriz). Cadastre em Certificados e agende de novo.'
+   where t.status = 'pendente'
+     and exists (select 1 from public.xml_agendamentos a where a.id = t.agendamento_id and a.origem = 'nfse'
+                  and a.executar_em <= now())
+     and exists (select 1 from public.xml_nfse_empresas e where e.id = t.nfse_empresa_id
+                  and not exists (select 1 from public.xml_nfse_certificados c
+                                   where c.org_id = e.org_id and left(c.cnpj, 8) = left(e.cnpj, 8)));
+
+  select array_agg(x.id) into v_ids from (
+    select t.id
+      from public.xml_tarefas t
+      join public.xml_agendamentos a on a.id = t.agendamento_id
+     where t.status = 'pendente' and a.origem = 'nfse' and a.executar_em <= now() and t.nfse_empresa_id is not null
+     order by a.executar_em, t.criado_em
+     limit greatest(1, least(p_max, 50))
+     for update of t skip locked) x;
+  if v_ids is null then return; end if;
+
+  update public.xml_tarefas set status = 'processando', iniciado_em = now(), robo = p_robo where xml_tarefas.id = any(v_ids);
+
+  return query
+  select t.id, e.cnpj, t.nome, t.codigo, t.tipos, a.data_inicio, a.data_fim, c.cnpj, c.pfx_cifrado, c.senha_cifrada
+    from public.xml_tarefas t
+    join public.xml_agendamentos a on a.id = t.agendamento_id
+    join public.xml_nfse_empresas e on e.id = t.nfse_empresa_id
+    cross join lateral (
+      select c.cnpj, c.pfx_cifrado, c.senha_cifrada from public.xml_nfse_certificados c
+       where c.org_id = e.org_id and left(c.cnpj, 8) = left(e.cnpj, 8)
+       order by (c.cnpj = e.cnpj) desc, (substr(c.cnpj, 9, 4) = '0001') desc, c.atualizado_em desc
+       limit 1) c
    where t.id = any(v_ids)
    order by t.criado_em;
 end $$;
@@ -342,6 +446,8 @@ alter table public.xml_mei_meses    enable row level security;
 alter table public.xml_mei_ajustes  enable row level security;
 alter table public.xml_mei_alertas  enable row level security;
 alter table public.xml_tentativas   enable row level security;
+alter table public.xml_nfse_certificados enable row level security;
+alter table public.xml_nfse_empresas     enable row level security;
 revoke all on public.xml_tentativas from anon, authenticated;
 
 drop policy if exists org_ler on public.organizacoes;
@@ -387,9 +493,22 @@ drop policy if exists xml_mei_alertas_ler on public.xml_mei_alertas;
 create policy xml_mei_alertas_ler on public.xml_mei_alertas for select to authenticated
   using ((select public.sou_admin()) or org_id = (select public.minha_org()));
 
+drop policy if exists xml_nfse_empresas_ler on public.xml_nfse_empresas;
+create policy xml_nfse_empresas_ler on public.xml_nfse_empresas for select to authenticated
+  using ((select public.sou_admin()) or org_id = (select public.minha_org()));
+
+drop policy if exists xml_nfse_certificados_ler on public.xml_nfse_certificados;
+create policy xml_nfse_certificados_ler on public.xml_nfse_certificados for select to authenticated
+  using ((select public.sou_admin()) or org_id = (select public.minha_org()));
+-- o certificado e a senha cifrados não saem para o navegador
+revoke select on public.xml_nfse_certificados from anon, authenticated;
+grant select (id, org_id, cnpj, nome, validade, criado_em, atualizado_em) on public.xml_nfse_certificados to authenticated;
+
 -- funções: quem pode chamar
 revoke all on function public.xml_pegar_lote(text, text, integer) from public, anon, authenticated;
 grant execute on function public.xml_pegar_lote(text, text, integer) to service_role;
+revoke all on function public.xml_nfse_pegar_lote(text, integer) from public, anon, authenticated;
+grant execute on function public.xml_nfse_pegar_lote(text, integer) to service_role;
 revoke all on function public.xml_mei_gravar(uuid, text, text, jsonb, date) from public, anon, authenticated;
 revoke all on function public.xml_mei_registrar(uuid, jsonb, date) from public, anon, authenticated;
 grant execute on function public.xml_mei_registrar(uuid, jsonb, date) to service_role;

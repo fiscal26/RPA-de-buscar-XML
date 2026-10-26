@@ -169,3 +169,24 @@ compartilhamento e os dados estruturados (o que é o site). A área logada e as 
    *Solicitar indexação*. O Google costuma levar de alguns dias a algumas semanas para mostrar o site.
 4. Ajuda muito ter links apontando para o site: no site principal da LotiVisse, no Instagram/LinkedIn e no
    perfil da empresa no Google (Google Meu Negócio).
+
+## 11. NFS-e pelo Portal Nacional (certificado A1)
+
+As notas de serviço vêm da **API oficial do Portal Nacional da NFS-e** (ADN, `adn.nfse.gov.br`), gratuita, em lote
+e sem captcha. O acesso é o **certificado digital A1 (e-CNPJ)** da empresa; o da matriz serve às filiais.
+
+1. **Banco:** rode o `supabase/schema.sql` de novo no *SQL Editor* (cria os certificados, as empresas da NFS-e e a
+   fila própria; não apaga nada).
+2. **Portal:** nada novo na Vercel. O certificado e a senha são cifrados com a mesma `XML_CHAVE_PUBLICA` das senhas
+   do ATF: só o robô, com a chave privada, abre.
+3. **Robô:** `git pull` e `pip install -r requirements.txt`. O robô atende a fila da NFS-e antes da do ATF (não usa o Chrome).
+4. **Uso:**
+   1. Em **Certificados**, envie o .pfx e a senha de cada empresa. O portal confere a senha, lê o CNPJ e a validade e
+      avisa quando faltar 30 dias para vencer.
+   2. Em **Agendar > Portal Nacional (NFS-e)**, envie a planilha modelo da NFS-e (CNPJ, nome e os serviços).
+   3. Cada empresa ganha, em `Arquivos baixados/<ID>-<Nome>/<AAAA-MM>/`, as pastas `NFS-e Emitidas` e
+      `NFS-e Recebidas` (XML e PDF) e o `Retenções NFS-e AAAA-MM.xlsx`.
+5. **Teste sem o portal:** `robo\testar_nfse.bat` (pede o .pfx e a senha na hora; nada fica gravado).
+
+O robô guarda no PC uma cópia das notas já recebidas (`robo/nfse_cache`, fora do git): a próxima busca traz só o
+que for novo. Endereços e regras da API: `robo/NFSE.md`.
