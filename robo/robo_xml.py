@@ -858,6 +858,48 @@ def salvar_relatorio(cfg, resultados, inicio: date) -> Path:
     return destino
 
 
+def testar_nfse(cfg: dict, competencia: str | None):
+    """Baixa as NFS-e de uma competência pelo Portal Nacional com um .pfx escolhido na hora.
+    A senha é digitada aqui e não fica gravada em lugar nenhum."""
+    import getpass
+
+    import nfse
+
+    caminho = input("Arquivo do certificado A1 (.pfx ou .p12) — pode arrastar o arquivo para esta janela: ")
+    caminho = Path(caminho.strip().strip('"').strip("'"))
+    if not caminho.is_file():
+        sys.exit(f"Não achei o arquivo: {caminho}")
+    pfx = caminho.read_bytes()
+    senha = getpass.getpass("Senha do certificado (não aparece enquanto digita): ")
+    try:
+        info = nfse.dados_do_certificado(pfx, senha)
+    except nfse.ErroADN as e:
+        sys.exit(str(e))
+    print(f"Certificado: {info['nome']}  CNPJ {info['cnpj'] or '(não encontrado)'}  válido até {info['validade']:%d/%m/%Y}")
+    cnpj = info["cnpj"] or nfse.so_digitos(input("CNPJ da empresa: "))
+    consulta = nfse.so_digitos(input("CNPJ de uma filial para consultar (Enter = o do certificado): "))
+    try:
+        inicio, _ = competencias(competencia)[0]
+    except ValueError:
+        sys.exit("Competência inválida: use MM/AAAA (ex.: 09/2026).")
+    comp = f"{inicio:%Y-%m}"
+    alvo = consulta or cnpj
+    log.info("NFS-e %s de %s: consultando o Portal Nacional...", f"{inicio:%m/%Y}", alvo)
+    try:
+        with nfse.contexto_tls(pfx, senha) as ctx:
+            cliente = nfse.ClienteADN(nfse.sessao_com_certificado(ctx), cnpj_consulta=consulta)
+            r = nfse.baixar_competencia(cliente, alvo, comp, cfg["pastas"]["destino"], info["nome"] or alvo)
+    except nfse.ErroADN as e:
+        sys.exit(f"Erro: {e}")
+    log.info("%d documento(s) novo(s) recebido(s) do Portal Nacional", r.novos_documentos)
+    log.info("Competência %s: %d emitida(s), %d recebida(s), %d cancelada(s) fora do relatório",
+             f"{inicio:%m/%Y}", len(r.emitidas), len(r.recebidas), r.canceladas)
+    log.info("PDF: %d salvo(s), %d não entregue(s) pelo portal", r.pdfs, r.pdfs_faltando)
+    if r.relatorio:
+        log.info("Relatório de retenções: %s", r.relatorio)
+    log.info("Arquivos em: %s", r.pasta)
+
+
 # ====================================================================== entrada
 def main():
     ap = argparse.ArgumentParser(description="Robô de XML da SEFAZ-PB")
@@ -872,6 +914,8 @@ def main():
                     help="manda ao painel o faturamento MEI já salvo neste PC e sai (o robô também faz isso ao ligar)")
     ap.add_argument("--gravar", nargs="?", const="", metavar="SERVICO",
                     help="grava os passos que você faz no Chrome do robô (ex.: --gravar faturas)")
+    ap.add_argument("--nfse-teste", action="store_true",
+                    help="NFS-e do Portal Nacional com um certificado A1 deste PC (pergunta o arquivo e a senha)")
     args = ap.parse_args()
 
     logging.basicConfig(
@@ -906,6 +950,9 @@ def main():
         return
     if args.modelo:
         print(planilha.copiar_modelo(args.modelo))
+        return
+    if args.nfse_teste:
+        testar_nfse(cfg, args.competencia)
         return
     if args.mei_ano:
         cfg["mei"]["refazer_ano"] = True
