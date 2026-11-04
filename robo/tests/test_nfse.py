@@ -301,3 +301,13 @@ def test_portal_recusa_o_certificado_e_fora_do_ar(chaves, cfg_nfse):
     instavel = PortalFalso([], falhas=[Resposta(400, {"Erros": [{"Codigo": "E2214", "Descricao": "Cadeia"}]})])
     r = robo_xml.executar_nfse(cfg_nfse, tarefa(chaves, ["nfse_emitidas"]), chaves[0], sessao_falsa=instavel)
     assert r.status == "fora_do_ar" and "agende de novo" in r.detalhes["nfse_emitidas"]["mensagem"]
+
+
+def test_tarefa_vai_para_a_pasta_do_escritorio(chaves, cfg_nfse, tmp_path):
+    import robo_xml
+    cfg_nfse["pastas"]["por_escritorio"] = True
+    t = tarefa(chaves, ["nfse_emitidas"])
+    t["org_nome"] = "Contábil Sousa"
+    r = robo_xml.executar_nfse(cfg_nfse, t, chaves[0], sessao_falsa=PortalFalso(documentos_exemplo()))
+    assert r.qtd_xml == 2
+    assert (tmp_path / "destino" / "Contábil Sousa" / "Arquivos baixados" / "7-Lotivisse" / "2026-09" / nfse.PASTA_EMITIDAS).is_dir()

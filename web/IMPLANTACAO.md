@@ -170,6 +170,10 @@ compartilhamento e os dados estruturados (o que é o site). A área logada e as 
 4. Ajuda muito ter links apontando para o site: no site principal da LotiVisse, no Instagram/LinkedIn e no
    perfil da empresa no Google (Google Meu Negócio).
 
+## Robô de XML na VPS
+Siga `servidor/LEIAME.md`. Na VPS o robô separa os arquivos por escritório (`pastas.por_escritorio`): rode o
+`supabase/schema.sql` de novo para a fila do portal informar o escritório de cada tarefa.
+
 ## 11. NFS-e pelo Portal Nacional (certificado A1)
 
 As notas de serviço vêm da **API oficial do Portal Nacional da NFS-e** (ADN, `adn.nfse.gov.br`), gratuita, em lote

@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Envia os arquivos do robô de XML para o Google Drive (rode como root, depois do instalar.sh).
-# A cada 10 minutos, o que é novo em /home/lotivisse/xml/arquivos é copiado para uma pasta do Drive.
-# Só copia: apagar no Drive não apaga na VPS, e vice-versa. O acesso ao Drive é o mais restrito possível
+# A cada 10 minutos, o que é novo em /home/lotivisse/xml/arquivos é copiado para uma pasta do Drive, com uma
+# subpasta por escritório (cada escritório recebe acesso só à dele, compartilhando no Drive).
+# Só copia os arquivos dos últimos 35 dias: o que o escritório apagar ou arquivar no Drive depois disso não volta.
+# Apagar no Drive não apaga na VPS, e vice-versa. O acesso ao Drive é o mais restrito possível
 # (o robô só enxerga a pasta que ele mesmo criou, nada mais da conta).
 # Rodar de novo troca a pasta de destino ou a conta.
 set -euo pipefail
@@ -61,8 +63,9 @@ Wants=network-online.target
 Type=oneshot
 User=lotivisse
 EnvironmentFile=/etc/lotivisse/xml-drive.env
-# --min-age: arquivo ainda sendo gravado pelo robô fica para a próxima rodada; o diagnóstico não vai para o Drive
-ExecStart=/usr/bin/rclone copy /home/lotivisse/xml/arquivos "gdrive:${PASTA_DRIVE}" --min-age 2m --exclude "_diagnostico/**" \
+# --min-age: arquivo ainda sendo gravado pelo robô fica para a próxima rodada; --max-age: só os últimos 35 dias
+# (o que o escritório apagar ou arquivar no Drive depois disso não volta); o diagnóstico não vai para o Drive
+ExecStart=/usr/bin/rclone copy /home/lotivisse/xml/arquivos "gdrive:${PASTA_DRIVE}" --min-age 2m --max-age 35d --exclude "_diagnostico/**" \
   --log-file /home/lotivisse/xml/drive.log --log-level NOTICE
 EOF
 cat > /etc/systemd/system/lotivisse-xml-drive.timer <<'EOF'
@@ -90,6 +93,7 @@ systemctl enable --now lotivisse-xml-drive.timer
 passo "Primeiro envio"
 if systemctl start lotivisse-xml-drive.service; then
   ok "Arquivos enviados para a pasta \"$PASTA\" do Google Drive. Daqui em diante, o envio é automático a cada 10 minutos."
+  echo "Dentro dela há uma pasta por escritório: compartilhe cada uma com o e-mail Google do escritório (servidor/LEIAME.md)."
 else
   echo "O primeiro envio falhou. Veja: tail -n 30 $DIR/drive.log"
 fi

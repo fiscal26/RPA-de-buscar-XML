@@ -233,3 +233,18 @@ def test_historicos_mei_para_o_painel(tmp_path):
     assert sorted(h["meses"]) == ["2026-08", "2026-09"] and h["meses"]["2026-09"]["saidas"] == 2500.5
     assert all("linhas" not in m for m in h["meses"].values())
     assert arquivos.historicos_mei(tmp_path / "vazio") == []
+
+
+def test_pasta_por_escritorio_e_historico_mei_dentro_dela(tmp_path):
+    import json
+    destino = arquivos.destino_do_escritorio(tmp_path, "Contábil Sousa / Filial", True)
+    assert destino == str(tmp_path / "Contábil Sousa Filial")  # caractere proibido no Windows sai
+    assert arquivos.destino_do_escritorio(tmp_path, "Contábil Sousa", False) == str(tmp_path)  # computador: como antes
+    assert arquivos.destino_do_escritorio(tmp_path, "", True) == str(tmp_path)  # portal antigo sem o escritório
+    for raiz in (tmp_path, tmp_path / "Contábil Sousa"):  # MEI salvo antes (sem escritório) e depois (com)
+        pasta = raiz / arquivos.PASTA_BAIXADOS / "5-Joao" / "Dossiê MEI"
+        pasta.mkdir(parents=True)
+        (pasta / "Faturamento MEI 2026.json").write_text(json.dumps(
+            {"empresa": {"ie": "16" + str(len(str(raiz))).zfill(7), "nome": "Joao"}, "meses": {"2026-01": {"saidas": 1}}}),
+            encoding="utf-8")
+    assert len(arquivos.historicos_mei(tmp_path)) == 2

@@ -11,7 +11,8 @@ para a mesma VPS onde já roda o robô de certidões. O portal continua na Verce
 │   ├── app/          código (GitHub: RPA-de-buscar-XML)
 │   ├── venv/         Python do robô
 │   ├── chrome-perfil/  chaves/  Downloads/
-│   └── arquivos/     XML, PDF e relatórios (Arquivos baixados/<ID>-<Nome>/<AAAA-MM>/...)
+│   └── arquivos/     XML, PDF e relatórios, uma pasta por escritório:
+│       └── <Escritório>/Arquivos baixados/<ID>-<Nome>/<AAAA-MM>/...
 └── Google Chrome oficial (compartilhado pelos robôs)
 ```
 
@@ -105,7 +106,8 @@ No fim aparece a situação do robô (`lotivisse status xml`).
 até rodam juntos sem pegar a mesma tarefa, mas os arquivos ficariam divididos entre o computador e a VPS.
 
 ## Passo 6: mandar os arquivos para o Google Drive
-Na VPS os arquivos ficam em `/home/lotivisse/xml/arquivos`. Para eles chegarem ao escritório pelo Google Drive:
+Na VPS os arquivos ficam em `/home/lotivisse/xml/arquivos`, com **uma pasta por escritório** (o nome do escritório
+cadastrado no portal). Para eles chegarem aos escritórios pelo Google Drive:
 ```
 sudo bash /home/lotivisse/xml/app/servidor/drive.sh
 ```
@@ -114,11 +116,33 @@ O comando explica cada passo:
 2. Abra no navegador do seu computador o link que a VPS mostrar, entre na conta Google do escritório e autorize.
 3. Escolha o nome da pasta no Drive (Enter aceita `RPA XML LotiVisse`).
 
-Depois disso, a cada 10 minutos o que é novo vai para essa pasta do Drive, na mesma organização de pastas de
-hoje. O envio **só copia**: apagar no Drive não apaga na VPS. O acesso dado ao robô é o mais restrito do Drive:
-ele só enxerga a pasta que ele mesmo criou, nada mais da conta.
+Depois disso, a cada 10 minutos o que é novo vai para essa pasta do Drive:
+```
+RPA XML LotiVisse/
+├── Contábil Sousa/Arquivos baixados/15-Padaria Central/2026-09/...
+└── Outro Escritório/Arquivos baixados/...
+```
+- O envio **só copia**: apagar no Drive não apaga na VPS.
+- Só vão os arquivos **dos últimos 35 dias**. O que o escritório apagar, mover ou arquivar no Drive depois disso
+  não volta. Na VPS continua tudo guardado.
+- O acesso dado ao robô é o mais restrito do Drive: ele só enxerga a pasta que ele mesmo criou, nada mais da conta.
 
-Para o escritório ver os arquivos no computador, como hoje, use o **Google Drive para computador** com a mesma conta.
+### Dar a cada escritório só a pasta dele
+A pasta de um escritório aparece no Drive depois do primeiro agendamento dele.
+1. No Google Drive (drive.google.com), entre na conta usada no `drive.sh` e abra **RPA XML LotiVisse**.
+2. Clique com o botão direito na pasta do escritório → **Compartilhar**.
+3. Digite o e-mail Google do escritório, escolha **Leitor** e clique em **Enviar**.
+
+O escritório vê só a pasta dele, em **Compartilhados comigo**. Para ela aparecer no computador do escritório:
+1. No Drive do escritório, em **Compartilhados comigo**, clique com o botão direito na pasta → **Organizar** →
+   **Adicionar atalho** → **Meu Drive**.
+2. No computador do escritório, instale o **Google Drive para computador** com a conta do escritório. A pasta aparece
+   em `G:\Meu Drive\<Escritório>`.
+3. Se o sistema contábil importa os XML direto da pasta, nas preferências do Google Drive para computador escolha
+   **Espelhar arquivos**, ou clique com o botão direito na pasta → **Disponível off-line**.
+
+Se o escritório for o próprio dono da conta usada no `drive.sh`, não precisa compartilhar: a pasta já está no
+**Meu Drive** dele.
 
 ## Comandos do dia a dia (no terminal da VPS)
 Com os dois robôs instalados, informe qual: `certidoes` ou `xml`.

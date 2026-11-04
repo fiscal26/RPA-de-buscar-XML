@@ -216,6 +216,13 @@ def nome_de_pasta(texto: str) -> str:
     return re.sub(r"\s+", " ", texto).strip(" .")[:60] or "Empresa"
 
 
+def destino_do_escritorio(destino: str | Path, escritorio: str, por_escritorio: bool) -> str:
+    """Com uma pasta por escritório (robô na VPS): <destino>/<Escritório>. Sem: o próprio destino."""
+    if not por_escritorio or not (escritorio or "").strip():
+        return str(destino)
+    return str(Path(destino) / nome_de_pasta(escritorio))
+
+
 def pasta_empresa(destino: str | Path, nome: str, ie: str, codigo: str = "") -> Path:
     """<destino>/Arquivos baixados/<ID>-<Nome> (ex.: "5-joao"); sem ID, só o nome."""
     base = Path(destino) / PASTA_BAIXADOS
@@ -669,7 +676,11 @@ def historicos_mei(destino: str | Path) -> list[dict]:
     import json
 
     saida = []
-    for arq in sorted((Path(destino) / PASTA_BAIXADOS).glob("*/Dossiê MEI/Faturamento MEI *.json")):
+    raiz = Path(destino)
+    # sem e com uma pasta por escritório (<destino>/<Escritório>/Arquivos baixados/...)
+    achados = list((raiz / PASTA_BAIXADOS).glob("*/Dossiê MEI/Faturamento MEI *.json")) + \
+        list(raiz.glob(f"*/{PASTA_BAIXADOS}/*/Dossiê MEI/Faturamento MEI *.json"))
+    for arq in sorted(achados):
         try:
             h = json.loads(arq.read_text(encoding="utf-8"))
             emp = h["empresa"]
