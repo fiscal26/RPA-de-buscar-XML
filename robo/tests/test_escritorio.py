@@ -40,3 +40,29 @@ def test_rodada_da_sefaz_usa_a_pasta_do_escritorio(tmp_path):
     robo.executor = ExecutorFalso()
     robo.processar(lote)
     assert {t.destino for t in robo.executor.trabalhos} == {str(tmp_path)}
+
+
+def test_sinal_de_vida_continua_no_meio_da_rodada(monkeypatch):
+    """Rodada longa (ATF entregando os XML): o sinal ao portal não pode parar, senão o robô aparece desligado."""
+    import threading
+    import time
+
+    sinais = []
+    robo = object.__new__(robo_xml.Robo)
+    robo.nome, robo.chrome_ok, robo.tarefas_atuais, robo.ultimo_sinal, robo.parar = "vps", True, [], 0.0, False
+
+    class Portal:
+        def sinal(self, nome, info):
+            sinais.append(nome)
+            if len(sinais) == 1:
+                raise RuntimeError("portal fora do ar")  # uma falha não derruba o sinal
+
+    robo.portal = Portal()
+    dormir = time.sleep
+    monkeypatch.setattr(robo_xml.time, "sleep", lambda s: dormir(0.001))
+    t = threading.Thread(target=robo._batimento, daemon=True)
+    t.start()
+    dormir(0.5)  # o time.sleep do módulo foi trocado acima (vale para o teste também)
+    robo.parar = True
+    t.join(2)
+    assert len(sinais) >= 3 and not t.is_alive()
