@@ -655,18 +655,24 @@ class Robo:
 
     def rodar(self):
         log.info("Robô '%s' conectado a %s. XML em: %s", self.nome, self.portal.url, self.cfg["pastas"]["destino"])
-        self.enviar_historico_mei()
+        filas = self.cfg["portal"]["filas"]
+        log.info("Filas deste robô: %s", ", ".join({"sefaz": "SEFAZ (ATF)", "nfse": "NFS-e (Portal Nacional)"}[f] for f in filas))
+        if "sefaz" in filas:
+            self.enviar_historico_mei()
         self.portal.devolver_tarefas(self.nome)
         while not self.parar:
             try:
                 self._sinal()
-                lote_nfse = self.portal.pegar_lote_nfse(self.nome, 10)
+                lote_nfse = self.portal.pegar_lote_nfse(self.nome, 10) if "nfse" in filas else []
             except Exception as e:
                 log.warning("Sem contato com o portal: %s", e)
                 time.sleep(30)
                 continue
             if lote_nfse:  # NFS-e não usa o Chrome: vai antes da fila do ATF
                 self.processar_nfse(lote_nfse)
+                continue
+            if "sefaz" not in filas:
+                time.sleep(self.cfg["portal"]["intervalo_segundos"])
                 continue
             try:
                 lote = self.portal.pegar_lote(self.nome, self.executor.login_aberto, self.cfg["atf"]["empresas_por_rodada"])

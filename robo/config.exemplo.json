@@ -4,6 +4,8 @@
   "portal": {
     "supabase_url": "https://SEU-PROJETO.supabase.co",
     "chave_service_role": "COLE-AQUI-A-CHAVE-SERVICE-ROLE",
-    "nome_robo": "pc-escritorio"
+    "nome_robo": "pc-escritorio",
+    "_filas": "Filas que este robô atende: sefaz (ATF) e nfse (Portal Nacional). Para dividir com a VPS, ex.: \"filas\": [\"sefaz\"]",
+    "filas": ["sefaz", "nfse"]
   }
 }

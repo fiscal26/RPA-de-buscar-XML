@@ -27,3 +27,17 @@ def test_pasta_antiga_xml_sefaz_pb_vira_rpa_xml_lotivisse(tmp_path, monkeypatch)
     avisos = config.resolver_pastas(cfg)
     assert cfg["pastas"]["destino"] == str(nova) and (nova / "Arquivos baixados" / "5-Joao").is_dir()
     assert not antiga.exists() and avisos and "agora se chama" in avisos[0]
+
+
+def test_filas_do_robo(tmp_path, monkeypatch):
+    import json
+    import pytest
+    monkeypatch.setattr(config, "DESTINO_PADRAO", tmp_path / "padrao")
+    arquivo = tmp_path / "config.json"
+    monkeypatch.setattr(config, "ARQUIVO_CONFIG", arquivo)
+    assert config.carregar()["portal"]["filas"] == ["sefaz", "nfse"]  # sem nada: as duas
+    arquivo.write_text(json.dumps({"portal": {"filas": ["NFSe "]}}), encoding="utf-8")
+    assert config.carregar()["portal"]["filas"] == ["nfse"]
+    arquivo.write_text(json.dumps({"portal": {"filas": ["atf"]}}), encoding="utf-8")
+    with pytest.raises(config.ConfigInvalida, match="filas"):
+        config.carregar()
