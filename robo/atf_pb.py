@@ -462,6 +462,20 @@ class AtfPB:
                 continue
         return None
 
+    def _clicar_botao(self, alvo, timeout: int = 8000):
+        """Clica como uma pessoa. Se algo da própria tela do ATF ficar por cima do botão (acontece no layout que o
+        ATF monta na tela da VPS, com outras fontes e outro tamanho), aciona o botão pela página, como o clique faria,
+        em vez de ficar 30 s rolando a tela até cair no modo assistido."""
+        try:
+            alvo.click(timeout=timeout)
+            return
+        except Exception as e:
+            texto = str(e)
+            if not any(m in texto for m in ("intercepts pointer events", "outside of the viewport", "not stable")):
+                raise
+        self._log("Botão coberto por outro elemento da tela; acionando pela página")
+        alvo.evaluate("el => el.click()")
+
     def _digitar(self, campo, texto: str):
         try:
             campo.scroll_into_view_if_needed(timeout=3000)
@@ -528,7 +542,7 @@ class AtfPB:
                 pausa(self.page, 0.3, 0.8)
                 botao = self._achar(sel["entrar"], _BOTOES_ENTRAR, frame)
                 if botao is not None:
-                    botao.click()
+                    self._clicar_botao(botao)
                 else:
                     campo_senha.press("Enter")
         if not automatico:
@@ -594,7 +608,7 @@ class AtfPB:
                                                                      f"[{_xpath_texto(texto)}]"])
         if alvo is None:
             return False
-        alvo.click()
+        self._clicar_botao(alvo)
         pausa(self.page, 0.8, 1.5)
         return True
 
@@ -638,12 +652,12 @@ class AtfPB:
         if not self._tela_aberta(tela) and tela.get("pagina"):
             link = self._achar("", [f'a[href*="{tela["pagina"]}"]'])
             if link is not None:
-                link.click()
+                self._clicar_botao(link)
                 self._esperar_tela(tela)
         if tela.get("botao") and not self._tela_aberta(tela):
             botao = self._achar("", tela["botao"])
             if botao is not None:
-                botao.click()
+                self._clicar_botao(botao)
                 self._esperar_tela(tela)
         # menu lateral: volta à raiz (/ MEN), entra no módulo e escolhe a consulta
         if tela.get("menu") and not self._tela_aberta(tela):
@@ -652,7 +666,7 @@ class AtfPB:
                 if self._clicar_texto(tela["menu"][0]):
                     link = self._achar("", [f'a[href*="{tela["pagina"]}"]']) if tela.get("pagina") else None
                     if link is not None:
-                        link.click()
+                        self._clicar_botao(link)
                         pausa(self.page, 1.5, 2.5)
                         break
                     if self._clicar_texto(tela["menu"][1]):
@@ -660,7 +674,7 @@ class AtfPB:
                 menu = self._achar("", ['#toggleMenuHeader', 'button[aria-label*="menu" i]', '.navbar-toggler',
                                         'button[title*="menu" i]'])
                 if menu is not None:
-                    menu.click()
+                    self._clicar_botao(menu)
                     pausa(self.page, 0.5, 1.0)
         if not self._tela_aberta(tela):
             # campo "Função" do topo, com o código da tela
@@ -672,7 +686,7 @@ class AtfPB:
                 pausa(self.page, 1.5, 2.5)
                 sugestao = self._achar("", [f'li:has-text("{tela["funcao"]}")', f'a:has-text("{tela["funcao"]}")'])
                 if sugestao is not None and not self._tela_aberta(tela):
-                    sugestao.click()
+                    self._clicar_botao(sugestao)
                     pausa(self.page, 1.5, 2.5)
         if not self._tela_aberta(tela) and tela.get("endereco"):
             conteudo = self._quadro_conteudo()
@@ -789,7 +803,7 @@ class AtfPB:
                 botao = self._achar("", ['.modal.show button:has-text("OK")', '.modal.show button:has-text("Fechar")',
                                          '.swal2-confirm', '[role=dialog] button:has-text("OK")'])
                 if botao is not None:
-                    botao.click()
+                    self._clicar_botao(botao)
                 return texto
         return ""
 
@@ -867,7 +881,7 @@ class AtfPB:
         self._digitar(numero, ie)
         self._log(f"IE {ie} no bloco {bloco}")
         if pesquisar is not None:
-            pesquisar.click()
+            self._clicar_botao(pesquisar)
             achou = False
             for _ in range(20):
                 pausa(self.page, 0.5, 0.8)
@@ -908,7 +922,7 @@ class AtfPB:
             raise EtapaNaoConcluida("botão Consultar não encontrado")
         self._log(f"Consultando {bloco} IE {ie}, {inicio:%d/%m/%Y} a {fim:%d/%m/%Y}, exibição XML")
         self._hora_consulta = self.hora_servidor() or datetime.now()
-        consultar.click()
+        self._clicar_botao(consultar)
 
     def _campo_do_bloco(self, bloco: str, css: str, ordem: int = 1, texto: str = ""):
         """Campo dentro do bloco Emitente/Destinatário (o que vem depois do título do bloco)."""
@@ -966,7 +980,7 @@ class AtfPB:
         if pesquisar is None:
             raise EtapaNaoConcluida("botão Pesquisar não encontrado")
         self._respostas = []
-        pesquisar.click()
+        self._clicar_botao(pesquisar)
         for _ in range(20):
             pausa(self.page, 0.5, 0.8)
             q = self._quadro_componente(comp)
@@ -985,7 +999,7 @@ class AtfPB:
         botao = self._no_quadro(frame, css)
         if botao is None:
             raise EtapaNaoConcluida(f"botão {nome} não encontrado")
-        botao.click()
+        self._clicar_botao(botao)
 
     def emitir(self, tipo: str, ie: str, inicio: date, fim: date, nome_tipo: str,
                periodos_extra: tuple = ()) -> Emissao:
@@ -1091,7 +1105,7 @@ class AtfPB:
         simei = None if not m else m.group(1).lower() == "sim"
         m = re.search(r"in[ií]cio\s+(?:de\s+)?atividade:?\s*(\d{2}/\d{2}/\d{4})", texto, re.I)
         inicio_atividade = datetime.strptime(m.group(1), "%d/%m/%Y").date() if m else None
-        self._no_quadro(quadro, aba).click()
+        self._clicar_botao(self._no_quadro(quadro, aba))
         quadro, linhas = self._docs_fiscais_periodo(None, inicio, fim)
         info = {"quadro": quadro, "simei": simei, "linhas": linhas, "inicio_atividade": inicio_atividade}
         self._dossie_cache[(ie, inicio)] = {k: v for k, v in info.items() if k != "quadro"}
@@ -1115,7 +1129,7 @@ class AtfPB:
             raise EtapaNaoConcluida("botão Consultar de Docs fiscais não encontrado")
         try:
             with quadro.expect_navigation(timeout=60_000):
-                botao.click()
+                self._clicar_botao(botao)
         except Exception as e:
             self._log(f"Docs fiscais: sem recarregar a tela depois do Consultar ({str(e).splitlines()[0][:80]})")
         quadro = self._esperar_quadro('input[name="edtDtInicial"]') or quadro
@@ -1143,7 +1157,7 @@ class AtfPB:
             emissao.sem_dados, emissao.resposta = True, SEM_DADOS["cartao"]
             return
         antes = set(self.contexto.pages)
-        self._no_quadro(quadro, link_css).click()
+        self._clicar_botao(self._no_quadro(quadro, link_css))
         janela = None
         limite = time.time() + self.atf["segundos_documento"]
         while time.time() < limite and janela is None:  # a janela nova (ou a mesma aba, se o ATF abrir nela)
@@ -1255,7 +1269,7 @@ class AtfPB:
             diferidas += not quer
             try:
                 if caixa.is_checked() != quer:
-                    caixa.click()
+                    self._clicar_botao(caixa)
                     pausa(self.page, 0.2, 0.5)
                 marcadas += quer
             except Exception as e:
@@ -1374,7 +1388,7 @@ class AtfPB:
         for i in range(min(anexos.count(), 10)):
             try:
                 if anexos.nth(i).is_visible():
-                    anexos.nth(i).click()
+                    self._clicar_botao(anexos.nth(i))
                     clicados += 1
                     pausa(self.page, 1.0, 1.5)
             except Exception:
@@ -1480,7 +1494,7 @@ class AtfPB:
                                     'a:has-text("Sair")', 'button:has-text("Sair")', '[title*="Sair" i]',
                                     '[aria-label*="Sair" i]', 'a[href*="logout" i]', 'a[href*="sair" i]'])
             if link is not None:
-                link.click()
+                self._clicar_botao(link)
                 pausa(self.page, 0.8, 1.5)
         except Exception:
             pass

@@ -398,7 +398,10 @@ class AtfFalso(BaseHTTPRequestHandler):
                 f'class="form-control" value="{ie}"><label>Número</label></div>'
                 '<button type="submit" name="btnPesquisar" class="btn btn-primary">Pesquisar</button>'
                 f'<div class="form-floating"><input type="text" name="hidNoHumanoInstcmp{suf}" id="hidNoHumanoInstcmp{suf}" '
-                f'class="form-control" value="{nome}"><label>Nome/Razão Social</label></div></form>')
+                f'class="form-control" value="{nome}"><label>Nome/Razão Social</label></div></form>'
+                # VPS (Linux): no layout do ATF uma div fica por cima do Pesquisar e o clique do mouse não chega nele
+                + ('<div class="d-flex flex-column align-items-center mb-3 w-100" '
+                   'style="position:fixed;inset:0;background:transparent;z-index:9"></div>' if ESTADO.get("cobrir_pesquisar") else ""))
 
     def _componente_simples(self, cid: str, ie: str) -> str:
         """componentes/CodDescLst.jsp (sem o BS) das telas de faturas, extrato, omissão e certidão."""
@@ -842,3 +845,22 @@ def test_mei_segunda_vez_so_a_competencia(ambiente):
         assert sorted(resumo["historico"]) == [f"2026-{m:02d}" for m in range(3, 10)]
         assert all("linhas" not in m for m in resumo["historico"].values())
         assert r.detalhes["mei"]["notas_acumulado"] == 4700.5, r
+
+
+def test_botao_coberto_pelo_layout_do_atf(ambiente):
+    """Na VPS, uma div do ATF fica por cima do Pesquisar: o robô aciona o botão pela página, sem cair no modo
+    assistido nem ficar rolando a tela."""
+    import time as _t
+    cfg, _ = ambiente
+    ESTADO["cobrir_pesquisar"] = True
+    executor = robo_xml.Executor(cfg)
+    try:
+        antes = len(ESTADO["consultas"])
+        inicio = _t.time()
+        (r,) = executor.executar_rodada([_trabalho(IE_EMPRESA, "Padaria", ["nfe_saida"], codigo="015")])
+    finally:
+        ESTADO["cobrir_pesquisar"] = False
+        executor.fechar()
+    novas = ESTADO["consultas"][antes:]
+    assert any(c["emit"] == IE_EMPRESA for c in novas), novas  # a consulta foi feita
+    assert "Faça no Chrome" not in r.mensagem, r
