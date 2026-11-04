@@ -1,5 +1,6 @@
 "use client";
 
+import Icone from "@/components/Icones";
 import { useActionState, useRef } from "react";
 import { criarEscritorio, criarPessoa, excluirEscritorio, excluirPessoa, trocarSenha, type EstadoEquipe } from "./actions";
 
@@ -96,7 +97,10 @@ export function ExcluirPessoa({ id, nome }: { id: string; nome: string }) {
       if (!confirm(`Excluir o acesso de ${nome}? A pessoa não consegue mais entrar. Para só bloquear por um tempo, use Desativar.`)) e.preventDefault();
     }}>
       <input type="hidden" name="id" value={id} />
-      <button type="submit" className="perigo pequeno" disabled={enviando}>{enviando ? "Excluindo…" : "Excluir"}</button>
+      <button type="submit" className="perigo botao-icone" disabled={enviando} aria-label={`Excluir o acesso de ${nome}`}
+        data-dica={enviando ? "Excluindo…" : "Excluir"}>
+        <Icone nome="lixeira" tamanho={18} />
+      </button>
       {estado?.erro && <span className="erro-texto">{estado.erro}</span>}
     </form>
   );
@@ -115,7 +119,10 @@ export function ExcluirEscritorio({ id, nome }: { id: string; nome: string }) {
     }}>
       <input type="hidden" name="id" value={id} />
       <input ref={campo} type="hidden" name="confirmacao" />
-      <button type="submit" className="perigo pequeno" disabled={enviando}>{enviando ? "Excluindo…" : "Excluir escritório"}</button>
+      <button type="submit" className="perigo botao-icone" disabled={enviando} aria-label={`Excluir o escritório ${nome}`}
+        data-dica={enviando ? "Excluindo…" : "Excluir escritório"}>
+        <Icone nome="lixeira" tamanho={18} />
+      </button>
       {estado?.erro && <span className="erro-texto">{estado.erro}</span>}
     </form>
   );
