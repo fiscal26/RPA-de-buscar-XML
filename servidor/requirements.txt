@@ -1,0 +1,2 @@
+# Bibliotecas do robô de XML na VPS (as mesmas do robô no computador)
+-r ../robo/requirements.txt

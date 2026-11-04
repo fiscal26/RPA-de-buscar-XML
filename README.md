@@ -6,6 +6,9 @@ faturas, extrato de pagamentos, omissão e inadimplência e certidão de débito
 e recebidas, com o relatório de retenções) vêm pela API oficial do **Portal Nacional**, com o certificado
 A1 da empresa: veja `robo/NFSE.md` e a seção 11 do `web/IMPLANTACAO.md`.
 
+**Na VPS (Hostinger, Ubuntu), ao lado do robô de certidões:** siga `servidor/LEIAME.md`. O robô roda com um
+Chrome próprio (tela virtual :11, porta 9223), religa sozinho e manda os arquivos ao Google Drive a cada 10 minutos.
+
 ```
 <pasta destino>/                   (padrão: a pasta Documentos do PC onde o robô roda \ RPA XML LotiVisse)
   Arquivos baixados/

@@ -229,6 +229,9 @@ PADRAO = {
         "intervalo_segundos": 10,
         # Sem ninguém olhando o Chrome: quanto o modo assistido espera antes de desistir.
         "segundos_assistido": 120,
+        # Filas que este robô atende: "sefaz" (ATF, usa o Chrome) e "nfse" (Portal Nacional, só a API).
+        # Com dois robôs, dá para dividir: ex. o do computador com ["sefaz"] e o da VPS com ["nfse"].
+        "filas": ["sefaz", "nfse"],
     },
 }
 
@@ -246,6 +249,9 @@ def _mesclar(base: dict, extra: dict) -> dict:
 
 class ConfigInvalida(Exception):
     pass
+
+
+FILAS = ("sefaz", "nfse")
 
 
 def carregar() -> dict:
@@ -266,4 +272,9 @@ def carregar() -> dict:
     portal = cfg["portal"]
     portal["supabase_url"] = os.environ.get("SUPABASE_URL", portal["supabase_url"])
     portal["chave_service_role"] = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", portal["chave_service_role"])
+    filas = [str(f).strip().lower() for f in (portal.get("filas") or [])]
+    erradas = [f for f in filas if f not in FILAS]
+    if erradas or not filas:
+        raise ConfigInvalida(f'"portal" > "filas" no config.json aceita {", ".join(FILAS)} (veio: {portal.get("filas")}).')
+    portal["filas"] = filas
     return cfg
