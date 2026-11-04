@@ -212,6 +212,14 @@ create table if not exists public.xml_nfse_certificados (
   unique (org_id, cnpj)
 );
 
+-- Certificado do escritório (procurador): desde 01/11/2026 a API da NFS-e aceita consulta em nome de terceiros
+-- com a procuração eletrônica da Receita (e-CAC). Com ele, o robô baixa as notas das empresas que deram procuração
+-- ao escritório, sem o certificado de cada uma. Pode ser e-CNPJ do escritório ou e-CPF do contador.
+alter table public.xml_nfse_certificados add column if not exists procurador boolean not null default false;
+alter table public.xml_nfse_certificados drop constraint if exists xml_nfse_certificados_cnpj_check;
+alter table public.xml_nfse_certificados add constraint xml_nfse_certificados_cnpj_check
+  check (cnpj ~ '^([0-9]{11}|[0-9]{14})$' and (length(cnpj) = 14 or procurador));
+
 -- Empresas da NFS-e (uma por CNPJ), separadas das empresas da SEFAZ (que são por inscrição estadual)
 create table if not exists public.xml_nfse_empresas (
   id             uuid primary key default gen_random_uuid(),
@@ -319,7 +327,7 @@ end $$;
 drop function if exists public.xml_nfse_pegar_lote(text, integer);
 create or replace function public.xml_nfse_pegar_lote(p_robo text, p_max integer default 10)
 returns table (id uuid, cnpj text, nome text, codigo text, tipos text[], data_inicio date, data_fim date,
-               certificado_cnpj text, pfx_cifrado text, senha_cifrada text, org_nome text)
+               certificado_cnpj text, pfx_cifrado text, senha_cifrada text, org_nome text, procurador boolean)
 language plpgsql security definer set search_path = public as $$
 #variable_conflict use_column
 declare
@@ -335,15 +343,16 @@ begin
    where t.status = 'pendente' and t.nfse_empresa_id is null
      and exists (select 1 from public.xml_agendamentos a where a.id = t.agendamento_id and a.origem = 'nfse');
 
-  -- sem certificado para o CNPJ nem para a matriz
+  -- sem certificado para o CNPJ, nem para a matriz, nem do escritório (procuração)
   update public.xml_tarefas t set status = 'certificado', concluido_em = now(),
-         mensagem = 'Sem certificado A1 cadastrado para este CNPJ (nem para a matriz). Cadastre em Certificados e agende de novo.'
+         mensagem = 'Sem certificado A1 para este CNPJ (nem da matriz, nem do escritório com procuração). Cadastre em Certificados e agende de novo.'
    where t.status = 'pendente'
      and exists (select 1 from public.xml_agendamentos a where a.id = t.agendamento_id and a.origem = 'nfse'
                   and a.executar_em <= now())
      and exists (select 1 from public.xml_nfse_empresas e where e.id = t.nfse_empresa_id
                   and not exists (select 1 from public.xml_nfse_certificados c
-                                   where c.org_id = e.org_id and left(c.cnpj, 8) = left(e.cnpj, 8)));
+                                   where c.org_id = e.org_id
+                                     and ((length(c.cnpj) = 14 and left(c.cnpj, 8) = left(e.cnpj, 8)) or c.procurador)));
 
   select array_agg(x.id) into v_ids from (
     select t.id
@@ -358,15 +367,19 @@ begin
   update public.xml_tarefas set status = 'processando', iniciado_em = now(), robo = p_robo where xml_tarefas.id = any(v_ids);
 
   return query
-  select t.id, e.cnpj, t.nome, t.codigo, t.tipos, a.data_inicio, a.data_fim, c.cnpj, c.pfx_cifrado, c.senha_cifrada, o.nome
+  select t.id, e.cnpj, t.nome, t.codigo, t.tipos, a.data_inicio, a.data_fim, c.cnpj, c.pfx_cifrado, c.senha_cifrada, o.nome,
+         c.procurador
     from public.xml_tarefas t
     join public.organizacoes o on o.id = t.org_id
     join public.xml_agendamentos a on a.id = t.agendamento_id
     join public.xml_nfse_empresas e on e.id = t.nfse_empresa_id
     cross join lateral (
-      select c.cnpj, c.pfx_cifrado, c.senha_cifrada from public.xml_nfse_certificados c
-       where c.org_id = e.org_id and left(c.cnpj, 8) = left(e.cnpj, 8)
-       order by (c.cnpj = e.cnpj) desc, (substr(c.cnpj, 9, 4) = '0001') desc, c.atualizado_em desc
+      -- o da própria empresa, senão o da matriz (mesma raiz), senão o do escritório (procuração)
+      select c.cnpj, c.pfx_cifrado, c.senha_cifrada, (c.cnpj <> e.cnpj and not (length(c.cnpj) = 14 and left(c.cnpj, 8) = left(e.cnpj, 8))) as procurador
+        from public.xml_nfse_certificados c
+       where c.org_id = e.org_id and ((length(c.cnpj) = 14 and left(c.cnpj, 8) = left(e.cnpj, 8)) or c.procurador)
+       order by (c.cnpj = e.cnpj) desc, (length(c.cnpj) = 14 and left(c.cnpj, 8) = left(e.cnpj, 8)) desc,
+                (substr(c.cnpj, 9, 4) = '0001') desc, c.atualizado_em desc
        limit 1) c
    where t.id = any(v_ids)
    order by t.criado_em;
@@ -504,7 +517,7 @@ create policy xml_nfse_certificados_ler on public.xml_nfse_certificados for sele
   using ((select public.sou_admin()) or org_id = (select public.minha_org()));
 -- o certificado e a senha cifrados não saem para o navegador
 revoke select on public.xml_nfse_certificados from anon, authenticated;
-grant select (id, org_id, cnpj, nome, validade, criado_em, atualizado_em) on public.xml_nfse_certificados to authenticated;
+grant select (id, org_id, cnpj, nome, validade, procurador, criado_em, atualizado_em) on public.xml_nfse_certificados to authenticated;
 
 -- funções: quem pode chamar
 revoke all on function public.xml_pegar_lote(text, text, integer) from public, anon, authenticated;

@@ -1,3 +1,4 @@
+import Icone from "@/components/Icones";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { contexto } from "@/lib/sessao";
@@ -147,7 +148,9 @@ export default async function PainelMei({ params, searchParams }: {
                 <b className={j.valor < 0 ? "negativo" : ""}>{reais(j.valor)}</b>
                 <form action={removerAjuste}>
                   <input type="hidden" name="id" value={j.id} />
-                  <button type="submit" className="perigo pequeno" aria-label={`Excluir ${j.descricao}`}>Excluir</button>
+                  <button type="submit" className="perigo botao-icone" aria-label={`Excluir ${j.descricao}`} data-dica="Excluir">
+                    <Icone nome="lixeira" tamanho={18} />
+                  </button>
                 </form>
               </li>
             ))}

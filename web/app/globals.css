@@ -756,3 +756,26 @@ td.nome-empresa { min-width: 10rem; }
 .rodape-assuntos { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 0.4rem 1.5rem; margin-bottom: 0.75rem; }
 .rodape-assuntos a { color: var(--forte); text-decoration: none; font-weight: 500; }
 .rodape-assuntos a:hover { text-decoration: underline; }
+
+/* Agendar: link da última planilha usada, logo abaixo do botão da planilha modelo */
+.ultima-planilha { margin: 0.75rem 0 0; font-size: 0.92rem; }
+
+/* Certificados: opção "certificado do escritório (procuração)" com explicação ao lado */
+.caixa-opcao { display: flex; align-items: flex-start; gap: 0.6rem; margin: 0.5rem 0 1.25rem; font-weight: 400; color: var(--texto); max-width: 72ch; }
+.caixa-opcao input { margin-top: 0.3rem; flex: none; width: auto; }
+.caixa-opcao span { color: var(--suave); }
+.caixa-opcao b { color: var(--forte); }
+
+/* Botões só com ícone (lixeira, detalhes): quadrados, com o nome num balão ao parar o mouse ou navegar pelo teclado */
+.botao-icone { display: inline-grid; place-items: center; width: 34px; height: 34px; padding: 0; border-radius: 8px;
+  position: relative; line-height: 0; }
+.botao-icone.perigo { background: transparent; color: var(--erro); border: 1px solid color-mix(in srgb, var(--erro) 35%, var(--linha)); }
+.botao-icone.perigo:hover { background: var(--erro-fundo); color: var(--erro); border-color: var(--erro); }
+.botao-icone.discreto { background: transparent; color: var(--forte); border: 1px solid var(--linha); text-decoration: none; }
+.botao-icone.discreto:hover { background: var(--carbono); color: var(--forte); border-color: var(--tinta-clara); }
+.botao-icone:disabled { opacity: 0.5; }
+[data-dica]::after { content: attr(data-dica); position: absolute; bottom: calc(100% + 7px); left: 50%; transform: translate(-50%, 3px);
+  background: var(--forte); color: var(--superficie); font: 600 0.75rem/1 var(--fonte-texto); white-space: nowrap;
+  padding: 0.4rem 0.55rem; border-radius: 6px; opacity: 0; pointer-events: none; transition: opacity 0.12s, transform 0.12s; z-index: 30; }
+[data-dica]:hover::after, [data-dica]:focus-visible::after { opacity: 1; transform: translate(-50%, 0); }
+@media (prefers-reduced-motion: reduce) { [data-dica]::after { transition: none; } }

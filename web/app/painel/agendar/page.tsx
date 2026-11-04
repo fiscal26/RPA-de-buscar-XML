@@ -1,12 +1,21 @@
 import Link from "next/link";
 import { contexto } from "@/lib/sessao";
-import { mesAnterior } from "@/lib/documentos";
+import { competenciaBR, mesAnterior } from "@/lib/documentos";
 import FormAgendamento from "../FormAgendamento";
 import FormAgendamentoNfse from "../FormAgendamentoNfse";
 
 export default async function Agendar({ searchParams }: { searchParams: Promise<{ origem?: string }> }) {
   const nfse = (await searchParams).origem === "nfse";
   const { supabase, admin } = await contexto();
+  // última planilha usada (desta origem): o link só aparece quando já houve um agendamento
+  const { data: ultimo } = await supabase.from("xml_agendamentos").select("id, competencia")
+    .eq("origem", nfse ? "nfse" : "sefaz").order("criado_em", { ascending: false }).limit(1).maybeSingle();
+  const ultima = ultimo && (
+    <p className="ultima-planilha">
+      <a href={`/painel/agendamentos/${ultimo.id}/planilha`} download>Baixar a última planilha usada</a>{" "}
+      <span className="suave">(competência {competenciaBR(ultimo.competencia)}, sem as senhas)</span>
+    </p>
+  );
   const organizacoes = admin
     ? (await supabase.from("organizacoes").select("id, nome").eq("ativo", true).order("nome")).data ?? []
     : undefined;
@@ -28,16 +37,19 @@ export default async function Agendar({ searchParams }: { searchParams: Promise<
           <section className="cartao">
             <h2 className="titulo-cartao">Antes de enviar</h2>
             <ol className="preparo">
-              <li>Envie o certificado A1 de cada empresa em <Link href="/painel/certificados">Certificados</Link> (o da matriz serve às filiais).</li>
+              <li>Em <Link href="/painel/certificados">Certificados</Link>, envie o certificado do escritório (vale para as empresas que deram procuração no e-CAC) ou o A1 de cada empresa (o da matriz serve às filiais).</li>
               <li>Baixe a planilha modelo da NFS-e e preencha uma empresa por linha: CNPJ e nome.</li>
               <li>Apague o X dos serviços de que a empresa não precisa.</li>
             </ol>
             <a className="botao" href="/modelos/modelo_empresas_nfse.xlsx" download>Baixar a planilha modelo da NFS-e</a>
+            {ultima}
             <details className="duvidas">
               <summary>Dúvidas comuns</summary>
               <dl>
                 <dt>Por que o certificado?</dt>
                 <dd>É o acesso da API oficial do Portal Nacional: baixa as notas em lote, sem captcha e sem custo.</dd>
+                <dt>Preciso do certificado de cada empresa?</dt>
+                <dd>Não. Desde novembro de 2026 basta o certificado do escritório (e-CNPJ ou e-CPF do contador), para as empresas que deram procuração eletrônica ao escritório no e-CAC.</dd>
                 <dt>Quais notas vêm?</dt>
                 <dd>As emitidas pela empresa e as recebidas (em que ela é a tomadora), da competência escolhida. As canceladas ficam de fora.</dd>
                 <dt>O que tem no relatório de retenções?</dt>
@@ -61,6 +73,7 @@ export default async function Agendar({ searchParams }: { searchParams: Promise<
               <li>Apague o X dos serviços de que a empresa não precisa.</li>
             </ol>
             <a className="botao" href="/modelos/modelo_empresas_sefaz_pb.xlsx" download>Baixar a planilha modelo</a>
+            {ultima}
             <details className="duvidas">
               <summary>Dúvidas comuns</summary>
               <dl>
@@ -74,6 +87,8 @@ export default async function Agendar({ searchParams }: { searchParams: Promise<
                 <dd>Só é feito para empresas optantes pelo SIMEI.</dd>
                 <dt>E a planilha depois de enviar?</dt>
                 <dd>Apague-a do computador: ela contém as senhas. No portal elas ficam cifradas.</dd>
+                <dt>Como reaproveito a planilha do mês passado?</dt>
+                <dd>Use "Baixar a última planilha usada": vem com as mesmas empresas e serviços e a senha em branco, que o portal já tem guardada.</dd>
               </dl>
             </details>
           </section>

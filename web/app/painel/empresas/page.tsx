@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { contexto } from "@/lib/sessao";
 import { dataHoraBR, formatarDocumento, formatarIe } from "@/lib/documentos";
-import { certificadoDoCnpj, situacaoValidade } from "@/lib/nfse";
+import { certificadoDoCnpj, situacaoValidade, usaProcuracao } from "@/lib/nfse";
 import { nomeTipo } from "@/lib/xml";
 import { removerEmpresa } from "../actions";
 import BotaoRemover from "./BotaoRemover";
@@ -16,7 +16,7 @@ type EmpresaNfse = {
   organizacoes?: { nome: string } | null;
 };
 type Acesso = { id: string; login: string; atualizado_em: string };
-type Certificado = { org_id: string; cnpj: string; validade: string | null };
+type Certificado = { org_id: string; cnpj: string; validade: string | null; procurador: boolean };
 
 function Remover({ id, nome, origem }: { id: string; nome: string; origem: "sefaz" | "nfse" }) {
   return (
@@ -35,7 +35,7 @@ export default async function Empresas() {
     supabase.from("xml_empresas").select("*, xml_acessos(login), organizacoes(nome)").order("nome"),
     supabase.from("xml_acessos").select("id, login, atualizado_em").order("login"),
     supabase.from("xml_nfse_empresas").select("id, org_id, cnpj, codigo, nome, nome_fixo, tipos, organizacoes(nome)").order("nome"),
-    supabase.from("xml_nfse_certificados").select("org_id, cnpj, validade"),
+    supabase.from("xml_nfse_certificados").select("org_id, cnpj, validade, procurador"),
   ]);
   const empresas = (e ?? []) as unknown as Empresa[];
   const acessos = (a ?? []) as Acesso[];
@@ -101,8 +101,9 @@ export default async function Empresas() {
           <span className="suave">{empresasNfse.length} {empresasNfse.length === 1 ? "empresa" : "empresas"}</span>
         </div>
         <p className="suave">
-          O acesso é o certificado A1 da empresa, enviado em <Link href="/painel/certificados">Certificados</Link>. A coluna
-          Certificado mostra qual deles o robô vai usar; o da matriz serve às filiais.
+          O acesso é um certificado A1 enviado em <Link href="/painel/certificados">Certificados</Link>: o da empresa, o da
+          matriz (para as filiais) ou o do escritório (para as empresas que deram procuração no e-CAC). A coluna
+          Certificado mostra qual o robô vai usar.
         </p>
         {!empresasNfse.length ? (
           <p className="suave">Nenhuma empresa da NFS-e ainda. <Link href="/painel/agendar?origem=nfse">Agendar com a planilha da NFS-e</Link>.</p>
@@ -125,7 +126,7 @@ export default async function Empresas() {
                       <td>
                         {!cert || !s ? <Link href="/painel/certificados" className="status st-erro">Falta o certificado</Link> : (
                           <span className={`status ${s.classe}`}>
-                            {cert.cnpj === x.cnpj ? "Próprio" : "Da matriz"}{s.classe !== "st-ok" && `, ${s.nome.toLowerCase()}`}
+                            {cert.cnpj === x.cnpj ? "Próprio" : usaProcuracao(x.cnpj, cert) ? "Do escritório (procuração)" : "Da matriz"}{s.classe !== "st-ok" && `, ${s.nome.toLowerCase()}`}
                           </span>
                         )}
                       </td>

@@ -1,9 +1,10 @@
 import "server-only";
 import { X509Certificate } from "node:crypto";
 import { createSecureContext } from "node:tls";
-import { cnpjValido, soDigitos } from "@/lib/documentos";
+import { cnpjValido, cpfValido, soDigitos } from "@/lib/documentos";
 
-export type DadosCertificado = { cnpj: string; nome: string; validade: string | null };
+/** cnpj: do e-CNPJ; cpf: do e-CPF (contador, para o certificado do escritório com procuração). */
+export type DadosCertificado = { cnpj: string; cpf: string; nome: string; validade: string | null };
 
 export const TAMANHO_MAXIMO = 64 * 1024; // um A1 tem poucos KB
 
@@ -23,12 +24,14 @@ export function lerCertificado(pfx: Buffer, senha: string): DadosCertificado {
   }
   // o certificado do titular, dentro do contexto TLS criado com o .pfx
   const der = (contexto as unknown as { context?: { getCertificate?: () => Buffer | null } }).context?.getCertificate?.();
-  if (!der) return { cnpj: "", nome: "", validade: null };
+  if (!der) return { cnpj: "", cpf: "", nome: "", validade: null };
   const cert = new X509Certificate(der);
   const cn = /(?:^|\n)CN=([^\n]+)/.exec(cert.subject)?.[1]?.trim() ?? "";
   const [nome, final] = cn.includes(":") ? [cn.slice(0, cn.lastIndexOf(":")), cn.slice(cn.lastIndexOf(":") + 1)] : [cn, ""];
-  let cnpj = soDigitos(final);
-  if (!cnpjValido(cnpj)) cnpj = (cert.subject.match(/\d{14}/g) ?? []).find(cnpjValido) ?? "";
+  const doc = soDigitos(final);
+  let cnpj = cnpjValido(doc) ? doc : "";
+  if (!cnpj && doc.length !== 11) cnpj = (cert.subject.match(/\d{14}/g) ?? []).find(cnpjValido) ?? "";
+  const cpf = !cnpj && cpfValido(doc) ? doc : "";
   const validade = Number.isNaN(Date.parse(cert.validTo)) ? null : new Date(cert.validTo).toISOString();
-  return { cnpj, nome: nome.trim().slice(0, 120), validade };
+  return { cnpj, cpf, nome: nome.trim().slice(0, 120), validade };
 }

@@ -1,3 +1,4 @@
+import Icone from "@/components/Icones";
 import Link from "next/link";
 import AutoRefresh from "@/components/AutoRefresh";
 import { contexto } from "@/lib/sessao";
@@ -86,7 +87,12 @@ export default async function Agendamentos() {
                         {c.problemas > 0 && <span className="status st-erro" style={{ marginLeft: 6 }}>{c.problemas} com problema</span>}
                       </td>
                       <td>{c.xml}</td>
-                      <td><Link className="botao secundario pequeno" href={`/painel/agendamentos/${a.id}`}>Detalhes</Link></td>
+                      <td>
+                        <Link className="botao-icone discreto" href={`/painel/agendamentos/${a.id}`} data-dica="Detalhes"
+                          aria-label={`Detalhes do agendamento de ${competenciaBR(a.competencia)}`}>
+                          <Icone nome="info" tamanho={18} />
+                        </Link>
+                      </td>
                     </tr>
                   );
                 })}

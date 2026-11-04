@@ -1,16 +1,20 @@
 "use client";
 
-/** Pede confirmação antes de apagar a empresa (e a senha guardada). */
+import Icone from "@/components/Icones";
+
+/** Lixeira que pede confirmação antes de apagar (empresa, certificado). O nome aparece num balão. */
 export default function BotaoRemover({ apelido }: { apelido: string }) {
   return (
     <button
       type="submit"
-      className="perigo pequeno"
+      className="perigo botao-icone"
+      aria-label={`Excluir ${apelido}`}
+      data-dica="Excluir"
       onClick={(e) => {
-        if (!confirm(`Remover ${apelido} do cadastro?`)) e.preventDefault();
+        if (!confirm(`Excluir ${apelido} do cadastro?`)) e.preventDefault();
       }}
     >
-      Remover
+      <Icone nome="lixeira" tamanho={18} />
     </button>
   );
 }

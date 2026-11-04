@@ -878,7 +878,10 @@ def executar_nfse(cfg: dict, t: dict, privada, sessao_falsa=None) -> Resultado:
         msg = f"O certificado A1 venceu em {validade:%d/%m/%Y}. Envie o certificado novo em Certificados."
         return Resultado("certificado", msg, detalhes=todos("erro", "certificado vencido"))
     cnpj = t["cnpj"]
-    consulta = cnpj if (t.get("certificado_cnpj") or info["cnpj"]) not in ("", cnpj) else ""  # filial com o da matriz
+    # o CNPJ consultado vai sempre: com o certificado da própria empresa, o da matriz (filial) ou o do escritório
+    # (procuração eletrônica, desde 01/11/2026). Sem ele, o Portal Nacional passou a recusar a consulta.
+    consulta = cnpj
+    procuracao = bool(t.get("procurador"))
     try:
         with nfse.contexto_tls(pfx, senha) as ctx:
             cliente = nfse.ClienteADN(sessao_falsa or nfse.sessao_com_certificado(ctx), cnpj_consulta=consulta)
@@ -888,6 +891,11 @@ def executar_nfse(cfg: dict, t: dict, privada, sessao_falsa=None) -> Resultado:
     except nfse.ErroADN as e:
         texto = str(e)
         if "certificado" in texto.lower() and "E2214" not in texto:
+            if procuracao:  # certificado do escritório recusado para esta empresa: falta a procuração dela
+                texto = ("O Portal Nacional não aceitou o certificado do escritório para esta empresa. Confira se ela deu "
+                         "procuração eletrônica ao escritório no e-CAC (com acesso à NFS-e) e se a procuração está válida. "
+                         f"Resposta do portal: {texto}")
+                return Resultado("certificado", texto, detalhes=todos("erro", "sem procuração da empresa para o escritório"))
             return Resultado("certificado", texto, detalhes=todos("erro", "certificado recusado pelo Portal Nacional"))
         if "fora do ar" in texto or "limitando" in texto or "E2214" in texto:
             return Resultado("fora_do_ar", texto, detalhes=todos("erro", "Portal Nacional fora do ar; agende de novo mais tarde"))
@@ -1018,9 +1026,13 @@ def testar_nfse(cfg: dict, competencia: str | None):
         info = nfse.dados_do_certificado(pfx, senha)
     except nfse.ErroADN as e:
         sys.exit(str(e))
-    print(f"Certificado: {info['nome']}  CNPJ {info['cnpj'] or '(não encontrado)'}  válido até {info['validade']:%d/%m/%Y}")
-    cnpj = info["cnpj"] or nfse.so_digitos(input("CNPJ da empresa: "))
-    consulta = nfse.so_digitos(input("CNPJ de uma filial para consultar (Enter = o do certificado): "))
+    doc = f"CNPJ {info['cnpj']}" if info["cnpj"] else (f"CPF {info['cpf']}" if info["cpf"] else "(documento não encontrado)")
+    print(f"Certificado: {info['nome']}  {doc}  válido até {info['validade']:%d/%m/%Y}")
+    consulta = nfse.so_digitos(input("CNPJ a consultar: Enter = o do certificado; para uma filial ou uma empresa que deu "
+                                     "procuração ao escritório, digite o CNPJ dela: "))
+    cnpj = info["cnpj"]
+    if not (consulta or cnpj):
+        sys.exit("Certificado de pessoa física (e-CPF): informe o CNPJ da empresa a consultar.")
     try:
         inicio, _ = competencias(competencia)[0]
     except ValueError:
@@ -1030,8 +1042,8 @@ def testar_nfse(cfg: dict, competencia: str | None):
     log.info("NFS-e %s de %s: consultando o Portal Nacional...", f"{inicio:%m/%Y}", alvo)
     try:
         with nfse.contexto_tls(pfx, senha) as ctx:
-            cliente = nfse.ClienteADN(nfse.sessao_com_certificado(ctx), cnpj_consulta=consulta)
-            r = nfse.baixar_competencia(cliente, alvo, comp, cfg["pastas"]["destino"], info["nome"] or alvo)
+            cliente = nfse.ClienteADN(nfse.sessao_com_certificado(ctx), cnpj_consulta=alvo)
+            r = nfse.baixar_competencia(cliente, alvo, comp, cfg["pastas"]["destino"], (alvo if consulta else info["nome"]) or alvo)
     except nfse.ErroADN as e:
         sys.exit(f"Erro: {e}")
     log.info("%d documento(s) novo(s) recebido(s) do Portal Nacional", r.novos_documentos)

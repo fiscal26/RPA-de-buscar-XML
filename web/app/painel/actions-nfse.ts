@@ -6,13 +6,13 @@ import { clienteAdmin } from "@/lib/supabase/admin";
 import { lerPlanilhaNfse } from "@/lib/planilha-nfse";
 import { cifrarArquivo, cifrarSenha } from "@/lib/cripto";
 import { TAMANHO_MAXIMO, lerCertificado } from "@/lib/certificado";
-import { cnpjValido, formatarDocumento, soDigitos } from "@/lib/documentos";
+import { cnpjValido, cpfValido, formatarDocumento, soDigitos } from "@/lib/documentos";
 import { IDS_TIPOS_NFSE } from "@/lib/xml";
-import { certificadoDoCnpj } from "@/lib/nfse";
+import { certificadoDoCnpj, usaProcuracao } from "@/lib/nfse";
 import { corrigirNome } from "@/lib/nomes";
 
 /** Situação do certificado A1 de uma empresa: o dela, o da matriz (mesma raiz do CNPJ) ou nenhum. */
-export type SituacaoCertificado = "proprio" | "matriz" | "vencido" | "falta";
+export type SituacaoCertificado = "proprio" | "matriz" | "escritorio" | "vencido" | "falta";
 
 export type ItemNfse = {
   cnpj: string; nome: string; codigo: string; tipos: string[]; linha: number; cadastrada: boolean;
@@ -25,14 +25,15 @@ export type PreviaNfse = {
   nomeArquivo?: string; orgId?: string; competencia?: string; executarEm?: string | null;
 };
 
-type Certificado = { cnpj: string; validade: string | null };
+type Certificado = { cnpj: string; validade: string | null; procurador?: boolean };
 
 /** O certificado que o robô vai usar para o CNPJ (o mesmo critério de xml_nfse_pegar_lote). */
 function certificadoPara(cnpj: string, certificados: Certificado[]): SituacaoCertificado {
   const escolhido = certificadoDoCnpj(cnpj, certificados);
   if (!escolhido) return "falta";
   if (escolhido.validade && Date.parse(escolhido.validade) < Date.now()) return "vencido";
-  return escolhido.cnpj === cnpj ? "proprio" : "matriz";
+  if (escolhido.cnpj === cnpj) return "proprio";
+  return usaProcuracao(cnpj, escolhido) ? "escritorio" : "matriz";
 }
 
 function conferirCompetencia(valor: string): string | null {
@@ -73,7 +74,7 @@ export async function prepararAgendamentoNfse(_: PreviaNfse | undefined, form: F
 
   const [{ data: empresasCad }, { data: certificados }] = await Promise.all([
     supabase.from("xml_nfse_empresas").select("cnpj").eq("org_id", orgId),
-    supabase.from("xml_nfse_certificados").select("cnpj, validade").eq("org_id", orgId),
+    supabase.from("xml_nfse_certificados").select("cnpj, validade, procurador").eq("org_id", orgId),
   ]);
   const cadastradas = new Set((empresasCad ?? []).map((e) => e.cnpj as string));
   const itens: ItemNfse[] = leitura.empresas.map((e) => ({
@@ -82,9 +83,14 @@ export async function prepararAgendamentoNfse(_: PreviaNfse | undefined, form: F
   const avisos = [...leitura.avisos];
   const sem = itens.filter((i) => i.certificado === "falta" || i.certificado === "vencido");
   if (sem.length) {
-    avisos.push(`${sem.length} ${sem.length === 1 ? "empresa está" : "empresas estão"} sem certificado A1 válido (nem da matriz): `
+    avisos.push(`${sem.length} ${sem.length === 1 ? "empresa está" : "empresas estão"} sem certificado A1 válido (nem da matriz, nem do escritório): `
       + `${sem.slice(0, 5).map((i) => i.nome).join(", ")}${sem.length > 5 ? "…" : ""}. Envie em Certificados antes da hora marcada.`);
+  }  const porProcuracao = itens.filter((i) => i.certificado === "escritorio");
+  if (porProcuracao.length) {
+    avisos.push(`${porProcuracao.length} ${porProcuracao.length === 1 ? "empresa vai" : "empresas vão"} usar o certificado do escritório. `
+      + "Confira se cada uma deu procuração eletrônica ao escritório no e-CAC (com acesso à NFS-e).");
   }
+
   return { itens, erros: leitura.erros, avisos, nomeArquivo: arquivo.name, orgId, competencia, executarEm };
 }
 
@@ -160,9 +166,16 @@ export async function salvarCertificado(_: EstadoCertificado, form: FormData): P
   } catch (e) {
     return { erro: (e as Error).message };
   }
+  // certificado do escritório (procuração eletrônica): e-CNPJ do escritório ou e-CPF do contador
+  const procurador = form.get("procurador") === "on";
   const informado = soDigitos(String(form.get("cnpj") ?? ""));
-  const cnpj = dados.cnpj || informado;
-  if (!cnpjValido(cnpj)) return { erro: "Não achei o CNPJ no certificado. Informe o CNPJ da empresa no campo abaixo do arquivo." };
+  const cnpj = dados.cnpj || dados.cpf || informado;
+  if (dados.cpf && !procurador) {
+    return { erro: "Este é um e-CPF. Ele só serve como certificado do escritório: marque \"Certificado do escritório (procuração)\"." };
+  }
+  if (!(cnpjValido(cnpj) || (procurador && cpfValido(cnpj)))) {
+    return { erro: "Não achei o CNPJ no certificado. Informe o CNPJ da empresa no campo abaixo do arquivo." };
+  }
   if (dados.cnpj && informado && informado !== dados.cnpj) {
     return { erro: `Este certificado é do CNPJ ${formatarDocumento(dados.cnpj)}, não do ${formatarDocumento(informado)}.` };
   }
@@ -177,12 +190,13 @@ export async function salvarCertificado(_: EstadoCertificado, form: FormData): P
     return { erro: (e as Error).message };
   }
   const { error } = await clienteAdmin().from("xml_nfse_certificados").upsert({
-    org_id: orgId, cnpj, nome: dados.nome, validade: dados.validade, pfx_cifrado: pfxCifrado, senha_cifrada: senhaCifrada,
+    org_id: orgId, cnpj, nome: dados.nome, validade: dados.validade, pfx_cifrado: pfxCifrado, senha_cifrada: senhaCifrada, procurador,
     criado_por: user.id, atualizado_em: new Date().toISOString(),
   }, { onConflict: "org_id,cnpj" });
   if (error) return { erro: `Não consegui salvar o certificado: ${error.message}` };
   revalidatePath("/painel/certificados");
-  return { ok: `Certificado de ${dados.nome || formatarDocumento(cnpj)} (${formatarDocumento(cnpj)}) salvo.` };
+  return { ok: `Certificado ${procurador ? "do escritório " : ""}de ${dados.nome || formatarDocumento(cnpj)} (${formatarDocumento(cnpj)}) salvo.`
+    + (procurador ? " Ele vale para todas as empresas que deram procuração ao escritório no e-CAC." : "") };
 }
 
 export async function removerCertificado(form: FormData) {

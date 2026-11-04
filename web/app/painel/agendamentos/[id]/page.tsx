@@ -56,6 +56,11 @@ export default async function DetalheAgendamento({ params, searchParams }: {
             Agendado em {dataHoraBR(ag.criado_em)}, início {dataHoraBR(ag.executar_em)}{ag.nome_arquivo && `, ${ag.nome_arquivo}`}
           </p>
         </div>
+        <div className="acoes">
+        <a className="botao secundario" href={`/painel/agendamentos/${id}/planilha`} download
+          title="As mesmas empresas e serviços, com a senha em branco (o portal já tem a senha guardada)">
+          Baixar a planilha
+        </a>
         {pendentes > 0 && (
           <form action={cancelar}>
             <button type="submit" className="perigo">
@@ -63,6 +68,7 @@ export default async function DetalheAgendamento({ params, searchParams }: {
             </button>
           </form>
         )}
+        </div>
       </div>
       <AutoRefresh ativo={abertas > 0} segundos={5} />
 

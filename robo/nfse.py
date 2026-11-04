@@ -71,7 +71,8 @@ def contexto_tls(pfx: bytes, senha: str):
 
 
 def dados_do_certificado(pfx: bytes, senha: str) -> dict:
-    """CNPJ, nome e validade do e-CNPJ (o CNPJ fica no fim do nome: "EMPRESA LTDA:12345678000199")."""
+    """CNPJ (e-CNPJ) ou CPF (e-CPF do contador), nome e validade. O documento fica no fim do nome:
+    "EMPRESA LTDA:12345678000199" ou "FULANO DE TAL:12345678909"."""
     from cryptography.hazmat.primitives.serialization import pkcs12
     from cryptography.x509.oid import NameOID
 
@@ -89,7 +90,8 @@ def dados_do_certificado(pfx: bytes, senha: str) -> dict:
         validade = cert.not_valid_after_utc
     except AttributeError:  # cryptography antiga
         validade = cert.not_valid_after
-    return {"nome": nome.strip(), "cnpj": cnpj if len(cnpj) == 14 else "", "validade": validade}
+    return {"nome": nome.strip(), "cnpj": cnpj if len(cnpj) == 14 else "", "cpf": cnpj if len(cnpj) == 11 else "",
+            "validade": validade}
 
 
 def sessao_com_certificado(ctx: ssl.SSLContext):

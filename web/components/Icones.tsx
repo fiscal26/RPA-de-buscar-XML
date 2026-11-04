@@ -9,6 +9,8 @@ const caminhos: Record<string, React.ReactNode> = {
   visto: <><circle cx="12" cy="12" r="9" /><path d="m8 12.3 2.7 2.7L16 9.7" /></>,
   certificado: <><rect x="3" y="4" width="18" height="12" rx="2" /><path d="M7 8.5h10M7 12h5" /><circle cx="16.5" cy="16.5" r="2.5" /><path d="m15 18.5-1 3.5 2.5-1.2L19 22l-1-3.5" /></>,
   mei: <><path d="M3 20h18" /><path d="M5 16l4.5-5 3.5 3 6-7" /><path d="M15 7h4v4" /></>,
+  lixeira: <><path d="M4 7h16M10 11v6M14 11v6" /><path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12" /><path d="M9 7V4.5A1.5 1.5 0 0 1 10.5 3h3A1.5 1.5 0 0 1 15 4.5V7" /></>,
+  info: <><circle cx="12" cy="12" r="9" /><path d="M12 11v5.5" /><circle cx="12" cy="7.75" r="0.6" fill="currentColor" /></>,
   seta: <path d="m9 6 6 6-6 6" />,
   abaixo: <path d="m6 9 6 6 6-6" />,
   acima: <path d="m6 15 6-6 6 6" />,

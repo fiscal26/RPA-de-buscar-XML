@@ -1,12 +1,18 @@
 // Regras da NFS-e que o portal e a fila do banco (xml_nfse_pegar_lote) usam do mesmo jeito.
 
-export type CertificadoResumo = { cnpj: string; validade: string | null; org_id?: string };
+export type CertificadoResumo = { cnpj: string; validade: string | null; org_id?: string; procurador?: boolean };
 
-/** O certificado que o robô usa para o CNPJ: o próprio, senão o da matriz (0001), senão outro da mesma raiz. */
+/** O certificado que o robô usa para o CNPJ: o próprio, senão o da matriz (0001), senão outro da mesma raiz,
+ *  senão o do escritório (procuração eletrônica, desde 01/11/2026). Mesma ordem de xml_nfse_pegar_lote. */
 export function certificadoDoCnpj<T extends CertificadoResumo>(cnpj: string, certificados: T[]): T | undefined {
-  const daRaiz = certificados.filter((c) => c.cnpj.slice(0, 8) === cnpj.slice(0, 8));
-  return daRaiz.find((c) => c.cnpj === cnpj) ?? daRaiz.find((c) => c.cnpj.slice(8, 12) === "0001") ?? daRaiz[0];
+  const daRaiz = certificados.filter((c) => c.cnpj.length === 14 && c.cnpj.slice(0, 8) === cnpj.slice(0, 8));
+  return daRaiz.find((c) => c.cnpj === cnpj) ?? daRaiz.find((c) => c.cnpj.slice(8, 12) === "0001") ?? daRaiz[0]
+    ?? certificados.find((c) => c.procurador);
 }
+
+/** O certificado escolhido é o do escritório (e não da própria empresa nem da matriz)? */
+export const usaProcuracao = (cnpj: string, c: CertificadoResumo) =>
+  c.cnpj !== cnpj && !(c.cnpj.length === 14 && c.cnpj.slice(0, 8) === cnpj.slice(0, 8));
 
 const DIA = 86_400_000;
 

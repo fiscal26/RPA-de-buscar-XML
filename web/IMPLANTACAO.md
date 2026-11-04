@@ -192,6 +192,10 @@ e sem captcha. O acesso é o **certificado digital A1 (e-CNPJ)** da empresa; o d
       `NFS-e Recebidas` (XML e PDF) e o `Retenções NFS-e AAAA-MM.xlsx`.
 5. **Teste sem o portal:** `robo\testar_nfse.bat` (pede o .pfx e a senha na hora; nada fica gravado).
 
+**Procuração (desde 01/11/2026):** em Certificados, marque "Certificado do escritório (procuração)" ao enviar o
+e-CNPJ do escritório ou o e-CPF do contador. Ele vale para todas as empresas que deram procuração eletrônica ao
+escritório no e-CAC; as empresas com certificado próprio continuam usando o delas. Rode o `supabase/schema.sql` de novo.
+
 O robô guarda no PC uma cópia das notas já recebidas (`robo/nfse_cache`, fora do git): a próxima busca traz só o
 que for novo. Endereços e regras da API: `robo/NFSE.md`.
 
