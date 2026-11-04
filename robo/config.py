@@ -89,6 +89,9 @@ PADRAO = {
         "destino": "",
         # Pacotes de diagnóstico. Vazio = <destino>/_diagnostico
         "diagnostico": "",
+        # Robô que atende vários escritórios (VPS): uma pasta por escritório dentro do destino,
+        # <destino>/<Escritório>/Arquivos baixados/... (cada escritório recebe só a pasta dele no Drive).
+        "por_escritorio": False,
     },
     "chaves": {
         # Chave privada que abre as senhas do ATF cifradas pelo portal (gerada com --gerar-chaves)

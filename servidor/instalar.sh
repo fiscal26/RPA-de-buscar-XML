@@ -6,7 +6,8 @@
 #   /home/lotivisse/xml/venv           Python do robô
 #   /home/lotivisse/xml/chrome-perfil  perfil do Chrome deste robô
 #   /home/lotivisse/xml/chaves         chave privada (abre as senhas do ATF e os certificados A1)
-#   /home/lotivisse/xml/arquivos       XML, PDF e relatórios baixados (Arquivos baixados/<ID>-<Nome>/<AAAA-MM>/...)
+#   /home/lotivisse/xml/arquivos       XML, PDF e relatórios, uma pasta por escritório:
+#                                      <Escritório>/Arquivos baixados/<ID>-<Nome>/<AAAA-MM>/...
 #   /etc/lotivisse/xml.env             tela :11, Chrome 9223, visualização 5901
 #
 # Serviços: os mesmos modelos do robô de certidões (lotivisse-tela@xml, lotivisse-chrome@xml, lotivisse-robo@xml).
@@ -110,7 +111,7 @@ if not filas or any(f not in ("sefaz", "nfse") for f in filas):
     sys.exit("Filas: use sefaz, nfse ou sefaz,nfse (veio: " + os.environ["FILAS"] + ").")
 cfg["portal"]["filas"] = filas
 cfg.setdefault("chrome", {}).update(porta=int(os.environ["PORTA"]), pasta_downloads=os.environ["DIR"] + "/Downloads", fechar_abas=True)
-cfg.setdefault("pastas", {}).update(destino=os.environ["ARQUIVOS"])
+cfg.setdefault("pastas", {}).update(destino=os.environ["ARQUIVOS"], por_escritorio=True)  # uma pasta por escritório
 cfg.setdefault("chaves", {}).update(privada=os.environ["CHAVES"] + "/robo_privada.pem")
 json.dump(cfg, open(caminho, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
 PY

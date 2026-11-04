@@ -93,6 +93,7 @@ class Trabalho:
     fim: date
     cnpj: str = ""
     codigo: str = ""
+    destino: str = ""  # pasta dos arquivos desta empresa (a do escritório dela, no robô da VPS)
 
     def __post_init__(self):
         self.tipos = arquivos.expandir_tipos(self.tipos)  # "cte" = CT-e Remetente + CT-e Destinatario
@@ -100,6 +101,16 @@ class Trabalho:
     @property
     def rotulo(self) -> str:
         return f"{self.nome} (IE {planilha.formatar_ie(self.ie)})"
+
+
+def destino_da_tarefa(cfg: dict, tarefa: dict) -> str:
+    """Pasta dos arquivos de uma tarefa do portal: a do escritório dela, quando o robô separa por escritório."""
+    pastas = cfg["pastas"]
+    escritorio = tarefa.get("org_nome") or ""
+    if pastas.get("por_escritorio") and not escritorio:
+        log.warning("O portal não informou o escritório da tarefa (rode o schema.sql de novo no Supabase); "
+                    "os arquivos vão para a pasta principal.")
+    return arquivos.destino_do_escritorio(pastas["destino"], escritorio, bool(pastas.get("por_escritorio")))
 
 
 class Executor:
@@ -217,18 +228,18 @@ class Executor:
                     extra = {}
                     if tipo == "mei":  # meses do ano que ainda faltam (cliente que chega sem acompanhamento)
                         extra["periodos_extra"] = tuple(arquivos.periodos_mei(
-                            self.cfg["pastas"]["destino"], t.nome, t.ie, t.codigo, t.inicio, self.cfg["mei"]["refazer_ano"]))
+                            self._destino(t), t.nome, t.ie, t.codigo, t.inicio, self.cfg["mei"]["refazer_ano"]))
                     self._progresso(t, tipo, "andamento", "fazendo no ATF")
                     e = emissoes[(t.ie, tipo)] = com_sessao(atf.emitir, tipo, t.ie, t.inicio, t.fim, nome, **extra)
                     if e.arquivos:
-                        arquivos.salvar_documentos(e.arquivos, self.cfg["pastas"]["destino"], t.nome, t.ie, tipo,
+                        arquivos.salvar_documentos(e.arquivos, self._destino(t), t.nome, t.ie, tipo,
                                                    f"{t.inicio:%Y-%m}", t.codigo)
                     if e.dados:  # Dossiê MEI: entradas e saídas, notas e cartão acumulados no ano
                         for mes, dados in sorted(e.dados.pop("outros_meses", {}).items()):
                             dados.setdefault("inicio_atividade", e.dados.get("inicio_atividade"))
-                            arquivos.salvar_faturamento_mei(self.cfg["pastas"]["destino"], t.nome, t.ie, mes, dados, t.codigo)
+                            arquivos.salvar_faturamento_mei(self._destino(t), t.nome, t.ie, mes, dados, t.codigo)
                         e.dados["resumo"] = arquivos.salvar_faturamento_mei(
-                            self.cfg["pastas"]["destino"], t.nome, t.ie, f"{t.inicio:%Y-%m}", e.dados, t.codigo)
+                            self._destino(t), t.nome, t.ie, f"{t.inicio:%Y-%m}", e.dados, t.codigo)
                         if self.ao_mei is not None:
                             try:
                                 self.ao_mei(t, e.dados["resumo"])
@@ -350,11 +361,15 @@ class Executor:
             p.senha = ""
         return saida, tudo
 
+    def _destino(self, t: Trabalho) -> str:
+        return t.destino or self.cfg["pastas"]["destino"]
+
     def _salvar_recolha(self, trabalhos: list[Trabalho], alvos, recolha: Recolha, salvar_empresas: bool = True):
         """Distribui os arquivos baixados pelo conteúdo, cada um INTEIRO (o ZIP continua ZIP). Nada se
         perde: arquivo de empresa fora da rodada vai para _sem_empresa e o que não é XML/ZIP vai para
         _nao_identificados."""
-        destino = self.cfg["pastas"]["destino"]
+        # uma rodada é de um login só, e o login é de um escritório: a pasta é a dele
+        destino = self._destino(trabalhos[0]) if trabalhos else self.cfg["pastas"]["destino"]
         por_destino, sem_empresa, brutos = arquivos.distribuir_arquivos(recolha.arquivos, alvos)
         if brutos:
             for caminho, (nome, dados) in zip(arquivos.salvar_nao_identificados(brutos, destino), brutos):
@@ -368,7 +383,7 @@ class Executor:
             for t in trabalhos:
                 for tipo in t.tipos:
                     if por_destino.get((t.ie, tipo)):
-                        arquivos.salvar_originais(por_destino[(t.ie, tipo)], destino, t.nome, t.ie, tipo,
+                        arquivos.salvar_originais(por_destino[(t.ie, tipo)], self._destino(t), t.nome, t.ie, tipo,
                                                   f"{t.inicio:%Y-%m}", t.codigo)
         return por_destino
 
@@ -415,7 +430,7 @@ class Executor:
                 continue
             envio = envios.get((t.ie, tipo))
             baixados = por_destino.get((t.ie, tipo), [])
-            r = arquivos.salvar_originais(baixados, self.cfg["pastas"]["destino"], t.nome, t.ie, tipo,
+            r = arquivos.salvar_originais(baixados, self._destino(t), t.nome, t.ie, tipo,
                                           f"{t.inicio:%Y-%m}", t.codigo) if baixados else None
             vazio = r is None
             # todas as respostas chegaram e nenhuma trouxe arquivo desta empresa/tipo: sem notas no período
@@ -445,7 +460,7 @@ class Executor:
             else:
                 faltando.append(nome)
 
-        pasta = arquivos.pasta_empresa(self.cfg["pastas"]["destino"], t.nome, t.ie, t.codigo).name
+        pasta = arquivos.pasta_empresa(self._destino(t), t.nome, t.ie, t.codigo).name
         if sem_notas:
             partes.append("sem notas em " + ", ".join(sem_notas))
         if faltando and not final:
@@ -727,7 +742,8 @@ class Robo:
             return
         trabalhos = [Trabalho(ie=t["ie"], nome=t["nome"], login=login, senha=senha, tipos=t["tipos"],
                               inicio=date.fromisoformat(t["data_inicio"]), fim=date.fromisoformat(t["data_fim"]),
-                              cnpj=t.get("cnpj") or "", codigo=t.get("codigo") or "") for t in lote]
+                              cnpj=t.get("cnpj") or "", codigo=t.get("codigo") or "",
+                              destino=destino_da_tarefa(self.cfg, t)) for t in lote]
         del senha
         self.em_curso = {id(tr): (t["id"], {}) for tr, t in zip(trabalhos, lote)}
         # mesma competência na rodada (o banco pode juntar agendamentos diferentes do mesmo login)
@@ -845,7 +861,7 @@ def executar_nfse(cfg: dict, t: dict, privada, sessao_falsa=None) -> Resultado:
     try:
         with nfse.contexto_tls(pfx, senha) as ctx:
             cliente = nfse.ClienteADN(sessao_falsa or nfse.sessao_com_certificado(ctx), cnpj_consulta=consulta)
-            r = nfse.baixar_competencia(cliente, cnpj, competencia, cfg["pastas"]["destino"], t["nome"], t.get("codigo") or "",
+            r = nfse.baixar_competencia(cliente, cnpj, competencia, destino_da_tarefa(cfg, t), t["nome"], t.get("codigo") or "",
                                         pdf="nfse_pdf" in tipos, com_emitidas="nfse_emitidas" in tipos,
                                         com_recebidas="nfse_recebidas" in tipos, relatorio="nfse_retencoes" in tipos)
     except nfse.ErroADN as e:
