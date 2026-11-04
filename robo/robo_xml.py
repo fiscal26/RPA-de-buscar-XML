@@ -32,6 +32,7 @@ import re
 import signal
 import socket
 import sys
+import threading
 import time
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
@@ -675,6 +676,7 @@ class Robo:
         if "sefaz" in filas:
             self.enviar_historico_mei()
         self.portal.devolver_tarefas(self.nome)
+        threading.Thread(target=self._batimento, name="sinal-de-vida", daemon=True).start()
         while not self.parar:
             try:
                 self._sinal()
@@ -725,6 +727,25 @@ class Robo:
                 for t in lote:
                     self._finalizar(t, Resultado("erro", FALHA_NO_RETORNO))
             self.tarefas_atuais = []
+
+    def _batimento(self):
+        """Sinal de vida ao portal a cada 30 s, também no meio de uma rodada: esperando o ATF entregar os XML em
+        Minhas Mensagens, a rodada leva muitos minutos e o portal mostraria o robô como desligado."""
+        falhou = False
+        while not self.parar:
+            try:
+                self._sinal(forcar=True)
+                if falhou:
+                    log.info("Sinal de vida ao portal voltou.")
+                falhou = False
+            except Exception as e:
+                if not falhou:
+                    log.warning("Sinal de vida ao portal falhou (o robô continua trabalhando): %s", e)
+                falhou = True
+            for _ in range(30):
+                if self.parar:
+                    return
+                time.sleep(1)
 
     def _sinal(self, forcar=False):
         if forcar or time.time() - self.ultimo_sinal > 30:
