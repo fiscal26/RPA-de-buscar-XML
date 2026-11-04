@@ -756,3 +756,6 @@ td.nome-empresa { min-width: 10rem; }
 .rodape-assuntos { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 0.4rem 1.5rem; margin-bottom: 0.75rem; }
 .rodape-assuntos a { color: var(--forte); text-decoration: none; font-weight: 500; }
 .rodape-assuntos a:hover { text-decoration: underline; }
+
+/* Agendar: link da última planilha usada, logo abaixo do botão da planilha modelo */
+.ultima-planilha { margin: 0.75rem 0 0; font-size: 0.92rem; }

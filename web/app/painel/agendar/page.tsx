@@ -1,12 +1,21 @@
 import Link from "next/link";
 import { contexto } from "@/lib/sessao";
-import { mesAnterior } from "@/lib/documentos";
+import { competenciaBR, mesAnterior } from "@/lib/documentos";
 import FormAgendamento from "../FormAgendamento";
 import FormAgendamentoNfse from "../FormAgendamentoNfse";
 
 export default async function Agendar({ searchParams }: { searchParams: Promise<{ origem?: string }> }) {
   const nfse = (await searchParams).origem === "nfse";
   const { supabase, admin } = await contexto();
+  // última planilha usada (desta origem): o link só aparece quando já houve um agendamento
+  const { data: ultimo } = await supabase.from("xml_agendamentos").select("id, competencia")
+    .eq("origem", nfse ? "nfse" : "sefaz").order("criado_em", { ascending: false }).limit(1).maybeSingle();
+  const ultima = ultimo && (
+    <p className="ultima-planilha">
+      <a href={`/painel/agendamentos/${ultimo.id}/planilha`} download>Baixar a última planilha usada</a>{" "}
+      <span className="suave">(competência {competenciaBR(ultimo.competencia)}, sem as senhas)</span>
+    </p>
+  );
   const organizacoes = admin
     ? (await supabase.from("organizacoes").select("id, nome").eq("ativo", true).order("nome")).data ?? []
     : undefined;
@@ -33,6 +42,7 @@ export default async function Agendar({ searchParams }: { searchParams: Promise<
               <li>Apague o X dos serviços de que a empresa não precisa.</li>
             </ol>
             <a className="botao" href="/modelos/modelo_empresas_nfse.xlsx" download>Baixar a planilha modelo da NFS-e</a>
+            {ultima}
             <details className="duvidas">
               <summary>Dúvidas comuns</summary>
               <dl>
@@ -61,6 +71,7 @@ export default async function Agendar({ searchParams }: { searchParams: Promise<
               <li>Apague o X dos serviços de que a empresa não precisa.</li>
             </ol>
             <a className="botao" href="/modelos/modelo_empresas_sefaz_pb.xlsx" download>Baixar a planilha modelo</a>
+            {ultima}
             <details className="duvidas">
               <summary>Dúvidas comuns</summary>
               <dl>
@@ -74,6 +85,8 @@ export default async function Agendar({ searchParams }: { searchParams: Promise<
                 <dd>Só é feito para empresas optantes pelo SIMEI.</dd>
                 <dt>E a planilha depois de enviar?</dt>
                 <dd>Apague-a do computador: ela contém as senhas. No portal elas ficam cifradas.</dd>
+                <dt>Como reaproveito a planilha do mês passado?</dt>
+                <dd>Use "Baixar a última planilha usada": vem com as mesmas empresas e serviços e a senha em branco, que o portal já tem guardada.</dd>
               </dl>
             </details>
           </section>
