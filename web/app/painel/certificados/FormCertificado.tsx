@@ -36,6 +36,13 @@ export default function FormCertificado({ organizacoes }: { organizacoes?: Org[]
           <input id="c-cnpj" name="cnpj" type="text" inputMode="numeric" autoComplete="off" />
         </div>
       </div>
+      <label className="caixa-opcao">
+        <input type="checkbox" name="procurador" />
+        <span>
+          <b>Certificado do escritório (procuração).</b> O e-CNPJ do escritório ou o e-CPF do contador. Serve para todas as
+          empresas que deram procuração eletrônica ao escritório no e-CAC, sem precisar do certificado de cada uma.
+        </span>
+      </label>
       <button type="submit" disabled={enviando}>{enviando ? "Conferindo…" : "Salvar certificado"}</button>
     </form>
   );

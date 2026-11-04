@@ -11,6 +11,7 @@ type OrgOpcao = { id: string; nome: string };
 const CERTIFICADO: Record<SituacaoCertificado, { nome: string; classe: string }> = {
   proprio: { nome: "Próprio", classe: "st-ok" },
   matriz: { nome: "Da matriz", classe: "st-ok" },
+  escritorio: { nome: "Do escritório (procuração)", classe: "st-ok" },
   vencido: { nome: "Vencido", classe: "st-erro" },
   falta: { nome: "Falta", classe: "st-erro" },
 };

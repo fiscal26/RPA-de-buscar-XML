@@ -263,7 +263,8 @@ def test_tarefa_do_portal_baixa_e_conta_por_servico(chaves, cfg_nfse):
     assert r.detalhes["nfse_recebidas"]["arquivos"] == 1 and r.detalhes["nfse_pdf"]["arquivos"] == 3
     assert r.detalhes["nfse_retencoes"]["situacao"] == "concluido"
     assert "1 cancelada(s) fora" in r.mensagem
-    assert all("cnpjConsulta" not in p[1] for p in portal.pedidos)
+    # o CNPJ consultado vai sempre (o Portal Nacional passou a recusar a consulta sem ele)
+    assert all(p[1].get("cnpjConsulta") == DONO for p in portal.pedidos if "/DFe/" in p[0])
 
 
 def test_filial_usa_o_certificado_da_matriz_com_cnpj_consulta(chaves, cfg_nfse):
@@ -311,3 +312,27 @@ def test_tarefa_vai_para_a_pasta_do_escritorio(chaves, cfg_nfse, tmp_path):
     r = robo_xml.executar_nfse(cfg_nfse, t, chaves[0], sessao_falsa=PortalFalso(documentos_exemplo()))
     assert r.qtd_xml == 2
     assert (tmp_path / "destino" / "Contábil Sousa" / "Arquivos baixados" / "7-Lotivisse" / "2026-09" / nfse.PASTA_EMITIDAS).is_dir()
+
+
+def test_certificado_do_escritorio_por_procuracao(chaves, cfg_nfse):
+    """Desde 01/11/2026: o e-CPF do contador (ou o e-CNPJ do escritório) baixa as notas da empresa que deu
+    procuração ao escritório, informando o CNPJ dela."""
+    import robo_xml
+    contador = "12345678909"
+    t = tarefa(chaves, ["nfse_emitidas"], cnpj=DONO, certificado_cnpj=contador)
+    t["procurador"] = True
+    portal = PortalFalso(documentos_exemplo())
+    r = robo_xml.executar_nfse(cfg_nfse, t, chaves[0], sessao_falsa=portal)
+    assert r.status == "concluido" and r.qtd_xml == 2
+    assert portal.pedidos[0][1]["cnpjConsulta"] == DONO
+    assert nfse.dados_do_certificado(_pfx(f"FULANO CONTADOR:{contador}"), "1234")["cpf"] == contador
+
+
+def test_empresa_sem_procuracao_para_o_escritorio(chaves, cfg_nfse):
+    import robo_xml
+    t = tarefa(chaves, ["nfse_emitidas"], cnpj=DONO, certificado_cnpj="12345678909")
+    t["procurador"] = True
+    recusa = PortalFalso([], falhas=[Resposta(403, {"Erros": [{"Codigo": "E0001", "Descricao": "Sem permissão"}]})])
+    r = robo_xml.executar_nfse(cfg_nfse, t, chaves[0], sessao_falsa=recusa)
+    assert r.status == "certificado" and "procuração" in r.mensagem
+    assert r.detalhes["nfse_emitidas"]["mensagem"] == "sem procuração da empresa para o escritório"

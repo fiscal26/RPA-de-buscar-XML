@@ -56,3 +56,19 @@ O robô terá implementação própria; aqui ficam só os endereços e as regras
 - Portal da NFS-e, documentação técnica (leiaute do XML, manuais da API e do ADN): https://www.gov.br/nfse
   → *Biblioteca* → *Documentação técnica*.
 - Ambiente de testes (produção restrita) do ADN: `https://adn.producaorestrita.nfse.gov.br` (mesmos caminhos).
+
+
+## Procuração eletrônica (desde 01/11/2026)
+
+O Portal da NFS-e anunciou que, a partir de 01/11/2026, a representação por terceiros vale também para as APIs de
+Emissão e Distribuição, com a procuração eletrônica cadastrada na Receita (e-CAC) ou com os vínculos do CNPJ.
+
+- O robô usa um certificado por empresa nesta ordem: o da própria empresa, o da matriz (mesma raiz do CNPJ) e, se não
+  houver, o **certificado do escritório** (`xml_nfse_certificados.procurador`): o e-CNPJ do escritório ou o e-CPF do
+  contador.
+- A consulta sempre informa `cnpjConsulta=<CNPJ da empresa>`. Há relato (03/11/2026) de que o ADN passou a recusar
+  a consulta sem esse parâmetro.
+- Se o ADN recusar o certificado do escritório para uma empresa (401/403), a tarefa fica como "certificado" com a
+  mensagem de que falta a procuração da empresa no e-CAC.
+- **Conferir no teste real:** a documentação oficial (adn.nfse.gov.br/contribuintes/docs) não pôde ser lida daqui.
+  Confirmar o nome do parâmetro, o tipo de procuração exigido (serviço da NFS-e no e-CAC) e se o e-CPF é aceito.

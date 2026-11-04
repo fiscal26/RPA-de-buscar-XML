@@ -23,7 +23,7 @@ const PERGUNTAS: [string, string][] = [
   ["Funciona em quais estados?",
     "As notas de serviço (NFS-e) funcionam em todo o Brasil pelo Portal Nacional, nos municípios que usam o padrão nacional. As notas de produto e os documentos da SEFAZ funcionam hoje na Paraíba (ATF); novos estados e prefeituras com portal próprio entram conforme a demanda dos escritórios."],
   ["Como o robô baixa as notas de serviço (NFS-e)?",
-    "Pela API oficial do Portal Nacional da NFS-e, com o certificado digital A1 (e-CNPJ) da empresa. Vêm as notas emitidas e as recebidas da competência, sem captcha e sem as canceladas. O certificado da matriz também serve às filiais."],
+    "Pela API oficial do Portal Nacional da NFS-e, com um certificado digital A1: o do escritório, que vale para todas as empresas que deram procuração eletrônica ao escritório no e-CAC, ou o da própria empresa. Vêm as notas emitidas e as recebidas da competência, sem captcha e sem as canceladas."],
   ["O que tem no relatório de retenções?",
     "Uma planilha por competência com uma linha por nota: ISS retido, IRRF, PIS, COFINS, CSLL e INSS, total retido e valor líquido, e os totais das notas emitidas (o que os clientes retiveram) e das recebidas (o que a empresa reteve e precisa recolher)."],
   ["A senha do contador e o certificado ficam seguros?",
@@ -97,7 +97,7 @@ export default function Inicio() {
               <span className="status st-ok">Disponível</span>
               <h3>Brasil, NFS-e pelo Portal Nacional</h3>
               <p>NFS-e emitidas e recebidas em XML e PDF, com o relatório de retenções, nos municípios do padrão nacional.
-                O acesso é o certificado A1 da empresa (o da matriz serve às filiais).</p>
+                O acesso é o certificado do escritório, com a procuração das empresas no e-CAC, ou o A1 de cada empresa.</p>
             </div>
             <div className="cobertura-item disponivel">
               <span className="status st-ok">Disponível</span>

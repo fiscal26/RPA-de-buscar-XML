@@ -37,7 +37,7 @@ export default async function Agendar({ searchParams }: { searchParams: Promise<
           <section className="cartao">
             <h2 className="titulo-cartao">Antes de enviar</h2>
             <ol className="preparo">
-              <li>Envie o certificado A1 de cada empresa em <Link href="/painel/certificados">Certificados</Link> (o da matriz serve às filiais).</li>
+              <li>Em <Link href="/painel/certificados">Certificados</Link>, envie o certificado do escritório (vale para as empresas que deram procuração no e-CAC) ou o A1 de cada empresa (o da matriz serve às filiais).</li>
               <li>Baixe a planilha modelo da NFS-e e preencha uma empresa por linha: CNPJ e nome.</li>
               <li>Apague o X dos serviços de que a empresa não precisa.</li>
             </ol>
@@ -48,6 +48,8 @@ export default async function Agendar({ searchParams }: { searchParams: Promise<
               <dl>
                 <dt>Por que o certificado?</dt>
                 <dd>É o acesso da API oficial do Portal Nacional: baixa as notas em lote, sem captcha e sem custo.</dd>
+                <dt>Preciso do certificado de cada empresa?</dt>
+                <dd>Não. Desde novembro de 2026 basta o certificado do escritório (e-CNPJ ou e-CPF do contador), para as empresas que deram procuração eletrônica ao escritório no e-CAC.</dd>
                 <dt>Quais notas vêm?</dt>
                 <dd>As emitidas pela empresa e as recebidas (em que ela é a tomadora), da competência escolhida. As canceladas ficam de fora.</dd>
                 <dt>O que tem no relatório de retenções?</dt>
