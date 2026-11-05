@@ -240,6 +240,8 @@ create table if not exists public.xml_nfse_empresas (
 alter table public.xml_agendamentos add column if not exists origem text not null default 'sefaz';
 alter table public.xml_agendamentos drop constraint if exists xml_agendamentos_origem_check;
 alter table public.xml_agendamentos add constraint xml_agendamentos_origem_check check (origem in ('sefaz', 'nfse'));
+-- NFS-e: certificado escolhido no agendamento (vazio = automático: o da empresa, o da matriz ou o do escritório)
+alter table public.xml_agendamentos add column if not exists certificado_id uuid references public.xml_nfse_certificados(id) on delete set null;
 alter table public.xml_tarefas add column if not exists nfse_empresa_id uuid references public.xml_nfse_empresas(id) on delete set null;
 create index if not exists xml_tarefas_nfse_empresa_idx on public.xml_tarefas (nfse_empresa_id);
 -- situação nova: certificado A1 ausente, vencido ou recusado
@@ -345,14 +347,17 @@ begin
 
   -- sem certificado para o CNPJ, nem para a matriz, nem do escritório (procuração)
   update public.xml_tarefas t set status = 'certificado', concluido_em = now(),
-         mensagem = 'Sem certificado A1 para este CNPJ (nem da matriz, nem do escritório com procuração). Cadastre em Certificados e agende de novo.'
+         mensagem = 'Sem certificado A1 que sirva para este CNPJ (nem o escolhido no agendamento, nem o da matriz, nem o do escritório com procuração). Cadastre em Certificados e agende de novo.'
    where t.status = 'pendente'
      and exists (select 1 from public.xml_agendamentos a where a.id = t.agendamento_id and a.origem = 'nfse'
                   and a.executar_em <= now())
-     and exists (select 1 from public.xml_nfse_empresas e where e.id = t.nfse_empresa_id
-                  and not exists (select 1 from public.xml_nfse_certificados c
-                                   where c.org_id = e.org_id
-                                     and ((length(c.cnpj) = 14 and left(c.cnpj, 8) = left(e.cnpj, 8)) or c.procurador)));
+     and exists (select 1 from public.xml_nfse_empresas e
+                   join public.xml_agendamentos a on a.id = t.agendamento_id
+                  where e.id = t.nfse_empresa_id
+                    and not exists (select 1 from public.xml_nfse_certificados c
+                                     where c.org_id = e.org_id
+                                       and (a.certificado_id is null or c.id = a.certificado_id)
+                                       and ((length(c.cnpj) = 14 and left(c.cnpj, 8) = left(e.cnpj, 8)) or c.procurador)));
 
   select array_agg(x.id) into v_ids from (
     select t.id
@@ -377,7 +382,8 @@ begin
       -- o da própria empresa, senão o da matriz (mesma raiz), senão o do escritório (procuração)
       select c.cnpj, c.pfx_cifrado, c.senha_cifrada, (c.cnpj <> e.cnpj and not (length(c.cnpj) = 14 and left(c.cnpj, 8) = left(e.cnpj, 8))) as procurador
         from public.xml_nfse_certificados c
-       where c.org_id = e.org_id and ((length(c.cnpj) = 14 and left(c.cnpj, 8) = left(e.cnpj, 8)) or c.procurador)
+       where c.org_id = e.org_id and (a.certificado_id is null or c.id = a.certificado_id)  -- o escolhido no agendamento
+         and ((length(c.cnpj) = 14 and left(c.cnpj, 8) = left(e.cnpj, 8)) or c.procurador)
        order by (c.cnpj = e.cnpj) desc, (length(c.cnpj) = 14 and left(c.cnpj, 8) = left(e.cnpj, 8)) desc,
                 (substr(c.cnpj, 9, 4) = '0001') desc, c.atualizado_em desc
        limit 1) c

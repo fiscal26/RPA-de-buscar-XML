@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import Logo from "@/components/Logo";
 import MenuPerfil from "@/components/MenuPerfil";
+import Notificacoes from "@/components/Notificacoes";
 import MenuLateral from "@/components/MenuLateral";
 import Inatividade from "@/components/Inatividade";
 import { contexto } from "@/lib/sessao";
@@ -25,7 +26,10 @@ export default async function LayoutPainel({ children }: { children: React.React
     <div className="painel-moldura">
       <header className="barra">
         <Link href="/painel" className="marca marca-clara" aria-label="LotiVisse, início do painel"><Logo /></Link>
-        <MenuPerfil nome={nome} detalhe={admin ? "Administrador" : org?.nome} />
+        <div className="barra-direita">
+          <Notificacoes />
+          <MenuPerfil nome={nome} detalhe={admin ? "Administrador" : org?.nome} />
+        </div>
       </header>
       <MenuLateral itens={ITENS} extras={gerencia ? [{ href: "/painel/equipe", nome: "Equipe", icone: "equipe" }] : []} />
       <main className="painel">

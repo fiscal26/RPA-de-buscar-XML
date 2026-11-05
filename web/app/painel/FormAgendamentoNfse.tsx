@@ -7,6 +7,8 @@ import { TIPOS_NFSE, nomeTipo } from "@/lib/xml";
 import { confirmarAgendamentoNfse, prepararAgendamentoNfse, type PreviaNfse, type SituacaoCertificado } from "./actions-nfse";
 
 type OrgOpcao = { id: string; nome: string };
+export type EmpresaOpcao = { org_id: string; cnpj: string; nome: string; codigo: string };
+export type CertificadoOpcao = { id: string; org_id: string; nome: string; cnpj: string; procurador: boolean; vencido: boolean };
 
 const CERTIFICADO: Record<SituacaoCertificado, { nome: string; classe: string }> = {
   proprio: { nome: "Próprio", classe: "st-ok" },
@@ -16,12 +18,29 @@ const CERTIFICADO: Record<SituacaoCertificado, { nome: string; classe: string }>
   falta: { nome: "Falta", classe: "st-erro" },
 };
 
-export default function FormAgendamentoNfse({ organizacoes, competencia }: { organizacoes?: OrgOpcao[]; competencia: string }) {
+export default function FormAgendamentoNfse({ organizacoes, competencia, empresas, certificados }: {
+  organizacoes?: OrgOpcao[]; competencia: string; empresas: EmpresaOpcao[]; certificados: CertificadoOpcao[];
+}) {
   const [previa, ler, lendo] = useActionState(prepararAgendamentoNfse, undefined);
   const [resultado, setResultado] = useState<PreviaNfse | null>(null);
   const [enviando, iniciar] = useTransition();
   const [quando, setQuando] = useState<"agora" | "agendar">("agora");
   const [fonte, setFonte] = useState<"planilha" | "cadastro">("planilha");
+  const [org, setOrg] = useState(organizacoes ? "" : empresas[0]?.org_id ?? certificados[0]?.org_id ?? "");
+  const [marcadas, setMarcadas] = useState<Set<string>>(new Set());
+  const [filtro, setFiltro] = useState("");
+  // administrador: só as empresas e os certificados da organização escolhida
+  const daOrg = organizacoes ? empresas.filter((e) => e.org_id === org) : empresas;
+  const certsDaOrg = organizacoes ? certificados.filter((c) => c.org_id === org) : certificados;
+  const termo = filtro.trim().toLowerCase();
+  const visivel = (e: EmpresaOpcao) => !termo || e.nome.toLowerCase().includes(termo) || e.codigo.toLowerCase() === termo
+    || e.cnpj.includes(termo.replace(/\D/g, "") || "#");
+  const todas = daOrg.length > 0 && daOrg.every((e) => marcadas.has(e.cnpj));
+  const alternar = (cnpj: string) => setMarcadas((m) => {
+    const n = new Set(m);
+    if (n.has(cnpj)) n.delete(cnpj); else n.add(cnpj);
+    return n;
+  });
 
   function confirmar() {
     if (!previa) return;
@@ -51,7 +70,7 @@ export default function FormAgendamentoNfse({ organizacoes, competencia }: { org
         {organizacoes && (
           <>
             <label htmlFor="nfse-org">Organização</label>
-            <select id="nfse-org" name="org_id" required defaultValue="">
+            <select id="nfse-org" name="org_id" required value={org} onChange={(e) => { setOrg(e.target.value); setMarcadas(new Set()); }}>
               <option value="" disabled>Escolha…</option>
               {organizacoes.map((o) => <option key={o.id} value={o.id}>{o.nome}</option>)}
             </select>
@@ -60,19 +79,61 @@ export default function FormAgendamentoNfse({ organizacoes, competencia }: { org
         <label>Empresas</label>
         <div className="opcoes">
           <label><input type="radio" name="fonte" value="planilha" checked={fonte === "planilha"} onChange={() => setFonte("planilha")} /> As de uma planilha</label>
-          <label><input type="radio" name="fonte" value="cadastro" checked={fonte === "cadastro"} onChange={() => setFonte("cadastro")} /> Todas as empresas cadastradas</label>
+          <label><input type="radio" name="fonte" value="cadastro" checked={fonte === "cadastro"} onChange={() => setFonte("cadastro")} /> Escolher entre as cadastradas</label>
         </div>
         {fonte === "planilha" ? (
           <>
             <label htmlFor="nfse-arquivo">Planilha das empresas da NFS-e (.xlsx)</label>
             <input id="nfse-arquivo" name="arquivo" type="file" accept=".xlsx,.xlsm,.csv" required />
           </>
-        ) : (
+        ) : organizacoes && !org ? (
+          <p className="suave">Escolha a organização para ver as empresas cadastradas.</p>
+        ) : !daOrg.length ? (
           <p className="suave">
-            Todas as empresas com CNPJ em <Link href="/painel/empresas">Empresas</Link> (as da NFS-e e as da SEFAZ), sem planilha.
-            Com o certificado do escritório, o robô baixa as de todas que deram procuração no e-CAC; a prévia mostra qual
-            certificado cada uma vai usar.
+            Nenhuma empresa com CNPJ no cadastro ainda. Envie uma planilha (da NFS-e ou da SEFAZ) uma primeira vez; depois
+            elas aparecem aqui para marcar.
           </p>
+        ) : (
+          <div className="selecao-empresas">
+            <div className="selecao-topo">
+              <label className="selecionar-todas">
+                <input type="checkbox" checked={todas}
+                  onChange={() => setMarcadas(todas ? new Set() : new Set(daOrg.map((e) => e.cnpj)))} />
+                <b>Selecionar todas</b> <span className="suave">({marcadas.size} de {daOrg.length} marcadas)</span>
+              </label>
+              <input type="search" placeholder="Procurar por nome, ID ou CNPJ" value={filtro} onChange={(e) => setFiltro(e.target.value)}
+                aria-label="Procurar empresa" />
+            </div>
+            <div className="lista-empresas" role="group" aria-label="Empresas cadastradas">
+              {daOrg.map((e) => (
+                <label key={e.cnpj} hidden={!visivel(e)}>
+                  <input type="checkbox" name="cnpjs" value={e.cnpj} checked={marcadas.has(e.cnpj)} onChange={() => alternar(e.cnpj)} />
+                  <span className="suave id-empresa">{e.codigo || "—"}</span>
+                  <span className="nome-empresa">{e.nome}</span>
+                  <span className="doc suave">{formatarDocumento(e.cnpj)}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {certsDaOrg.length > 0 && (
+          <>
+            <label htmlFor="nfse-certificado">Certificado</label>
+            <select id="nfse-certificado" name="certificado_id" defaultValue="" key={org}>
+              <option value="">Automático: o da empresa, o da matriz ou o do escritório</option>
+              {[true, false].map((proc) => certsDaOrg.some((c) => c.procurador === proc) && (
+                <optgroup key={String(proc)} label={proc ? "Do escritório (procuração)" : "Das empresas"}>
+                  {certsDaOrg.filter((c) => c.procurador === proc).map((c) => (
+                    <option key={c.id} value={c.id} disabled={c.vencido}>
+                      {c.nome || formatarDocumento(c.cnpj)} ({formatarDocumento(c.cnpj)}){c.vencido ? " - vencido" : ""}
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+            <p className="suave">Com um certificado escolhido, o robô usa só ele para todas as empresas deste agendamento.</p>
+          </>
         )}
 
         <label htmlFor="nfse-competencia">Competência</label>
@@ -95,10 +156,11 @@ export default function FormAgendamentoNfse({ organizacoes, competencia }: { org
 
       {previa?.itens && !previa.erro && (
         <div style={{ marginTop: "1.5rem" }}>
-          <h2>Confira a planilha {previa.nomeArquivo}</h2>
+          <h2>{previa.nomeArquivo === "Empresas cadastradas" ? "Confira as empresas escolhidas" : `Confira a planilha ${previa.nomeArquivo}`}</h2>
           <p>
             <b>{previa.itens.length}</b> {previa.itens.length === 1 ? "empresa" : "empresas"} · competência <b>{competenciaBR(previa.competencia)}</b> ·{" "}
             {previa.executarEm ? `começa em ${dataHoraBR(previa.executarEm)}` : "começa assim que possível"}.
+            {previa.certificadoNome && <> Certificado: <b>{previa.certificadoNome}</b>.</>}
           </p>
           <p className="suave">
             {contagem.filter((t) => t.n).map((t) => `${t.nome}: ${t.n}`).join(" · ")}
