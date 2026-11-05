@@ -114,6 +114,15 @@ def _responder(tela: str, campos: dict) -> str:
     if emit and dest:
         ESTADO["recusas"].append(q)
         return "Erro: informe apenas o Emitente ou o Destinatário."
+    if q["exib"] == "1":  # HTML: o ATF mostra a lista na hora (a conferência do robô)
+        return f"HTML:{ESTADO.get('html_notas', {}).get(emit or dest, 0)}"
+    if ESTADO.pop("sem_resposta", False):  # ATF lento: a consulta vale, mas a tela não confirma a tempo
+        _responder_xml(tela, q, emit, dest, campos)
+        return ""
+    return _responder_xml(tela, q, emit, dest, campos)
+
+
+def _responder_xml(tela: str, q: dict, emit: str, dest: str, campos: dict) -> str:
     assert (q["ini"], q["fim"], q["exib"]) == ("01/09/2026", "30/09/2026", "4" if tela == "cte" else "3"), q
     assert campos.get("cmbTpDoccmpEmit") == "IE" and campos.get("cmbTpDoccmpDest", "IE") == "IE", campos
     ie = emit or dest or ESTADO["blocos"].get(f"{tela}_cmpReme", "")
@@ -264,6 +273,12 @@ def form_consulta(tela: str, aviso: str = "") -> str:
     alerta = f'<div class="alert alert-success">{aviso}</div>' if aviso else ""
     if aviso == "ALERTA_ATRASADO":  # como no ATF real: o "Nenhum registro" vem num alerta, depois da espera do robô
         alerta = "<script>setTimeout(() => alert('Nenhum registro satisfaz a pesquisa.'), 7000)</script>"
+    elif aviso.startswith("HTML:"):  # consulta em HTML: a lista na hora, ou o alerta na hora
+        n = int(aviso[5:])
+        alerta = ("<script>alert('Nenhum registro satisfaz a pesquisa.')</script>" if not n else
+                  "<table class='table'><tr><th>Chave</th><th>Valor</th></tr>"
+                  + "".join(f"<tr><td>{i}</td><td>10,00</td></tr>" for i in range(n))
+                  + f"</table><p>({n}) registro(s) encontrado(s)</p><p>Valor total = R$ {n * 10},00</p>")
     return (sessao() + f'<h5>{titulo}</h5>{alerta}<form method="post" action="/atf/fis/consultar_{tela}.do">{datas}'
             '<label>Situação</label><select name="cmbSituacao"><option>---</option></select>'
             + bloco("Emitente", "Emit")
@@ -884,3 +899,42 @@ def test_sem_notas_que_chega_atrasado_vira_sem_movimento(ambiente):
     assert r.detalhes["nfce"]["sem_notas"], r
     assert r.detalhes["nfce"]["situacao"] == "sem_movimento", r
     assert not r.pendente, r
+    assert ESTADO["consultas"][-1]["exib"] == "1"  # conferiu em HTML antes de dar como sem movimento
+
+
+def test_alerta_atrasado_de_outra_consulta_nao_vira_sem_movimento(ambiente):
+    """O "Nenhum registro" atrasado pode ser de outra consulta: o HTML mostra notas, e o robô pede o XML de novo."""
+    cfg, pasta = ambiente
+    ESTADO["sem_notas_atrasado"] = True
+    ESTADO["html_notas"] = {IE_OUTRA: 1}
+    antes = len(ESTADO["consultas"])
+    executor = robo_xml.Executor(cfg)
+    try:
+        (r,) = executor.executar_rodada([_trabalho(IE_OUTRA, "Mercado", ["nfce"], codigo="017")])
+    finally:
+        ESTADO.pop("sem_notas_atrasado", None)
+        ESTADO.pop("html_notas", None)
+        executor.fechar()
+    assert [c["exib"] for c in ESTADO["consultas"][antes:]] == ["3", "1", "3"]  # XML, conferência em HTML, XML de novo
+    assert not r.detalhes["nfce"]["sem_notas"], r
+    assert r.detalhes["nfce"]["situacao"] != "sem_movimento", r
+    assert r.detalhes["nfce"].get("notas"), r
+
+
+def test_consulta_sem_resposta_e_conferida_em_html(ambiente):
+    """A tela não confirmou a consulta a tempo: o HTML mostra que há notas, e o XML chega pela caixa."""
+    cfg, pasta = ambiente
+    ESTADO["sem_resposta"] = True
+    ESTADO["html_notas"] = {IE_OUTRA: 2}
+    antes = len(ESTADO["consultas"])
+    executor = robo_xml.Executor(cfg)
+    try:
+        (r,) = executor.executar_rodada([_trabalho(IE_OUTRA, "Mercado", ["nfce"], codigo="018")])
+    finally:
+        ESTADO.pop("sem_resposta", None)
+        ESTADO.pop("html_notas", None)
+        executor.fechar()
+    assert [c["exib"] for c in ESTADO["consultas"][antes:]][:2] == ["3", "1"]
+    assert not r.pendente, r
+    assert r.detalhes["nfce"]["situacao"] != "sem_movimento", r
+    assert r.detalhes["nfce"].get("notas"), r

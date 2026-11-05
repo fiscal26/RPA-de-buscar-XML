@@ -69,6 +69,8 @@ _CONFIRMADA = re.compile(r"resultado\s+ser[aá]\s+enviado|caixa\s+de\s+mensagens
 _MENSAGEM_FINAL = re.compile(r"tarefa\s+executada|executada\s+com\s+sucesso|n[aã]o\s+existem\s+dados|relat[oó]rio\s+gerado|"
                              r"arquivo\s+dispon[ií]vel|"
                              r"nenhum\s+registro\s+satisfaz", re.I)
+# Resultado da consulta em HTML: "(9) registro(s) encontrado(s)"
+_REGISTROS = re.compile(r"\((\d+)\)\s*registro\(s\)\s*encontrado", re.I)
 _PERIODO = re.compile(r"per[ií]odo\s+solicitado:?\s*(\d{2}/\d{2}/\d{4})\s*a\s*(\d{2}/\d{2}/\d{4})", re.I)
 _INPUT_TEXTO = "input:not([type=hidden]):not([type=checkbox]):not([type=radio]):not([type=button]):not([type=submit])"
 _BOTAO = "button, input[type=button], input[type=submit], a.btn"
@@ -297,6 +299,17 @@ class Envio:
     assistido: bool = False
     resposta: str = ""
     hora: datetime | None = None   # hora do ATF ao clicar em Consultar (as mensagens chegam depois dela)
+    atrasada: bool = False         # a resposta chegou depois da espera (pode ser de outra consulta)
+
+    @property
+    def duvidoso(self) -> bool:
+        """Sem resposta a tempo, ou com um "Nenhum registro" atrasado: vale conferir em HTML."""
+        return self.ok and not self.assistido and (self.atrasada or not self.resposta)
+
+    @property
+    def confirmada(self) -> bool:
+        """O ATF disse que o resultado vai para a caixa de mensagens."""
+        return bool(_CONFIRMADA.search(self.resposta))
 
 
 @dataclass
@@ -740,6 +753,7 @@ class AtfPB:
         if envio is not None and _SEM_NOTAS.search(mensagem) and not _CONFIRMADA.search(mensagem):
             envio.sem_notas = True
             envio.resposta = mensagem[:300]
+            envio.atrasada = True
             self._envio_aguardando = None
             self._log(f"Resposta do ATF que chegou depois ({envio.tipo} IE {envio.ie}): {mensagem[:120]}")
 
@@ -815,6 +829,44 @@ class AtfPB:
         self._log(f"{nome_tipo} IE {ie}: consulta enviada" + (f" — ATF: {resposta[:120]}" if resposta else ""))
         return envio
 
+    def conferir_html(self, tipo: str, ie: str, inicio: date, fim: date, nome_tipo: str) -> int | None:
+        """Refaz a consulta com Tipo de Exibição = HTML: o ATF mostra a lista na hora, com "(N) registro(s)
+        encontrado(s)", ou o alerta "Nenhum registro satisfaz a pesquisa". Devolve N (0 = sem notas, com
+        certeza) ou None se não deu para saber."""
+        antes = set(self.contexto.pages)
+        self._envio_aguardando = None  # o alerta desta consulta não vale para nenhuma consulta em XML
+        self._respostas = []
+        try:
+            self._preencher_consulta(tipo, ie, inicio, fim, exibicao="html")
+            limite = time.time() + 2 * self.atf["segundos_resposta"]
+            while time.time() < limite:
+                pausa(self.page, 0.8, 1.2)
+                for pagina in list(self.contexto.pages):
+                    if pagina.is_closed():
+                        continue
+                    m = _REGISTROS.search(_texto_da_pagina(pagina))
+                    if m:
+                        self._log(f"{nome_tipo} IE {ie}: conferido em HTML, {m.group(1)} registro(s)")
+                        return int(m.group(1))
+                avisos = self._avisos_na_tela()
+                if _SEM_NOTAS.search(avisos):
+                    self._log(f"{nome_tipo} IE {ie}: conferido em HTML, nenhum registro")
+                    return 0
+                if _ERRO_CONSULTA.search(avisos):
+                    self._log(f"{nome_tipo} IE {ie}: conferência em HTML não aceita: {avisos[:120]}")
+                    return None
+            self._log(f"{nome_tipo} IE {ie}: a consulta em HTML também não respondeu")
+            return None
+        except (SiteForaDoAr, SessaoExpirada):
+            raise
+        except Exception as e:
+            self._log(f"{nome_tipo} IE {ie}: não consegui conferir em HTML: {e}")
+            return None
+        finally:
+            self._respostas = []
+            self._fechar_abas(antes)
+            self.ultimo_uso = time.time()
+
     def _esperar_resposta(self, segundos: int) -> str:
         limite = time.time() + segundos
         while time.time() < limite:
@@ -850,7 +902,7 @@ class AtfPB:
                 continue
         return None
 
-    def _preencher_consulta(self, tipo: str, ie: str, inicio: date, fim: date):
+    def _preencher_consulta(self, tipo: str, ie: str, inicio: date, fim: date, exibicao: str = "xml"):
         nome_tela, bloco = TIPO_TELA[tipo]
         tela = self.atf["telas"][nome_tela]
         self.abrir_tela(nome_tela)  # abre com limparSessao=true: formulário limpo
@@ -924,13 +976,14 @@ class AtfPB:
                 raise IeNaoEncontrada(f"o ATF não encontrou a IE {ie} (Pesquisar não trouxe o nome)")
             self._respostas = []
 
-        # Tipo de Exibição = XML e Consultar
+        # Tipo de Exibição = XML (ou HTML, para conferir) e Consultar
         tela_frame = self._quadro_da_tela(tela) or tela_frame
+        formato = exibicao
         exibicao = self._no_quadro(tela_frame, 'select[name="cmbTpExibicao"]') or self._apos_rotulo("Tipo de Exibição", "select", 1)
         if exibicao is None:
             raise EtapaNaoConcluida("campo Tipo de Exibição não encontrado")
-        if not self._escolher(exibicao, r"^\s*xml\s*$"):
-            raise EtapaNaoConcluida("opção XML não encontrada em Tipo de Exibição")
+        if not self._escolher(exibicao, rf"^\s*{formato}\s*$"):
+            raise EtapaNaoConcluida(f"opção {formato.upper()} não encontrada em Tipo de Exibição")
         consultar = self._no_quadro(tela_frame, '#btnConsulta, button[name="btnConsultar"], input[name="btnConsultar"]')
         if consultar is None:
             for frame in self.page.frames:
@@ -942,9 +995,10 @@ class AtfPB:
                     break
         if consultar is None:
             raise EtapaNaoConcluida("botão Consultar não encontrado")
-        self._log(f"Consultando {bloco} IE {ie}, {inicio:%d/%m/%Y} a {fim:%d/%m/%Y}, exibição XML")
-        self._hora_consulta = self.hora_servidor() or datetime.now()
-        self._envio_aguardando = self._envio_em_preparo  # daqui em diante, a resposta (mesmo atrasada) é desta consulta
+        self._log(f"Consultando {bloco} IE {ie}, {inicio:%d/%m/%Y} a {fim:%d/%m/%Y}, exibição {formato.upper()}")
+        if formato == "xml":
+            self._hora_consulta = self.hora_servidor() or datetime.now()
+            self._envio_aguardando = self._envio_em_preparo  # daqui em diante, a resposta (mesmo atrasada) é desta consulta
         self._clicar_botao(consultar)
 
     def _campo_do_bloco(self, bloco: str, css: str, ordem: int = 1, texto: str = ""):
