@@ -3,8 +3,8 @@ import Icone from "@/components/Icones";
 import { contexto } from "@/lib/sessao";
 import { competenciaBR, dataHoraBR, formatarDocumento, formatarIe } from "@/lib/documentos";
 import { resumoPainel, type AgendamentoPainel, type TarefaPainel } from "@/lib/painel";
+import AcoesRecolhidas from "./AcoesRecolhidas";
 
-const ROBO_ONLINE_SEGUNDOS = 120;
 const numero = (n: number) => n.toLocaleString("pt-BR");
 
 export default async function Inicio() {
@@ -26,7 +26,6 @@ export default async function Inicio() {
   const r = resumoPainel((tarefas ?? []) as unknown as TarefaPainel[], ags);
   const empresas = (empresasSefaz ?? 0) + (empresasNfse ?? 0);
   const robo = robos?.[0];
-  const roboLigado = !!robo && Date.now() - Date.parse(robo.ultimo_sinal) < ROBO_ONLINE_SEGUNDOS * 1000;
 
   const passos = [
     { feito: !!empresas, titulo: "Preencher a planilha modelo",
@@ -70,13 +69,6 @@ export default async function Inicio() {
         </section>
       )}
 
-      {admin && (
-        <div className={`faixa ${roboLigado ? "ok" : "alerta"}`}>
-          {roboLigado ? `Robô ligado (${robo!.id}).` : robo ? `Robô desligado. Último sinal em ${dataHoraBR(robo.ultimo_sinal)}.` : "O robô ainda não se conectou."}
-          <span className="suave"> Só o administrador vê este aviso.</span>
-        </div>
-      )}
-
       <div className="painel-numeros">
         <div className="numero-cartao">
           <span className="numero-icone"><Icone nome="empresas" /></span>
@@ -118,9 +110,8 @@ export default async function Inicio() {
       </div>
 
       {acoes > 0 && (
-        <section className="cartao" id="acoes">
-          <h2 className="titulo-cartao">Precisa da sua ação</h2>
-          <p className="suave">Empresas cujos documentos só voltam a sair depois de um ajuste seu.</p>
+        <AcoesRecolhidas total={acoes}>
+          <p className="suave">Empresas cujos documentos só voltam a sair depois de um ajuste seu. Estes avisos também ficam no sino, no alto da tela.</p>
           <ul className="acoes-lista">
             {r.acoes.map((a) => (
               <li key={a.ie}>
@@ -136,7 +127,7 @@ export default async function Inicio() {
               </li>
             ))}
           </ul>
-        </section>
+        </AcoesRecolhidas>
       )}
 
       <section className="cartao">

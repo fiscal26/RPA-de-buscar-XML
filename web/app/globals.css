@@ -797,3 +797,32 @@ td.nome-empresa { min-width: 10rem; }
   .lista-empresas label { grid-template-columns: auto 1fr; }
   .lista-empresas .id-empresa, .lista-empresas .doc { grid-column: 2; }
 }
+
+/* Sino de notificações na barra do painel */
+.barra-direita { display: flex; align-items: center; gap: 0.35rem; }
+.notificacoes { position: relative; }
+.sino-botao, button.sino-botao { position: relative; background: transparent; border: 1px solid transparent; color: #c9d6e8;
+  width: 40px; height: 40px; padding: 0; border-radius: 10px; display: grid; place-items: center; }
+.sino-botao:hover, button.sino-botao:hover, .sino-botao[aria-expanded="true"] { background: #ffffff14; border-color: #ffffff26; color: #fff; }
+.sino-contador { position: absolute; top: 3px; right: 2px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px;
+  background: var(--erro); color: #fff; font: 700 0.68rem/18px var(--fonte-texto); text-align: center; box-shadow: 0 0 0 2px var(--noite); }
+.notificacoes-painel { position: absolute; right: 0; top: calc(100% + 0.5rem); width: min(400px, calc(100vw - 1.5rem));
+  max-height: min(70vh, 560px); overflow-y: auto; background: var(--superficie); color: var(--texto); border: 1px solid var(--linha);
+  border-radius: 12px; box-shadow: 0 16px 40px -16px var(--sombra); z-index: 20; }
+.notificacoes-topo { display: flex; justify-content: space-between; align-items: baseline; padding: 0.8rem 1rem;
+  border-bottom: 1px solid var(--linha); position: sticky; top: 0; background: var(--superficie); color: var(--forte); }
+.notificacoes-vazio { padding: 1.25rem 1rem; margin: 0; }
+.notificacoes-painel ul { list-style: none; margin: 0; padding: 0.3rem; }
+.notificacoes-painel li a { display: flex; gap: 0.7rem; padding: 0.7rem; border-radius: var(--raio); color: var(--texto); text-decoration: none; }
+.notificacoes-painel li a:hover { background: var(--carbono); }
+.notificacoes-painel li.nova a { background: color-mix(in srgb, var(--carbono) 60%, transparent); }
+.notificacao-sinal { flex: none; width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center;
+  font-weight: 700; font-size: 0.8rem; color: var(--superficie); background: var(--alerta); margin-top: 0.15rem; }
+.notificacao-sinal.erro { background: var(--erro); }
+.notificacao-texto { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; }
+.notificacao-texto small { color: var(--suave); font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.04em; }
+.notificacao-texto b { color: var(--forte); font-size: 0.92rem; }
+.notificacao-texto span { color: var(--suave); font-size: 0.85rem; line-height: 1.4; }
+@media (max-width: 600px) { .notificacoes-painel { position: fixed; left: 0.75rem; right: 0.75rem; top: 64px; width: auto; } }
+.acoes-recolhidas .titulo-cartao { display: flex; align-items: center; gap: 0.6rem; margin: 0; }
+.acoes-recolhidas:not(.aberto) .cartao-topo { margin-bottom: 0; }
