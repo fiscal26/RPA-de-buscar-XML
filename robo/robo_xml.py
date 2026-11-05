@@ -140,6 +140,41 @@ class Executor:
             except Exception as e:  # o andamento é só informação: nunca para a rodada
                 log.debug("andamento não enviado: %s", e)
 
+    def _conferir_em_html(self, envios: dict, por_ie: dict, com_sessao):
+        """Consulta em XML sem resposta a tempo, ou com um "Nenhum registro" que chegou atrasado (pode ser de outra
+        consulta): refaz em HTML, que responde na hora. 0 registro = sem movimento; havendo notas, espera o XML
+        (e pede de novo se o ATF não confirmou o envio para a caixa de mensagens)."""
+        atf = self.atf
+        for chave, envio in list(envios.items()):
+            ie, tipo = chave
+            t = por_ie.get(ie)
+            if t is None or not envio.duvidoso:
+                continue
+            nome = arquivos.TIPOS.get(tipo, tipo)
+            self._progresso(t, tipo, "andamento", "conferindo no ATF (consulta em HTML)")
+            n = com_sessao(atf.conferir_html, tipo, ie, t.inicio, t.fim, nome)
+            if n is None:
+                log.info("   %s IE %s: não deu para conferir em HTML; fica como o ATF respondeu", nome, ie)
+            elif n == 0:
+                envio.sem_notas = True
+            else:
+                envio.sem_notas = False
+                if not envio.confirmada:  # a consulta em XML pode não ter sido aceita: pede de novo
+                    log.info("   %s IE %s: %d nota(s) no HTML; pedindo o XML de novo", nome, ie, n)
+                    novo = com_sessao(atf.solicitar, tipo, ie, t.inicio, t.fim, nome)
+                    atf.esperar_respostas_atrasadas(0)  # o HTML já respondeu: um alerta atrasado não vale mais
+                    if novo.ok:
+                        novo.sem_notas = False
+                        novo.hora = min(h for h in (envio.hora, novo.hora) if h) if (envio.hora or novo.hora) else None
+                        envio = envios[chave] = novo
+            if not envio.ok:
+                self._progresso(t, tipo, "erro", envio.resposta or "consulta não aceita")
+            elif envio.sem_notas:
+                self._progresso(t, tipo, "sem_movimento", "sem notas no período (conferido em HTML)" if n == 0
+                                else "sem notas no período")
+            else:
+                self._progresso(t, tipo, "aguardando", "consulta enviada; o ATF entrega em Minhas Mensagens")
+
     @staticmethod
     def _impressao(login: str, senha: str) -> tuple[str, str]:
         return login.lower(), hashlib.sha256(senha.encode()).hexdigest()
@@ -252,6 +287,8 @@ class Executor:
         # satisfaz a pesquisa" atrasado: sem notas o ATF não manda mensagem, e o robô ficaria esperando por ela.
         atf.esperar_respostas_atrasadas(atf.atf["segundos_resposta"])
         por_ie = {t.ie: t for t in trabalhos}
+        if atf.atf.get("conferir_em_html", True):
+            self._conferir_em_html(envios, por_ie, com_sessao)
         for (ie, tipo), envio in envios.items():
             if envio.ok and envio.sem_notas and ie in por_ie:
                 self._progresso(por_ie[ie], tipo, "sem_movimento", "sem notas no período")
