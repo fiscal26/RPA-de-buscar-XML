@@ -178,3 +178,17 @@ A VPS tem 4 GB e 4 GB de reserva (swap), e cada robô usa um Chrome. Confira de 
 
   Assim a SEFAZ fica com o computador e a NFS-e, que usa a API oficial, com a VPS. O início do log de cada robô
   mostra as filas dele ("Filas deste robô: ...").
+
+## Gravar o passo a passo do ATF
+
+O `robo_xml.log` já mostra cada passo (linhas com `·`), inclusive os alertas do ATF que o robô fecha sozinho.
+Para ter também um print da tela a cada passo, ligue a gravação:
+
+```
+sudo -u lotivisse python3 -c "import json;p='/home/lotivisse/xml/app/robo/config.json';c=json.load(open(p,encoding='utf-8-sig'));c.setdefault('atf',{})['gravar_passos']=True;json.dump(c,open(p,'w',encoding='utf-8'),ensure_ascii=False,indent=2)"
+sudo systemctl restart lotivisse-robo@xml
+```
+
+Os prints ficam em `/home/lotivisse/xml/arquivos/_diagnostico/passos/` (uma pasta por sessão, com o `passos.txt`),
+só dos últimos 3 dias, e não vão para o Google Drive. Baixe pelo WinSCP. Para desligar, troque `True` por `False`
+no comando acima e reinicie de novo.
