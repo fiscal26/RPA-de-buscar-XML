@@ -32,9 +32,10 @@ function textos(m: MeiCarteira, medida: (typeof MEDIDAS)[number], d: Medida) {
 /**
  * Confere os MEIs e manda o alerta de limite (no ritmo de passar, 80%, passou, passou 20%) para todas as pessoas
  * ativas do escritório que não desligaram os alertas. Cada nível sai uma vez por ano, por MEI e por medida.
- * Com `filtro`, só aquele MEI (depois de um lançamento manual). Roda todo dia pelo agendamento da Vercel.
+ * Com `filtro`, só aquele MEI (depois de um lançamento manual, ou quando o robô traz o Dossiê MEI). Roda também
+ * todo dia pelo agendamento da Vercel. Se nenhum e-mail sair, o nível fica para a próxima vez.
  */
-export async function verificarAlertasMei(filtro?: { org: string; ie: string }) {
+export async function verificarAlertasMei(filtro?: { org?: string; ie: string }) {
   const resumo = { verificados: 0, enviados: 0, erros: [] as string[] };
   if (!emailConfigurado()) return { ...resumo, erros: ["envio de e-mail não configurado"] };
   const db = clienteAdmin();
@@ -48,7 +49,7 @@ export async function verificarAlertasMei(filtro?: { org: string; ie: string }) 
     const { meis, erros } = await carregarMeis(db, ano, filtro?.ie);
     resumo.erros.push(...erros);
     for (const m of meis) {
-      if (filtro && m.org !== filtro.org) continue;
+      if (filtro?.org && m.org !== filtro.org) continue;
       resumo.verificados++;
       for (const medida of MEDIDAS) {
         const d = m.ano[medida.id];
@@ -80,6 +81,12 @@ export async function verificarAlertasMei(filtro?: { org: string; ie: string }) 
           if (falha) resumo.erros.push(falha); else enviados++;
         }
         resumo.enviados += enviados;
+        if (!enviados && pessoas.get(m.org)!.length) {
+          // nenhum e-mail saiu (Brevo fora, chave errada...): solta a reserva para tentar de novo na próxima vez
+          await db.from("xml_mei_alertas").delete().match({ org_id: m.org, ie: m.ie, ano, medida: medida.id })
+            .in("nivel", novos.map((n) => n.nivel));
+          continue;
+        }
         await db.from("xml_mei_alertas").update({ destinatarios: enviados })
           .match({ org_id: m.org, ie: m.ie, ano, medida: medida.id, nivel: d.nivel });
       }

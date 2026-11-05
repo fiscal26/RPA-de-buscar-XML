@@ -646,8 +646,10 @@ def competencia(texto: str | None) -> tuple[date, date]:
 class Portal:
     """Conversa com o Supabase usando a chave service_role (só neste computador)."""
 
-    def __init__(self, url: str, chave: str, timeout: int = 60):
+    def __init__(self, url: str, chave: str, timeout: int = 60, site: str = ""):
         self.url = url.rstrip("/")
+        self.site = (site or "").rstrip("/")
+        self._chave = chave
         self.timeout = timeout
         self.cabecalhos = {"apikey": chave}
         if not chave.startswith("sb_"):  # chaves antigas (JWT) vão também no Authorization
@@ -687,6 +689,16 @@ class Portal:
         return self._r("POST", "/rest/v1/rpc/xml_mei_registrar_ie",
                        json={"p_ie": ie, "p_nome": nome, "p_meses": meses, "p_inicio_atividade": inicio_atividade}).json() or 0
 
+    def avisar_mei(self, ie: str) -> dict:
+        """Pede ao portal que confira os limites desse MEI e mande o alerta à equipe (sem esperar o dia seguinte)."""
+        if not self.site:
+            return {}
+        r = requests.post(f"{self.site}/api/robo/alertas-mei", json={"ie": ie}, headers={"x-robo-chave": self._chave},
+                          timeout=self.timeout)
+        if r.status_code >= 400:
+            raise RuntimeError(f"alertas MEI -> {r.status_code}: {r.text[:200]}")
+        return r.json()
+
     def sinal(self, robo: str, info: dict):
         self._r("POST", "/rest/v1/xml_robos", json={"id": robo, "ultimo_sinal": agora(), "versao": VERSAO, "info": info},
                 headers={"Prefer": "resolution=merge-duplicates,return=minimal"})
@@ -703,7 +715,7 @@ class Robo:
         if not p["supabase_url"] or not p["chave_service_role"]:
             sys.exit("Configure 'portal.supabase_url' e 'portal.chave_service_role' no config.json "
                      "(veja web/IMPLANTACAO.md).")
-        self.portal = Portal(p["supabase_url"], p["chave_service_role"])
+        self.portal = Portal(p["supabase_url"], p["chave_service_role"], site=p.get("site", ""))
         self.privada = cripto.carregar_privada(cfg["chaves"]["privada"])
         self.nome = p["nome_robo"] or socket.gethostname()
         self.executor = Executor(cfg, p["segundos_assistido"])
@@ -897,6 +909,14 @@ class Robo:
         tarefa = self.em_curso.get(id(trabalho))
         if tarefa is not None:
             self.portal.registrar_mei(tarefa[0], resumo.get("historico") or {}, resumo.get("inicio_atividade"))
+            try:  # alerta de limite na hora (se falhar, sai no agendamento diário do portal)
+                r = self.portal.avisar_mei(trabalho.ie)
+                if r.get("enviados"):
+                    log.info("   alerta MEI enviado à equipe (%d e-mail(s))", r["enviados"])
+                for erro in r.get("erros") or []:
+                    log.warning("   alerta MEI: %s", erro)
+            except Exception as e:
+                log.warning("   alerta MEI não pedido ao portal: %s", e)
 
     def _finalizar(self, t, r: Resultado):
         andamento = next((d for tid, d in self.em_curso.values() if tid == t["id"]), {})
