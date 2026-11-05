@@ -841,7 +841,9 @@ class AtfPB:
             limite = time.time() + 2 * self.atf["segundos_resposta"]
             while time.time() < limite:
                 pausa(self.page, 0.8, 1.2)
-                for pagina in list(self.contexto.pages):
+                # só a aba do robô e as que o ATF abrir agora: outra aba do Chrome pode ter o resultado de
+                # uma consulta antiga ("(4) registro(s) encontrado(s)" de outra empresa)
+                for pagina in [self.page] + [x for x in list(self.contexto.pages) if x not in antes]:
                     if pagina.is_closed():
                         continue
                     m = _REGISTROS.search(_texto_da_pagina(pagina))
