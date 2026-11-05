@@ -41,8 +41,8 @@ def test_saida_organizada_e_separa_outra_empresa(tmp_path):
             ("3.xml", nfe(OUTRA, EMPRESA, 3, ie_emit=IE_OUTRA)), ("ruim.xml", b"<a/>")]
     r = arquivos.salvar(xmls, tmp_path, "Padaria: Centro", IE_EMPRESA, EMPRESA, "nfe_saida", codigo="015")
     base = tmp_path / "Arquivos baixados" / "015-Padaria Centro"
-    assert (base / "2026-09" / "NF-e Saida" / f"{chave(EMPRESA, numero=1)}.xml").exists()
-    assert (base / "2026-10" / "NF-e Saida" / f"{chave(EMPRESA, '2610', numero=2)}.xml").exists()
+    assert (base / "092026" / "NF-e Saida" / f"{chave(EMPRESA, numero=1)}.xml").exists()
+    assert (base / "102026" / "NF-e Saida" / f"{chave(EMPRESA, '2610', numero=2)}.xml").exists()
     assert len(list((base / "_conferir").iterdir())) == 1
     assert (r.salvos, r.conferir, r.invalidos) == (2, 1, 1)
 
@@ -54,20 +54,20 @@ def test_entrada_confere_destinatario_pela_ie_sem_cnpj(tmp_path):
     r = arquivos.salvar([("x.xml", nfe(OUTRA, EMPRESA, 9, ie_dest=IE_EMPRESA))], tmp_path, "Loja", IE_EMPRESA, "",
                         "nfe_entrada")
     assert r.salvos == 1 and r.conferir == 0
-    assert list(tmp_path.glob("Arquivos baixados/Loja/2026-09/NF-e Entrada/*.xml"))
+    assert list(tmp_path.glob("Arquivos baixados/Loja/092026/NF-e Entrada/*.xml"))
 
 
 def test_nfce(tmp_path):
     r = arquivos.salvar([("c.xml", nfe(EMPRESA, "", 4, modelo="65", ie_emit=IE_EMPRESA))], tmp_path, "Loja",
                         IE_EMPRESA, EMPRESA, "nfce")
-    assert r.salvos == 1 and list(tmp_path.glob("Arquivos baixados/*/2026-09/NFC-e/*.xml"))
+    assert r.salvos == 1 and list(tmp_path.glob("Arquivos baixados/*/092026/NFC-e/*.xml"))
 
 
 def test_evento_vai_para_subpasta(tmp_path):
     ch = chave(EMPRESA, numero=1)
     r = arquivos.salvar([("ev.xml", evento(EMPRESA, ch))], tmp_path, "Loja", IE_EMPRESA, EMPRESA, "nfe_saida")
     assert r.salvos == 1
-    assert list(tmp_path.glob("Arquivos baixados/*/2026-09/NF-e Saida/Eventos/*.xml"))
+    assert list(tmp_path.glob("Arquivos baixados/*/092026/NF-e Saida/Eventos/*.xml"))
 
 
 def test_distribuir_pelo_conteudo():
@@ -109,7 +109,7 @@ def test_zip_guardado_como_veio_e_total_no_nome_da_pasta(tmp_path):
                  "c.xml": nfe(EMPRESA, OUTRA, 3, ie_emit=IE_EMPRESA, valor=99999),
                  "cancel.xml": evento(EMPRESA, chave(EMPRESA, numero=3)).replace(b"<tpEvento>110111", b"<tpEvento>110111")})
     r = arquivos.salvar_originais([("Dados 2026.zip", zip1)], tmp_path, "joao", IE_EMPRESA, "nfe_saida", "2026-09", "5")
-    pasta = tmp_path / "Arquivos baixados" / "5-joao" / "2026-09" / "NF-e Saida - R$ 1.234,56"
+    pasta = tmp_path / "Arquivos baixados" / "5-joao" / "092026" / "NF-e Saida - R$ 1.234,56"
     assert r["pasta"] == str(pasta) and (r["notas"], r["valor"]) == (2, 1234.56)  # a nota 3 foi cancelada
     (arquivo,) = list(pasta.iterdir())
     assert arquivo.name == "NF-e Saida 2026-09.zip" and arquivo.read_bytes() == zip1  # o ZIP intacto
@@ -134,7 +134,7 @@ def test_documento_pdf_na_pasta_do_servico(tmp_path):
     pdf = b"%PDF-1.4\n% certidao\n%%EOF"
     r = arquivos.salvar_documentos([("Saida.pdf", pdf)], tmp_path, "Padaria", "160123453", "certidao", "2026-09", "5")
     assert r["novos"] == 1
-    arq = tmp_path / "Arquivos baixados" / "5-Padaria" / "2026-09" / "Certidão de Débitos" / "Certidão de Débitos 2026-09.pdf"
+    arq = tmp_path / "Arquivos baixados" / "5-Padaria" / "092026" / "Certidão de Débitos" / "Certidão de Débitos 2026-09.pdf"
     assert arq.read_bytes() == pdf
     # de novo: o mesmo arquivo não repete; um novo fica ao lado
     assert arquivos.salvar_documentos([("Saida.pdf", pdf)], tmp_path, "Padaria", "160123453", "certidao", "2026-09", "5")["repetidos"] == 1

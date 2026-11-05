@@ -181,9 +181,23 @@ def test_baixa_a_competencia_separa_e_monta_o_relatorio(tmp_path):
     assert [n.numero for n in r.recebidas] == ["77"]
     assert r.canceladas == 1 and r.pdfs == 3
     emitidas = r.pasta / nfse.PASTA_EMITIDAS
-    assert r.pasta.parent.name == "7-Lotivisse" and r.pasta.name == "2026-09"
+    assert r.pasta.parent.name == "7-Lotivisse" and r.pasta.name == "092026"
     assert len(list(emitidas.glob("*.xml"))) == 2 and len(list(emitidas.glob("*.pdf"))) == 2
     assert len(list((r.pasta / nfse.PASTA_RECEBIDAS).glob("*.xml"))) == 1
+    # o mês num XML só, no envelope ABRASF (importação da Domínio): cada nota entra como veio, com a assinatura
+    import xml.etree.ElementTree as ET
+    lotes = sorted(p.name for p in r.pasta.glob("*lote ABRASF.xml"))
+    assert lotes == [f"{nfse.PASTA_EMITIDAS} 092026 - lote ABRASF.xml", f"{nfse.PASTA_RECEBIDAS} 092026 - lote ABRASF.xml"]
+    lote = (r.pasta / lotes[0]).read_bytes()
+    raiz = ET.fromstring(lote)
+    abrasf = "{http://www.abrasf.org.br/nfse.xsd}"
+    assert raiz.tag == f"{abrasf}EnviarLoteRpsSincronoResposta" and raiz.findtext(f"{abrasf}NumeroLote") == "202609"
+    assert raiz.findtext(f"{abrasf}Protocolo") == "COMP202609"
+    notas = raiz.findall(f"{abrasf}ListaNfse/{abrasf}CompNfse")
+    assert len(notas) == 2 and all(n[0].tag.endswith("NFSe") for n in notas)
+    for x in emitidas.glob("*.xml"):
+        original = x.read_bytes()
+        assert original[original.index(b"<NFSe"):].strip() in lote
 
     wb = load_workbook(r.relatorio)
     assert wb.sheetnames == ["Resumo", "Emitidas", "Recebidas"]
@@ -281,7 +295,7 @@ def test_so_emitidas_sem_relatorio_nem_pdf(chaves, cfg_nfse, tmp_path):
     portal = PortalFalso(documentos_exemplo())
     r = robo_xml.executar_nfse(cfg_nfse, tarefa(chaves, ["nfse_emitidas"]), chaves[0], sessao_falsa=portal)
     assert r.qtd_xml == 2 and set(r.detalhes) == {"nfse_emitidas"}
-    pasta = tmp_path / "destino" / "Arquivos baixados" / "7-Lotivisse" / "2026-09"
+    pasta = tmp_path / "destino" / "Arquivos baixados" / "7-Lotivisse" / "092026"
     assert not (pasta / nfse.PASTA_RECEBIDAS).exists() and not list(pasta.glob("*.xlsx"))
     assert not list(pasta.rglob("*.pdf")) and not any("/danfse/" in p[0] for p in portal.pedidos)
 
@@ -311,7 +325,7 @@ def test_tarefa_vai_para_a_pasta_do_escritorio(chaves, cfg_nfse, tmp_path):
     t["org_nome"] = "Contábil Sousa"
     r = robo_xml.executar_nfse(cfg_nfse, t, chaves[0], sessao_falsa=PortalFalso(documentos_exemplo()))
     assert r.qtd_xml == 2
-    assert (tmp_path / "destino" / "Contábil Sousa" / "Arquivos baixados" / "7-Lotivisse" / "2026-09" / nfse.PASTA_EMITIDAS).is_dir()
+    assert (tmp_path / "destino" / "Contábil Sousa" / "Arquivos baixados" / "7-Lotivisse" / "092026" / nfse.PASTA_EMITIDAS).is_dir()
 
 
 def test_certificado_do_escritorio_por_procuracao(chaves, cfg_nfse):

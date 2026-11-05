@@ -85,13 +85,15 @@ PADRAO = {
     },
     "pastas": {
         # Onde os arquivos ficam. Vazio = pasta Documentos deste computador / RPA XML LotiVisse
-        # (a mesma onde o robô roda). Dentro dela: Arquivos baixados/<ID>-<Nome>/<AAAA-MM>/...
+        # (a mesma onde o robô roda). Dentro dela: Arquivos baixados/<ID>-<Nome>/<MMAAAA>/...
         "destino": "",
         # Pacotes de diagnóstico. Vazio = <destino>/_diagnostico
         "diagnostico": "",
         # Robô que atende vários escritórios (VPS): uma pasta por escritório dentro do destino,
         # <destino>/<Escritório>/Arquivos baixados/... (cada escritório recebe só a pasta dele no Drive).
         "por_escritorio": False,
+        # Nome da pasta do mês: "MMAAAA" (102026, o caminho da importação automática da Domínio) ou "AAAA-MM"
+        "formato_competencia": "MMAAAA",
     },
     "chaves": {
         # Chave privada que abre as senhas do ATF cifradas pelo portal (gerada com --gerar-chaves)
@@ -288,4 +290,8 @@ def carregar() -> dict:
     if erradas or not filas:
         raise ConfigInvalida(f'"portal" > "filas" no config.json aceita {", ".join(FILAS)} (veio: {portal.get("filas")}).')
     portal["filas"] = filas
+    formato = str(cfg["pastas"].get("formato_competencia") or "MMAAAA").strip().upper()
+    if formato not in ("MMAAAA", "AAAA-MM"):
+        raise ConfigInvalida(f'"pastas" > "formato_competencia" no config.json aceita MMAAAA ou AAAA-MM (veio: {formato}).')
+    cfg["pastas"]["formato_competencia"] = formato
     return cfg

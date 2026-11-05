@@ -1,7 +1,7 @@
 """Arquivos baixados do ATF: guardados como vieram (ZIP continua ZIP) na pasta da empresa.
 
-Pasta final:  <destino>/Arquivos baixados/<ID>-<Nome>/<AAAA-MM>/<NF-e Saida | NF-e Entrada | NFC-e> - R$ <total>/
-(faturas, extrato, omissão e certidão: <AAAA-MM>/<Serviço>/, com o PDF como veio do ATF)
+Pasta final:  <destino>/Arquivos baixados/<ID>-<Nome>/<MMAAAA>/<NF-e Saida | NF-e Entrada | NFC-e> - R$ <total>/
+(faturas, extrato, omissão e certidão: <MMAAAA>/<Serviço>/, com o PDF como veio do ATF)
 (ex.: ID 5 e nome "joao" -> "5-joao"; sem ID na planilha, só o nome). O conteúdo de cada arquivo é
 lido só para saber de qual empresa e tipo ele é (IE/CNPJ do emitente ou destinatário dentro das
 notas), contar as notas e somar o valor (notas autorizadas, sem as canceladas) que vai no nome da pasta.
@@ -47,6 +47,14 @@ def expandir_tipos(tipos: list[str]) -> list[str]:
 # serviços que o ATF responde na hora com PDF (ou ZIP): o arquivo vai direto para a empresa
 SERVICOS_DOCUMENTO = ("faturas", "extrato", "omissao", "certidao", "cartao")
 PASTA_BAIXADOS = "Arquivos baixados"
+# Nome da pasta da competência: "MMAAAA" (102026, o caminho que a importação automática da Domínio lê) ou "AAAA-MM"
+FORMATO_COMPETENCIA = "MMAAAA"
+
+
+def pasta_competencia(competencia: str) -> str:
+    """Nome da pasta do mês a partir de "AAAA-MM" (ou de uma data "AAAA-MM-DD"): 102026 ou 2026-10."""
+    ano, mes = competencia[:4], competencia[5:7]
+    return f"{mes}{ano}" if FORMATO_COMPETENCIA == "MMAAAA" else f"{ano}-{mes}"
 _MAX_ARQUIVOS_ZIP = 50_000
 _MAX_TAMANHO_XML = 20 * 1024 * 1024
 
@@ -257,8 +265,7 @@ def salvar(arquivos: list[tuple[str, bytes]], destino: str | Path, nome: str, ie
         if not info:
             resumo.invalidos += 1
             continue
-        mes = info.emissao[:7]
-        pasta = base / mes / nome_tipo
+        pasta = base / pasta_competencia(info.emissao[:7]) / nome_tipo
         conferir = not pertence(info, ie, cnpj, tipo)
         if conferir:
             pasta = base / "_conferir"
@@ -467,12 +474,12 @@ def _pasta_do_tipo(pasta_mes: Path, nome_tipo: str) -> Path:
 def salvar_originais(brutos: list[tuple[str, bytes]], destino: str | Path, nome: str, ie: str, tipo: str,
                      competencia: str, codigo: str = "") -> dict:
     """Guarda os arquivos baixados como vieram (ZIP continua ZIP) em
-    Arquivos baixados/<ID>-<Nome>/<AAAA-MM>/<tipo - R$ total>/ e devolve
+    Arquivos baixados/<ID>-<Nome>/<MMAAAA>/<tipo - R$ total>/ e devolve
     {novos, repetidos, notas, valor, pasta}. Rodar de novo não duplica (compara o conteúdo)."""
     import hashlib
 
     nome_tipo = TIPOS.get(tipo, tipo)
-    pasta_mes = pasta_empresa(destino, nome, ie, codigo) / competencia
+    pasta_mes = pasta_empresa(destino, nome, ie, codigo) / pasta_competencia(competencia)
     pasta = _pasta_do_tipo(pasta_mes, nome_tipo)
     existentes = {hashlib.sha1(a.read_bytes()).hexdigest() for a in pasta.iterdir() if a.is_file()} if pasta.is_dir() else set()
     novos = repetidos = 0
@@ -517,12 +524,12 @@ def extensao(dados: bytes) -> str:
 def salvar_documentos(brutos: list[tuple[str, bytes]], destino: str | Path, nome: str, ie: str, tipo: str,
                       competencia: str, codigo: str = "") -> dict:
     """Faturas, extrato, omissão e certidão: guarda o PDF (ou ZIP) como veio em
-    Arquivos baixados/<ID>-<Nome>/<AAAA-MM>/<Serviço>/<Serviço> <AAAA-MM>.pdf. Rodar de novo guarda o
+    Arquivos baixados/<ID>-<Nome>/<MMAAAA>/<Serviço>/<Serviço> <AAAA-MM>.pdf. Rodar de novo guarda o
     novo ao lado ("(2)"), sem repetir arquivo igual. Devolve {novos, repetidos, pasta}."""
     import hashlib
 
     nome_tipo = TIPOS.get(tipo, tipo)
-    pasta = pasta_empresa(destino, nome, ie, codigo) / competencia / nome_tipo
+    pasta = pasta_empresa(destino, nome, ie, codigo) / pasta_competencia(competencia) / nome_tipo
     existentes = {hashlib.sha1(a.read_bytes()).hexdigest() for a in pasta.iterdir() if a.is_file()} if pasta.is_dir() else set()
     novos = repetidos = 0
     for _, dados in brutos:

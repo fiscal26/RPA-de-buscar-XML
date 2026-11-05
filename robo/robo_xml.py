@@ -3,10 +3,10 @@
 Roda no seu PC (com o Chrome aberto pelo abrir_chrome.bat), pega os agendamentos feitos no
 portal, entra no ATF com o login do contador, pesquisa as notas de cada empresa pela inscrição
 estadual e salva os XML em pastas.destino:
-    <destino>/Arquivos baixados/<ID>-<Nome>/<AAAA-MM>/<NF-e Saida | NF-e Entrada | NFC-e> - R$ <total>/
+    <destino>/Arquivos baixados/<ID>-<Nome>/<MMAAAA>/<NF-e Saida | NF-e Entrada | NFC-e> - R$ <total>/
 (o ZIP baixado do ATF é guardado como veio, sem descompactar)
 Faturas, extrato de pagamentos, omissão e inadimplência e certidão de débitos saem na hora, em PDF:
-    <destino>/Arquivos baixados/<ID>-<Nome>/<AAAA-MM>/<Serviço>/<Serviço> <AAAA-MM>.pdf
+    <destino>/Arquivos baixados/<ID>-<Nome>/<MMAAAA>/<Serviço>/<Serviço> <AAAA-MM>.pdf
 
 O ATF não entrega o XML na hora: a consulta (Tipo de Exibição XML) gera uma mensagem com o anexo em
 "Minhas Mensagens". Por isso o robô trabalha em rodadas de um login: envia as consultas de todas as
@@ -1169,6 +1169,7 @@ def main():
         sys.exit(str(e))
     for aviso in cfg.get("_avisos", []):
         log.warning("ATENÇÃO: %s", aviso)
+    arquivos.FORMATO_COMPETENCIA = cfg["pastas"]["formato_competencia"]  # pasta do mês: 102026 ou 2026-10
     if not (args.gerar_chaves or args.mostrar_chave_publica or args.modelo or args.gravar is not None):
         log.info("Os arquivos baixados ficam em: %s", Path(cfg["pastas"]["destino"]) / arquivos.PASTA_BAIXADOS)
 
