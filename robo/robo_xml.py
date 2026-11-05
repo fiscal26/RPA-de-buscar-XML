@@ -163,7 +163,10 @@ class Executor:
                     log.info("   %s IE %s: %d nota(s) no HTML; pedindo o XML de novo", nome, ie, n)
                     novo = com_sessao(atf.solicitar, tipo, ie, t.inicio, t.fim, nome)
                     atf.esperar_respostas_atrasadas(0)  # o HTML já respondeu: um alerta atrasado não vale mais
-                    if novo.ok:
+                    if novo.ok and novo.sem_notas:  # o ATF respondeu na hora que não há notas: vale a resposta
+                        log.info("   %s IE %s: o XML pedido de novo voltou sem notas; fica sem movimento", nome, ie)
+                        envio = envios[chave] = novo
+                    elif novo.ok:
                         novo.sem_notas = False
                         novo.hora = min(h for h in (envio.hora, novo.hora) if h) if (envio.hora or novo.hora) else None
                         envio = envios[chave] = novo

@@ -317,6 +317,9 @@ class AtfFalso(BaseHTTPRequestHandler):
         q = {k: v[0] for k, v in parse_qs(u.query, keep_blank_values=True).items()}
         logado = "sessao=ok" in (self.headers.get("Cookie") or "")
         p = u.path
+        if p == "/velha":  # aba esquecida no Chrome, com o resultado em HTML de outra empresa
+            self._html("<table><tr><td>32955</td></tr></table><p>(4) registro(s) encontrado(s)</p>")
+            return
         if p == "/atf/":
             if not logado:
                 self._html("", status=302, local="/atf/seg/SEGf_Login.jsp")
@@ -900,6 +903,27 @@ def test_sem_notas_que_chega_atrasado_vira_sem_movimento(ambiente):
     assert r.detalhes["nfce"]["situacao"] == "sem_movimento", r
     assert not r.pendente, r
     assert ESTADO["consultas"][-1]["exib"] == "1"  # conferiu em HTML antes de dar como sem movimento
+
+
+def test_aba_velha_com_resultado_nao_engana_a_conferencia(ambiente):
+    """Outra aba do Chrome mostra "(4) registro(s) encontrado(s)" de uma consulta antiga: a conferência lê só
+    a aba do robô. Sem notas = sem movimento, sem pedir o XML de novo."""
+    cfg, _ = ambiente
+    base = cfg["atf"]["url_login"].rsplit("/atf/", 1)[0]
+    pedido = urllib.request.Request(f"http://127.0.0.1:{cfg['chrome']['porta']}/json/new?{base}/velha", method="PUT")
+    aba = json.loads(urllib.request.urlopen(pedido, timeout=5).read())
+    ESTADO["sem_notas_atrasado"] = True
+    antes = len(ESTADO["consultas"])
+    executor = robo_xml.Executor(cfg)
+    try:
+        (r,) = executor.executar_rodada([_trabalho(IE_OUTRA, "Mercado", ["nfce"], codigo="019")])
+    finally:
+        ESTADO.pop("sem_notas_atrasado", None)
+        executor.fechar()
+        urllib.request.urlopen(f"http://127.0.0.1:{cfg['chrome']['porta']}/json/close/{aba['id']}", timeout=5)
+    assert [c["exib"] for c in ESTADO["consultas"][antes:]] == ["3", "1"], ESTADO["consultas"][antes:]
+    assert r.detalhes["nfce"]["situacao"] == "sem_movimento", r
+    assert not r.pendente, r
 
 
 def test_alerta_atrasado_de_outra_consulta_nao_vira_sem_movimento(ambiente):
