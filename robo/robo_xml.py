@@ -248,7 +248,13 @@ class Executor:
                                 log.warning("   faturamento MEI não enviado ao portal: %s", erro)
                     self._progresso(t, tipo, **situacao_emissao(e))
 
-        # 2) recolhe as respostas em Minhas Mensagens
+        # 2) recolhe as respostas em Minhas Mensagens. Antes, a última consulta ainda pode receber o "Nenhum registro
+        # satisfaz a pesquisa" atrasado: sem notas o ATF não manda mensagem, e o robô ficaria esperando por ela.
+        atf.esperar_respostas_atrasadas(atf.atf["segundos_resposta"])
+        por_ie = {t.ie: t for t in trabalhos}
+        for (ie, tipo), envio in envios.items():
+            if envio.ok and envio.sem_notas and ie in por_ie:
+                self._progresso(por_ie[ie], tipo, "sem_movimento", "sem notas no período")
         esperadas: dict[str, int] = {}
         for (ie, tipo), envio in envios.items():
             if envio.ok and not envio.sem_notas:

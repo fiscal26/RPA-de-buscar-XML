@@ -197,7 +197,7 @@ PADRAO = {
         "tentar_automatico": True,
         "segundos_login": 60,
         # Depois de clicar em Consultar: quanto esperar a resposta na tela (sem resposta = segue)
-        "segundos_resposta": 15,
+        "segundos_resposta": 25,
         # Quanto esperar o ATF entregar os XML em Minhas Mensagens, e de quanto em quanto olhar
         "minutos_espera_mensagens": 30,
         # Quantas vezes a caixa é lida em cada rodada. O que não chegou fica pendente: o robô segue para as
