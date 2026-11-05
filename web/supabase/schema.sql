@@ -329,7 +329,7 @@ end $$;
 drop function if exists public.xml_nfse_pegar_lote(text, integer);
 create or replace function public.xml_nfse_pegar_lote(p_robo text, p_max integer default 10)
 returns table (id uuid, cnpj text, nome text, codigo text, tipos text[], data_inicio date, data_fim date,
-               certificado_cnpj text, pfx_cifrado text, senha_cifrada text, org_nome text, procurador boolean)
+               certificado_cnpj text, pfx_cifrado text, senha_cifrada text, org_nome text, procurador boolean, mei boolean)
 language plpgsql security definer set search_path = public as $$
 #variable_conflict use_column
 declare
@@ -373,7 +373,9 @@ begin
 
   return query
   select t.id, e.cnpj, t.nome, t.codigo, t.tipos, a.data_inicio, a.data_fim, c.cnpj, c.pfx_cifrado, c.senha_cifrada, o.nome,
-         c.procurador
+         c.procurador,
+         -- MEI na planilha da SEFAZ (mesmo CNPJ, mesmo escritório): a NFS-e sai com o ano todo na primeira vez
+         exists (select 1 from public.xml_empresas s where s.org_id = e.org_id and s.cnpj = e.cnpj and 'mei' = any(s.tipos))
     from public.xml_tarefas t
     join public.organizacoes o on o.id = t.org_id
     join public.xml_agendamentos a on a.id = t.agendamento_id

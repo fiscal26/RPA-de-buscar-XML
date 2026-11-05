@@ -321,6 +321,7 @@ class NotaServico:
     numero: str = ""
     emissao: str = ""          # AAAA-MM-DD
     competencia: str = ""      # AAAA-MM
+    simples: str = ""          # opSimpNac do prestador: 1 não optante, 2 MEI, 3 ME/EPP
     situacao: str = ""         # código cStat
     prestador_doc: str = ""
     prestador_nome: str = ""
@@ -371,6 +372,7 @@ def ler_nfse(dados: bytes) -> NotaServico | None:
     emit = _achar(inf, "emit")
     if prest is not None:
         n.prestador_doc = _txt(prest, "CNPJ") or _txt(prest, "CPF")
+        n.simples = _txt(prest, "opSimpNac")
     n.prestador_nome = (_txt(emit, "xNome") if emit is not None else "") or (_txt(prest, "xNome") if prest is not None else "")
     if not n.prestador_doc and emit is not None:
         n.prestador_doc = _txt(emit, "CNPJ") or _txt(emit, "CPF")
@@ -495,17 +497,38 @@ def lote_abrasf(xmls: list[bytes], competencia: str, agora: "datetime | None" = 
     return b"".join(partes)
 
 
+def eh_mei(cnpj: str, cache_raiz: Path | None = None) -> bool:
+    """A empresa emitiu alguma NFS-e como MEI (opSimpNac = 2)? Lê só o cache local, sem chamar o portal."""
+    dono = so_digitos(cnpj)
+    for _, tipo, xml in Cache(cnpj, cache_raiz or CACHE).xmls():
+        if tipo.upper() == "EVENTO":
+            continue
+        nota = ler_nfse(xml)
+        if nota is not None and so_digitos(nota.prestador_doc) == dono and nota.simples == "2":
+            return True
+    return False
+
+
+def meses_sem_busca(destino: str | Path, nome: str, cnpj: str, codigo: str, competencia: str) -> list[str]:
+    """Meses do ano ANTES da competência (de janeiro em diante) sem pasta da empresa: o MEI que chega sem
+    acompanhamento já sai com o ano todo, como no Dossiê MEI. Devolve ["AAAA-MM", ...]."""
+    ano, mes = int(competencia[:4]), int(competencia[5:7])
+    base = pasta_empresa(destino, nome, cnpj, codigo)
+    return [f"{ano}-{m:02d}" for m in range(1, mes) if not (base / pasta_competencia(f"{ano}-{m:02d}")).exists()]
+
+
 def nome_do_arquivo(nota: NotaServico) -> str:
     outro = nota.tomador_nome if nota.prestador_doc else ""
     return nome_de_pasta(f"NFS-e {nota.numero} - {outro}".strip(" -"))[:60] + f" - {nota.chave[-8:]}"
 
 
 def baixar_competencia(cliente: ClienteADN, cnpj: str, competencia: str, destino: str | Path, nome: str,
-                       codigo: str = "", pdf: bool = True, cache_raiz: Path = CACHE, com_emitidas: bool = True,
-                       com_recebidas: bool = True, relatorio: bool = True) -> ResultadoNfse:
-    """Atualiza o cache, salva os XML (e o PDF) da competência e gera o relatório de retenções."""
-    cache = Cache(cnpj, cache_raiz)
-    res = ResultadoNfse(novos_documentos=atualizar_cache(cliente, cache))
+                       codigo: str = "", pdf: bool = True, cache_raiz: Path | None = None, com_emitidas: bool = True,
+                       com_recebidas: bool = True, relatorio: bool = True, atualizar: bool = True) -> ResultadoNfse:
+    """Atualiza o cache, salva os XML (e o PDF) da competência e gera o relatório de retenções.
+    atualizar=False usa só o cache (outro mês da mesma empresa, logo depois de atualizado)."""
+    cache = Cache(cnpj, cache_raiz or CACHE)
+    res = ResultadoNfse(novos_documentos=atualizar_cache(cliente, cache) if atualizar else 0)
     emitidas, recebidas, res.canceladas = separar(cache, cnpj, competencia)
     emitidas = emitidas if com_emitidas else []
     recebidas = recebidas if com_recebidas else []
