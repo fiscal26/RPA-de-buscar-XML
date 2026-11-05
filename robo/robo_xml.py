@@ -44,7 +44,7 @@ import arquivos
 import config
 import cripto
 import planilha
-from atf_pb import (SERVICOS, TIPO_TELA, MensagensIndisponiveis, AtfPB, Diagnostico, EtapaNaoConcluida, Recolha,
+from atf_pb import (SERVICOS, TIPO_TELA, MensagensIndisponiveis, AtfPB, Diagnostico, Envio, EtapaNaoConcluida, Recolha,
                     SenhaInvalida, SessaoExpirada, SiteForaDoAr)
 from navegador import Chrome, ChromeIndisponivel
 
@@ -148,11 +148,16 @@ class Executor:
         for chave, envio in list(envios.items()):
             ie, tipo = chave
             t = por_ie.get(ie)
-            if t is None or not envio.duvidoso:
+            if t is None:
                 continue
             nome = arquivos.TIPOS.get(tipo, tipo)
-            self._progresso(t, tipo, "andamento", "conferindo no ATF (consulta em HTML)")
-            n = com_sessao(atf.conferir_html, tipo, ie, t.inicio, t.fim, nome)
+            if envio.duvidoso:
+                self._progresso(t, tipo, "andamento", "conferindo no ATF (consulta em HTML)")
+                n = com_sessao(atf.conferir_html, tipo, ie, t.inicio, t.fim, nome)
+            elif envio.ok and envio.notas_html and envio.atrasada and not envio.confirmada:
+                n = envio.notas_html  # o HTML já mostrou notas, mas o XML recebeu um "Nenhum registro": pede de novo
+            else:
+                continue
             if n is None:
                 log.info("   %s IE %s: não deu para conferir em HTML; fica como o ATF respondeu", nome, ie)
             elif n == 0:
@@ -244,13 +249,23 @@ class Executor:
                         raise EtapaNaoConcluida("a sessão do ATF expirou duas vezes")
 
         # 1) envia as consultas de XML (uma por empresa e tipo; Emitente OU Destinatário)
+        html_antes = atf.atf.get("conferir_em_html", True)
         envios: dict[tuple[str, str], object] = {}
         for t in trabalhos:
             log.info("%s — %s", t.rotulo, ", ".join(arquivos.TIPOS.get(x, x) for x in t.tipos))
             for tipo in t.tipos:
                 if tipo in TIPO_TELA:
+                    nome = arquivos.TIPOS.get(tipo, tipo)
                     self._progresso(t, tipo, "andamento", "consultando no ATF")
-                    envio = envios[(t.ie, tipo)] = com_sessao(atf.solicitar, tipo, t.ie, t.inicio, t.fim, arquivos.TIPOS.get(tipo, tipo))
+                    # primeiro em HTML (responde na hora): sem notas, nem pede o XML
+                    n = com_sessao(atf.conferir_html, tipo, t.ie, t.inicio, t.fim, nome) if html_antes else None
+                    if n == 0:
+                        envios[(t.ie, tipo)] = Envio(ie=t.ie, tipo=tipo, sem_notas=True, notas_html=0,
+                                                     resposta="Nenhum registro (consulta em HTML)")
+                        self._progresso(t, tipo, "sem_movimento", "sem notas no período (consulta em HTML)")
+                        continue
+                    envio = envios[(t.ie, tipo)] = com_sessao(atf.solicitar, tipo, t.ie, t.inicio, t.fim, nome)
+                    envio.notas_html = n
                     if not envio.ok:
                         self._progresso(t, tipo, "erro", envio.resposta or "consulta não aceita")
                     elif envio.sem_notas:
@@ -290,7 +305,12 @@ class Executor:
         # satisfaz a pesquisa" atrasado: sem notas o ATF não manda mensagem, e o robô ficaria esperando por ela.
         atf.esperar_respostas_atrasadas(atf.atf["segundos_resposta"])
         por_ie = {t.ie: t for t in trabalhos}
-        if atf.atf.get("conferir_em_html", True):
+        for envio in envios.values():  # o HTML mostrou notas: um "Nenhum registro" atrasado não vale
+            if envio.notas_html and envio.atrasada and envio.sem_notas:
+                envio.sem_notas = False
+                log.info("   %s IE %s: alerta atrasado ignorado (o HTML mostrou %d nota(s))", envio.tipo, envio.ie,
+                         envio.notas_html)
+        if html_antes:
             self._conferir_em_html(envios, por_ie, com_sessao)
         for (ie, tipo), envio in envios.items():
             if envio.ok and envio.sem_notas and ie in por_ie:

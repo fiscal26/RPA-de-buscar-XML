@@ -198,10 +198,12 @@ PADRAO = {
         "segundos_login": 60,
         # Depois de clicar em Consultar: quanto esperar a resposta na tela (sem resposta = segue)
         "segundos_resposta": 25,
-        # Consulta em XML que não teve resposta a tempo (ou teve um "Nenhum registro" atrasado, que pode ser de
-        # outra consulta): o robô refaz a consulta em HTML e lê o "(N) registro(s) encontrado(s)" antes de
-        # marcar sem movimento
+        # Antes de pedir o XML, o robô consulta em HTML (responde na hora) e lê o "(N) registro(s) encontrado(s)":
+        # 0 = sem movimento, e o XML nem é pedido. Também confere em HTML a consulta em XML que ficou sem resposta.
         "conferir_em_html": True,
+        # Gravação do passo a passo: um print da tela do ATF a cada passo, em <diagnóstico>/passos (últimos dias)
+        "gravar_passos": False,
+        "dias_passos": 3,
         # Quanto esperar o ATF entregar os XML em Minhas Mensagens, e de quanto em quanto olhar
         "minutos_espera_mensagens": 30,
         # Quantas vezes a caixa é lida em cada rodada. O que não chegou fica pendente: o robô segue para as

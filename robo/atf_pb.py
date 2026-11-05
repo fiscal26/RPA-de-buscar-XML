@@ -29,7 +29,9 @@ passa para o modo assistido. Senhas nunca entram no diagnóstico.
 """
 from __future__ import annotations
 
+import logging
 import random
+import shutil
 import re
 import time
 from dataclasses import dataclass, field
@@ -41,6 +43,7 @@ from urllib.parse import urlparse
 from navegador import CapturadorArquivos, pausa
 
 Aviso = Callable[[str], None]
+_log_robo = logging.getLogger("robo")
 
 _ERRO_LOGIN = re.compile(
     r"senha\s+(inv[aá]lida|incorreta|n[aã]o confere|expirada)|usu[aá]rio\s+(inv[aá]lido|n[aã]o encontrado|bloqueado)|"
@@ -300,11 +303,12 @@ class Envio:
     resposta: str = ""
     hora: datetime | None = None   # hora do ATF ao clicar em Consultar (as mensagens chegam depois dela)
     atrasada: bool = False         # a resposta chegou depois da espera (pode ser de outra consulta)
+    notas_html: int | None = None  # "(N) registro(s) encontrado(s)" da consulta em HTML (None = não conferida)
 
     @property
     def duvidoso(self) -> bool:
         """Sem resposta a tempo, ou com um "Nenhum registro" atrasado: vale conferir em HTML."""
-        return self.ok and not self.assistido and (self.atrasada or not self.resposta)
+        return self.ok and not self.assistido and self.notas_html is None and (self.atrasada or not self.resposta)
 
     @property
     def confirmada(self) -> bool:
@@ -346,6 +350,7 @@ class Diagnostico:
 
     def log(self, texto: str):
         self.linhas.append(f"{datetime.now():%H:%M:%S} {texto}")
+        _log_robo.info("   · %s", texto)  # o passo a passo também no robo_xml.log
 
     def salvar(self, page, motivo: str) -> Path | None:
         pasta = self.pasta_base / f"{datetime.now():%Y-%m-%d_%H%M%S}_{self.rotulo}_{re.sub(r'[^a-z0-9]+', '-', motivo.lower())[:30]}"
@@ -423,6 +428,8 @@ class AtfPB:
         self._url_tela: dict[str, tuple] = {}  # tela -> (quadro, endereço)
         self._dossie_cache: dict[tuple, dict] = {}  # (IE, início) -> Optante SIMEI e linhas de Docs fiscais
         self._respostas: list[str] = []
+        self._pasta_passos: Path | None = None
+        self._passo = 0
         # consulta cujo Consultar já foi clicado e ainda sem resposta: o ATF às vezes mostra o "Nenhum registro
         # satisfaz a pesquisa" (num alerta) depois do tempo de espera; quando chega, vale para ela
         self._envio_em_preparo = None
@@ -440,6 +447,30 @@ class AtfPB:
     # ------------------------------------------------------------------ utilidades
     def _log(self, texto: str):
         self.diag.log(texto)
+        if self.atf.get("gravar_passos"):
+            self._foto_do_passo(texto)
+
+    def _foto_do_passo(self, texto: str):
+        """Gravação do passo a passo (opção atf.gravar_passos): um print da aba do robô a cada passo, numa pasta
+        por sessão em <diagnóstico>/passos. Senhas aparecem como bolinhas (o ATF mascara o campo)."""
+        try:
+            if self._pasta_passos is None:
+                base = Path(self.diag.pasta_base) / "passos"
+                base.mkdir(parents=True, exist_ok=True)
+                limite = time.time() - self.atf.get("dias_passos", 3) * 86400
+                for velha in base.iterdir():  # só os últimos dias, para não encher o disco
+                    if velha.is_dir() and velha.stat().st_mtime < limite:
+                        shutil.rmtree(velha, ignore_errors=True)
+                self._pasta_passos = base / f"{datetime.now():%Y-%m-%d_%H%M%S}_{self.diag.rotulo}"
+                self._pasta_passos.mkdir(parents=True, exist_ok=True)
+            self._passo += 1
+            with open(self._pasta_passos / "passos.txt", "a", encoding="utf-8") as f:
+                f.write(f"{self._passo:04d} {datetime.now():%H:%M:%S} {texto}\n")
+            if self.page is not None and not self.page.is_closed():
+                nome = re.sub(r"[^A-Za-z0-9]+", "-", texto)[:50].strip("-")
+                self.page.screenshot(path=str(self._pasta_passos / f"{self._passo:04d}_{nome}.png"), timeout=5000)
+        except Exception:
+            pass  # a gravação é só para conferir: nunca atrapalha o robô
 
     def _primeiro_visivel(self, loc):
         try:
@@ -745,6 +776,7 @@ class AtfPB:
     def _dialogo(self, dialogo):
         mensagem = dialogo.message
         self._respostas.append(mensagem)
+        self._log(f"Alerta do ATF (o robô clicou em OK): {mensagem[:150]}")
         try:
             dialogo.accept()
         except Exception:
@@ -833,6 +865,8 @@ class AtfPB:
         """Refaz a consulta com Tipo de Exibição = HTML: o ATF mostra a lista na hora, com "(N) registro(s)
         encontrado(s)", ou o alerta "Nenhum registro satisfaz a pesquisa". Devolve N (0 = sem notas, com
         certeza) ou None se não deu para saber."""
+        if not self.atf["tentar_automatico"]:
+            return None
         antes = set(self.contexto.pages)
         self._envio_aguardando = None  # o alerta desta consulta não vale para nenhuma consulta em XML
         self._respostas = []

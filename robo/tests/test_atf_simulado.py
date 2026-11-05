@@ -109,13 +109,17 @@ def _responder(tela: str, campos: dict) -> str:
     q = {"tela": tela, "emit": emit, "dest": dest, "ini": campos.get("edtDtInicial", ""),
          "fim": campos.get("edtDtFinal", ""), "exib": campos.get("cmbTpExibicao", "")}
     ESTADO["consultas"].append(q)
-    if ESTADO.pop("sem_notas_atrasado", False):
-        return "ALERTA_ATRASADO"  # sem notas: nenhuma mensagem na caixa, só o alerta (que demora)
     if emit and dest:
         ESTADO["recusas"].append(q)
         return "Erro: informe apenas o Emitente ou o Destinatário."
-    if q["exib"] == "1":  # HTML: o ATF mostra a lista na hora (a conferência do robô)
-        return f"HTML:{ESTADO.get('html_notas', {}).get(emit or dest, 0)}"
+    if q["exib"] == "1":  # HTML: o ATF mostra a lista na hora (o robô consulta assim antes de pedir o XML)
+        if ESTADO.get("html_mudo", 0) > 0:  # ATF lento: a lista não aparece
+            ESTADO["html_mudo"] -= 1
+            return ""
+        ie = emit or dest or ESTADO["blocos"].get(f"{tela}_cmpReme", "")
+        return f"HTML:{ESTADO.get('html_notas', {}).get(ie, 1)}"
+    if ESTADO.pop("sem_notas_atrasado", False):
+        return "ALERTA_ATRASADO"  # sem notas: nenhuma mensagem na caixa, só o alerta (que demora)
     if ESTADO.pop("sem_resposta", False):  # ATF lento: a consulta vale, mas a tela não confirma a tempo
         _responder_xml(tela, q, emit, dest, campos)
         return ""
@@ -629,7 +633,7 @@ def test_rodada_um_login_xml_pelas_mensagens(ambiente):
 
     assert ESTADO["logins"] == ["mar00134"]  # uma sessão só para a rodada
     assert not ESTADO["recusas"]  # nunca Emitente e Destinatário juntos
-    blocos = [("E" if c["emit"] else "D", c["emit"] or c["dest"], c["tela"]) for c in ESTADO["consultas"][-4:]]
+    blocos = [("E" if c["emit"] else "D", c["emit"] or c["dest"], c["tela"]) for c in [c for c in ESTADO["consultas"] if c["exib"] != "1"][-4:]]
     assert blocos == [("E", IE_EMPRESA, "nfe"), ("D", IE_EMPRESA, "nfe"), ("D", IE_OUTRA, "nfe"), ("E", IE_OUTRA, "nfce")]
 
     assert r1.status == "concluido", r1
@@ -806,7 +810,7 @@ def test_cte_e_conferencia_de_cartao(ambiente):
         if executor.atf:
             print("\n".join(executor.atf.diag.linhas))  # aparece se o teste falhar
         executor.fechar()
-    consultas = [c for c in ESTADO["consultas"] if c["tela"] == "cte"]
+    consultas = [c for c in ESTADO["consultas"] if c["tela"] == "cte" and c["exib"] != "1"]
     assert [(c["rem"], c["dest"]) for c in consultas[-4:]] == [
         (IE_EMPRESA, ""), ("", IE_EMPRESA), (IE_OUTRA, ""), ("", IE_OUTRA)]  # remetente e destinatário
     assert r1.status == "concluido", r1
@@ -888,77 +892,89 @@ def test_botao_coberto_pelo_layout_do_atf(ambiente):
     assert "Faça no Chrome" not in r.mensagem, r
 
 
-def test_sem_notas_que_chega_atrasado_vira_sem_movimento(ambiente):
-    """O ATF mostra o "Nenhum registro satisfaz a pesquisa" num alerta e às vezes depois da espera do robô.
-    Sem notas não há mensagem na caixa: a consulta tem de ficar como sem movimento, e não "aguardando o ATF"."""
-    cfg, _ = ambiente
-    ESTADO["sem_notas_atrasado"] = True
+def _rodada_mercado(cfg, codigo, **estado):
+    """Uma rodada da NFC-e do Mercado com o ATF no estado pedido; devolve o resultado e as exibições usadas
+    (1 = HTML, 3 = XML), na ordem."""
+    ESTADO.update(estado)
+    antes = len(ESTADO["consultas"])
     executor = robo_xml.Executor(cfg)
     try:
-        (r,) = executor.executar_rodada([_trabalho(IE_OUTRA, "Mercado", ["nfce"], codigo="016")])
+        (r,) = executor.executar_rodada([_trabalho(IE_OUTRA, "Mercado", ["nfce"], codigo=codigo)])
     finally:
-        ESTADO.pop("sem_notas_atrasado", None)
+        for k in ("sem_notas_atrasado", "html_notas", "html_mudo", "sem_resposta"):
+            ESTADO.pop(k, None)
         executor.fechar()
-    assert r.detalhes["nfce"]["sem_notas"], r
+    return r, [c["exib"] for c in ESTADO["consultas"][antes:]]
+
+
+def test_sem_notas_no_html_nem_pede_o_xml(ambiente):
+    """Primeiro em HTML: sem notas, o robô marca sem movimento e nem pede o XML (que não viria pela caixa)."""
+    cfg, _ = ambiente
+    r, exib = _rodada_mercado(cfg, "016", html_notas={IE_OUTRA: 0})
+    assert exib == ["1"], exib
+    assert r.detalhes["nfce"]["sem_notas"] and r.detalhes["nfce"]["situacao"] == "sem_movimento", r
+    assert not r.pendente, r
+
+
+def test_html_lento_e_sem_notas_que_chega_atrasado(ambiente):
+    """O HTML não respondeu e o XML recebeu um "Nenhum registro" atrasado: confere em HTML de novo antes de
+    dar como sem movimento."""
+    cfg, _ = ambiente
+    r, exib = _rodada_mercado(cfg, "016", html_notas={IE_OUTRA: 0}, html_mudo=1, sem_notas_atrasado=True)
+    assert exib == ["1", "3", "1"], exib
     assert r.detalhes["nfce"]["situacao"] == "sem_movimento", r
     assert not r.pendente, r
-    assert ESTADO["consultas"][-1]["exib"] == "1"  # conferiu em HTML antes de dar como sem movimento
 
 
 def test_aba_velha_com_resultado_nao_engana_a_conferencia(ambiente):
     """Outra aba do Chrome mostra "(4) registro(s) encontrado(s)" de uma consulta antiga: a conferência lê só
-    a aba do robô. Sem notas = sem movimento, sem pedir o XML de novo."""
+    a aba do robô. Sem notas = sem movimento, sem pedir o XML."""
     cfg, _ = ambiente
     base = cfg["atf"]["url_login"].rsplit("/atf/", 1)[0]
     pedido = urllib.request.Request(f"http://127.0.0.1:{cfg['chrome']['porta']}/json/new?{base}/velha", method="PUT")
     aba = json.loads(urllib.request.urlopen(pedido, timeout=5).read())
-    ESTADO["sem_notas_atrasado"] = True
-    antes = len(ESTADO["consultas"])
-    executor = robo_xml.Executor(cfg)
     try:
-        (r,) = executor.executar_rodada([_trabalho(IE_OUTRA, "Mercado", ["nfce"], codigo="019")])
+        r, exib = _rodada_mercado(cfg, "019", html_notas={IE_OUTRA: 0})
     finally:
-        ESTADO.pop("sem_notas_atrasado", None)
-        executor.fechar()
         urllib.request.urlopen(f"http://127.0.0.1:{cfg['chrome']['porta']}/json/close/{aba['id']}", timeout=5)
-    assert [c["exib"] for c in ESTADO["consultas"][antes:]] == ["3", "1"], ESTADO["consultas"][antes:]
+    assert exib == ["1"], exib
     assert r.detalhes["nfce"]["situacao"] == "sem_movimento", r
     assert not r.pendente, r
 
 
 def test_alerta_atrasado_de_outra_consulta_nao_vira_sem_movimento(ambiente):
-    """O "Nenhum registro" atrasado pode ser de outra consulta: o HTML mostra notas, e o robô pede o XML de novo."""
-    cfg, pasta = ambiente
-    ESTADO["sem_notas_atrasado"] = True
-    ESTADO["html_notas"] = {IE_OUTRA: 1}
-    antes = len(ESTADO["consultas"])
-    executor = robo_xml.Executor(cfg)
-    try:
-        (r,) = executor.executar_rodada([_trabalho(IE_OUTRA, "Mercado", ["nfce"], codigo="017")])
-    finally:
-        ESTADO.pop("sem_notas_atrasado", None)
-        ESTADO.pop("html_notas", None)
-        executor.fechar()
-    assert [c["exib"] for c in ESTADO["consultas"][antes:]] == ["3", "1", "3"]  # XML, conferência em HTML, XML de novo
+    """O HTML mostrou notas e o XML recebeu um "Nenhum registro" atrasado, sem confirmar o envio: não vira sem
+    movimento, e o robô pede o XML de novo."""
+    cfg, _ = ambiente
+    r, exib = _rodada_mercado(cfg, "017", html_notas={IE_OUTRA: 1}, sem_notas_atrasado=True)
+    assert exib == ["1", "3", "3"], exib
     assert not r.detalhes["nfce"]["sem_notas"], r
     assert r.detalhes["nfce"]["situacao"] != "sem_movimento", r
     assert r.detalhes["nfce"].get("notas"), r
 
 
 def test_consulta_sem_resposta_e_conferida_em_html(ambiente):
-    """A tela não confirmou a consulta a tempo: o HTML mostra que há notas, e o XML chega pela caixa."""
-    cfg, pasta = ambiente
-    ESTADO["sem_resposta"] = True
-    ESTADO["html_notas"] = {IE_OUTRA: 2}
-    antes = len(ESTADO["consultas"])
-    executor = robo_xml.Executor(cfg)
-    try:
-        (r,) = executor.executar_rodada([_trabalho(IE_OUTRA, "Mercado", ["nfce"], codigo="018")])
-    finally:
-        ESTADO.pop("sem_resposta", None)
-        ESTADO.pop("html_notas", None)
-        executor.fechar()
-    assert [c["exib"] for c in ESTADO["consultas"][antes:]][:2] == ["3", "1"]
+    """O HTML não respondeu e a tela não confirmou o XML: confere em HTML, vê notas, pede o XML de novo."""
+    cfg, _ = ambiente
+    r, exib = _rodada_mercado(cfg, "018", html_notas={IE_OUTRA: 2}, html_mudo=1, sem_resposta=True)
+    assert exib[:3] == ["1", "3", "1"], exib
     assert not r.pendente, r
     assert r.detalhes["nfce"]["situacao"] != "sem_movimento", r
     assert r.detalhes["nfce"].get("notas"), r
+
+
+def test_passo_a_passo_no_log_e_gravado(ambiente, caplog):
+    """O passo a passo aparece no log e, com gravar_passos, cada passo vira um print em <diagnóstico>/passos."""
+    import copy as _c
+    import logging as _l
+    cfg, pasta = ambiente
+    cfg = _c.deepcopy(cfg)
+    cfg["atf"]["gravar_passos"] = True
+    cfg["pastas"]["diagnostico"] = str(pasta / "diag_passos")
+    with caplog.at_level(_l.INFO, logger="robo"):
+        r, exib = _rodada_mercado(cfg, "020", html_notas={IE_OUTRA: 0})
+    assert any("exibição HTML" in m for m in caplog.messages), caplog.messages[-20:]
+    assert any("Alerta do ATF" in m and "Nenhum registro" in m for m in caplog.messages), caplog.messages[-20:]
+    (sessao,) = list((pasta / "diag_passos" / "passos").iterdir())
+    assert "exibição HTML" in (sessao / "passos.txt").read_text(encoding="utf-8")
+    assert list(sessao.glob("*.png"))
