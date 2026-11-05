@@ -23,13 +23,14 @@ falha() { printf '\033[1;31mERRO: %s\033[0m\n' "$*" >&2; exit 1; }
 
 passo "Programa de envio (rclone)"
 command -v rclone >/dev/null || { apt-get update -y >/dev/null; DEBIAN_FRONTEND=noninteractive apt-get install -y rclone >/dev/null; }
-rclone version | head -1
+rclone version 2>/dev/null | sed -n 1p || true  # (head fecharia o cano e o set -e pararia o script)
 
 TROCAR=n
-if sudo -u "$USUARIO" rclone listremotes 2>/dev/null | grep -qx "$REMOTO:"; then
+ligado() { sudo -u "$USUARIO" rclone listremotes 2>/dev/null | grep -x "$REMOTO:" >/dev/null; }
+if ligado; then
   printf 'O Google Drive já está ligado. Entrar com outra conta? [s/N]: '; read -r TROCAR </dev/tty
 fi
-if ! sudo -u "$USUARIO" rclone listremotes 2>/dev/null | grep -qx "$REMOTO:" || [ "${TROCAR,,}" = s ]; then
+if ! ligado || [ "${TROCAR,,}" = s ]; then
   IP=$(curl -4 -s --max-time 5 https://ifconfig.me || hostname -I | awk '{print $1}')
   passo "Entrar na conta Google (uma vez só)"
   cat <<EOF
@@ -40,6 +41,12 @@ if ! sudo -u "$USUARIO" rclone listremotes 2>/dev/null | grep -qx "$REMOTO:" || 
 4. Quando o navegador mostrar "Success", volte aqui. Depois pode fechar o PowerShell.
 EOF
   read -r _ </dev/tty
+  if ss -ltn 2>/dev/null | grep -q '127.0.0.1:53682 '; then
+    ss -ltnp 2>/dev/null | grep ':53682 ' || true
+    falha "a porta 53682 da VPS já está ocupada (um túnel aberto DENTRO da VPS ou uma tentativa anterior presa).
+O túnel do passo 1 é no PowerShell do SEU COMPUTADOR (o prompt começa com PS C:\...), não na VPS.
+Libere a porta com:  fuser -k 53682/tcp   e rode de novo."
+  fi
   sudo -u "$USUARIO" rclone config delete "$REMOTO" >/dev/null 2>&1 || true
   sudo -u "$USUARIO" rclone config create "$REMOTO" drive scope=drive.file </dev/tty \
     || falha "não consegui entrar no Google Drive. Confira o túnel do passo 1 e rode de novo."

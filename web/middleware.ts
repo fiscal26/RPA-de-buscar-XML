@@ -30,9 +30,9 @@ export async function middleware(request: NextRequest) {
   if (caminho.startsWith("/sair")) return resposta;
   const login = caminho.startsWith("/login");
   // abertas a todos: a apresentação, as páginas por assunto, o login, o pedido de senha nova e o retorno do link do e-mail;
-  // /api/cron confere o CRON_SECRET da Vercel
+  // /api/cron confere o CRON_SECRET da Vercel; /api/robo, a chave secreta do Supabase que o robô usa
   const publico = login || caminho === "/" || SLUGS_ASSUNTOS.includes(caminho.slice(1)) || caminho.startsWith("/esqueci-senha") || caminho.startsWith("/auth/")
-    || caminho.startsWith("/api/cron/");
+    || caminho.startsWith("/api/cron/") || caminho.startsWith("/api/robo/");
 
   if (!user && !publico) {
     const url = request.nextUrl.clone();

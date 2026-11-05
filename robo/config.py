@@ -241,6 +241,8 @@ PADRAO = {
         # Filas que este robô atende: "sefaz" (ATF, usa o Chrome) e "nfse" (Portal Nacional, só a API).
         # Com dois robôs, dá para dividir: ex. o do computador com ["sefaz"] e o da VPS com ["nfse"].
         "filas": ["sefaz", "nfse"],
+        # Endereço do portal: o robô avisa quando grava o Dossiê MEI, e a equipe recebe o alerta de limite na hora
+        "site": "https://xml.lotivisse.com.br",
     },
 }
 
