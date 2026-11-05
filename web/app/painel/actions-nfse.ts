@@ -53,8 +53,9 @@ export async function prepararAgendamentoNfse(_: PreviaNfse | undefined, form: F
   const { supabase, perfil, admin } = await contexto();
   const orgId = admin ? String(form.get("org_id") ?? "") : perfil.org_id ?? "";
   if (!orgId) return { erro: "Escolha a organização." };
+  const doCadastro = form.get("fonte") === "cadastro";
   const arquivo = form.get("arquivo");
-  if (!(arquivo instanceof File) || arquivo.size === 0) return { erro: "Escolha a planilha das empresas (.xlsx ou .csv)." };
+  if (!doCadastro && (!(arquivo instanceof File) || arquivo.size === 0)) return { erro: "Escolha a planilha das empresas (.xlsx ou .csv)." };
   const competencia = String(form.get("competencia") ?? "");
   const erroCompetencia = conferirCompetencia(competencia);
   if (erroCompetencia) return { erro: erroCompetencia };
@@ -65,10 +66,17 @@ export async function prepararAgendamentoNfse(_: PreviaNfse | undefined, form: F
   }
 
   let leitura;
-  try {
-    leitura = await lerPlanilhaNfse(arquivo);
-  } catch (e) {
-    return { erro: `Não consegui ler a planilha: ${(e as Error).message}` };
+  if (doCadastro) {
+    leitura = await empresasDoCadastro(supabase, orgId);
+    if (!leitura.empresas.length) {
+      return { erro: "Nenhuma empresa com CNPJ no cadastro ainda. Envie uma planilha (da NFS-e ou da SEFAZ) uma primeira vez." };
+    }
+  } else {
+    try {
+      leitura = await lerPlanilhaNfse(arquivo as File);
+    } catch (e) {
+      return { erro: `Não consegui ler a planilha: ${(e as Error).message}` };
+    }
   }
   if (!leitura.empresas.length) return { erro: "Nenhuma empresa pronta na planilha.", erros: leitura.erros, avisos: leitura.avisos };
 
@@ -91,7 +99,28 @@ export async function prepararAgendamentoNfse(_: PreviaNfse | undefined, form: F
       + "Confira se cada uma deu procuração eletrônica ao escritório no e-CAC (com acesso à NFS-e).");
   }
 
-  return { itens, erros: leitura.erros, avisos, nomeArquivo: arquivo.name, orgId, competencia, executarEm };
+  const nomeArquivo = doCadastro ? "Todas as empresas cadastradas" : (arquivo as File).name;
+  return { itens, erros: leitura.erros, avisos, nomeArquivo, orgId, competencia, executarEm };
+}
+
+/** Todas as empresas da organização com CNPJ: as da NFS-e (com os serviços escolhidos) e as da SEFAZ (com todos
+ *  os serviços da NFS-e). Para baixar com o certificado do escritório sem montar uma planilha. */
+async function empresasDoCadastro(supabase: Awaited<ReturnType<typeof contexto>>["supabase"], orgId: string) {
+  const [{ data: nfse }, { data: sefaz }] = await Promise.all([
+    supabase.from("xml_nfse_empresas").select("cnpj, nome, codigo, tipos").eq("org_id", orgId).order("nome"),
+    supabase.from("xml_empresas").select("cnpj, nome, codigo").eq("org_id", orgId).order("nome"),
+  ]);
+  const vistas = new Set<string>();
+  const empresas: { cnpj: string; nome: string; codigo: string; tipos: string[]; linha: number }[] = [];
+  for (const e of [...(nfse ?? []), ...(sefaz ?? []).map((x) => ({ ...x, tipos: IDS_TIPOS_NFSE }))]) {
+    const cnpj = soDigitos(String(e.cnpj ?? ""));
+    if (!cnpjValido(cnpj) || vistas.has(cnpj)) continue;
+    vistas.add(cnpj);
+    const tipos = ((e.tipos as string[] | null) ?? IDS_TIPOS_NFSE).filter((t) => IDS_TIPOS_NFSE.includes(t));
+    empresas.push({ cnpj, nome: String(e.nome ?? "") || formatarDocumento(cnpj), codigo: String(e.codigo ?? ""),
+      tipos: tipos.length ? tipos : IDS_TIPOS_NFSE, linha: empresas.length + 1 });
+  }
+  return { empresas, erros: [] as string[], avisos: [] as string[] };
 }
 
 export async function confirmarAgendamentoNfse(previa: PreviaNfse): Promise<PreviaNfse> {
