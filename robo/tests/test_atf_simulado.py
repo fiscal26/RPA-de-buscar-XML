@@ -643,11 +643,11 @@ def test_rodada_um_login_xml_pelas_mensagens(ambiente):
     assert r3.status == "erro" and "não encontrou a IE" in r3.mensagem, r3
     base = pasta / "xml"
     # o ZIP do ATF guardado como veio, na pasta com o total (2 notas de R$ 100,00); a antiga (nº 99) não entrou
-    (zip_saida,) = list(base.glob("Arquivos baixados/015-Padaria/2026-09/NF-e Saida - R$ 200,00/*.zip"))
+    (zip_saida,) = list(base.glob("Arquivos baixados/015-Padaria/092026/NF-e Saida - R$ 200,00/*.zip"))
     assert zip_saida.read_bytes()[:2] == b"PK" and len(zipfile.ZipFile(zip_saida).namelist()) == 2
-    assert not list(base.glob("Arquivos baixados/015-Padaria/2026-08"))  # resposta de outra competência não entrou
-    assert len(list(base.glob("Arquivos baixados/016-Mercado/2026-09/NF-e Entrada - R$ 100,00/*.zip"))) == 1
-    assert len(list(base.glob("Arquivos baixados/016-Mercado/2026-09/NFC-e - R$ 100,00/*.zip"))) == 1
+    assert not list(base.glob("Arquivos baixados/015-Padaria/082026"))  # resposta de outra competência não entrou
+    assert len(list(base.glob("Arquivos baixados/016-Mercado/092026/NF-e Entrada - R$ 100,00/*.zip"))) == 1
+    assert len(list(base.glob("Arquivos baixados/016-Mercado/092026/NFC-e - R$ 100,00/*.zip"))) == 1
     assert len(list(base.glob("Arquivos baixados/_sem_empresa/*"))) == 2  # a consulta manual e a de agosto
     assert ESTADO["lista_cedo"] == 0  # respeitou o intervalo da caixa de mensagens
     # só abre o necessário: com anexo, só a filha do clipe; sem anexo, para no "Nenhum registro satisfaz"
@@ -688,7 +688,7 @@ def test_caixa_lenta_tenta_de_novo(ambiente):
         executor.fechar()
     assert ESTADO["caixa_fora"] == 0
     assert r.status == "concluido", r
-    assert list((pasta / "xml" / "Arquivos baixados" / "020-Lenta").glob("2026-09/NF-e Saida - R$ */*.zip"))
+    assert list((pasta / "xml" / "Arquivos baixados" / "020-Lenta").glob("092026/NF-e Saida - R$ */*.zip"))
 
 
 def test_caixa_nao_abre_e_o_robo_para(ambiente):
@@ -734,17 +734,17 @@ def test_faturas_extrato_omissao_certidao(ambiente):
         assert r1.detalhes[s]["arquivos"] == 1, (s, r1)
     assert r1.detalhes["nfe_saida"]["notas"] == 2, r1
     base = pasta / "xml" / "Arquivos baixados"
-    pdfs = {s: list((base / "030-Padaria" / "2026-09" / arquivos_nome(s)).glob("*.pdf")) for s in servicos}
+    pdfs = {s: list((base / "030-Padaria" / "092026" / arquivos_nome(s)).glob("*.pdf")) for s in servicos}
     for s, achados in pdfs.items():
         assert len(achados) == 1 and achados[0].read_bytes()[:5] == b"%PDF-", (s, achados)
         assert achados[0].name == f"{arquivos_nome(s)} 2026-09.pdf"
     assert b"omissos" in pdfs["omissao"][0].read_bytes()
-    assert list((base / "030-Padaria" / "2026-09").glob("NF-e Saida - R$ 200,00/*.zip"))
+    assert list((base / "030-Padaria" / "092026").glob("NF-e Saida - R$ 200,00/*.zip"))
 
     assert r2.status == "concluido", r2
     assert r2.detalhes["faturas"]["sem_notas"] and r2.detalhes["faturas"]["arquivos"] == 0, r2
     assert "Faturas: não existem débitos em aberto" in r2.mensagem, r2
-    assert (base / "031-Mercado" / "2026-09" / "Certidão de Débitos" / "Certidão de Débitos 2026-09.pdf").exists()
+    assert (base / "031-Mercado" / "092026" / "Certidão de Débitos" / "Certidão de Débitos 2026-09.pdf").exists()
 
 
 def arquivos_nome(tipo: str) -> str:
@@ -774,7 +774,7 @@ def test_mensagem_atrasada_fica_para_o_final(ambiente):
     assert tudo, repescados
     ((_, (r,)),) = repescados
     assert r.status == "concluido" and not r.pendente and r.detalhes["nfe_saida"]["notas"] == 2, r
-    assert list((pasta / "xml" / "Arquivos baixados" / "040-Atrasada").glob("2026-09/NF-e Saida - R$ 200,00/*.zip"))
+    assert list((pasta / "xml" / "Arquivos baixados" / "040-Atrasada").glob("092026/NF-e Saida - R$ 200,00/*.zip"))
 
 
 def test_mensagem_que_nunca_chega_para_de_vez(ambiente):
@@ -817,10 +817,10 @@ def test_cte_e_conferencia_de_cartao(ambiente):
     assert r1.detalhes["cte_dest"]["notas"] == 1 and r1.detalhes["cte_rem"]["notas"] == 1, r1
     assert r1.detalhes["cartao"]["arquivos"] == 1, r1
     base = pasta / "xml" / "Arquivos baixados"
-    (zip_cte,) = list(base.glob("050-Transporte/2026-09/CT-e Destinatario - R$ 150,00/*.zip"))
+    (zip_cte,) = list(base.glob("050-Transporte/092026/CT-e Destinatario - R$ 150,00/*.zip"))
     assert zip_cte.read_bytes()[:2] == b"PK"
-    assert list(base.glob("050-Transporte/2026-09/CT-e Remetente - R$ 70,00/*.zip"))
-    (pdf,) = list(base.glob("050-Transporte/2026-09/Conferência Cartão de Crédito/*.pdf"))
+    assert list(base.glob("050-Transporte/092026/CT-e Remetente - R$ 70,00/*.zip"))
+    (pdf,) = list(base.glob("050-Transporte/092026/Conferência Cartão de Crédito/*.pdf"))
     assert pdf.read_bytes()[:5] == b"%PDF-" and pdf.name == "Conferência Cartão de Crédito 2026-09.pdf"
     assert ESTADO["cartao"][-1]["refIni"] == "09/2026" and ESTADO["cartao"][-1]["ie"] == IE_EMPRESA
     assert all(c["ie"] == IE_EMPRESA for c in ESTADO["cartao"])  # "- Cartão: 0 / 0,00" não abre a janela

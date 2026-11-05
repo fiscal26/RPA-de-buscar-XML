@@ -12,7 +12,7 @@ para a mesma VPS onde já roda o robô de certidões. O portal continua na Verce
 │   ├── venv/         Python do robô
 │   ├── chrome-perfil/  chaves/  Downloads/
 │   └── arquivos/     XML, PDF e relatórios, uma pasta por escritório:
-│       └── <Escritório>/Arquivos baixados/<ID>-<Nome>/<AAAA-MM>/...
+│       └── <Escritório>/Arquivos baixados/<ID>-<Nome>/<MMAAAA>/...
 └── Google Chrome oficial (compartilhado pelos robôs)
 ```
 

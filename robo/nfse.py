@@ -2,7 +2,7 @@
 
 - busca os documentos da empresa por NSU (emitidas, recebidas e eventos), sem captcha;
 - guarda cada XML num cache local por CNPJ (a próxima busca continua do último NSU);
-- separa as notas da competência em <empresa>/<AAAA-MM>/NFS-e Emitidas e NFS-e Recebidas;
+- separa as notas da competência em <empresa>/<MMAAAA>/NFS-e Emitidas e NFS-e Recebidas, e o mês num XML só (lote ABRASF);
 - monta o relatório de retenções (ISS, IRRF, PIS, COFINS, CSLL, INSS), por nota e em totais.
 
 Endereços e regras do portal: veja NFSE.md.
@@ -22,7 +22,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from arquivos import nome_de_pasta, pasta_empresa
+from arquivos import nome_de_pasta, pasta_competencia, pasta_empresa
 
 log = logging.getLogger("robo_xml")
 
@@ -438,6 +438,7 @@ class ResultadoNfse:
     pasta: Path | None = None
     relatorio: Path | None = None
     novos_documentos: int = 0
+    lotes: list[Path] = field(default_factory=list)  # o mês num XML só (envelope ABRASF), emitidas e recebidas
 
 
 def separar(cache: Cache, cnpj: str, competencia: str):
@@ -472,6 +473,28 @@ def separar(cache: Cache, cnpj: str, competencia: str):
     return sorted(emitidas, key=ordem), sorted(recebidas, key=ordem), n_canc
 
 
+_DECLARACAO = re.compile(rb"^\s*(?:\xef\xbb\xbf)?\s*<\?xml[^>]*\?>\s*")
+
+
+def lote_abrasf(xmls: list[bytes], competencia: str, agora: "datetime | None" = None) -> bytes:
+    """Junta as NFS-e do padrão nacional num XML só, no envelope ABRASF (EnviarLoteRpsSincronoResposta >
+    ListaNfse > CompNfse), do jeito que os sistemas contábeis (Domínio) importam o mês inteiro. Cada nota vai
+    como veio do portal, byte a byte: a assinatura digital continua válida."""
+    from datetime import datetime
+    agora = agora or datetime.now()
+    lote = competencia[:4] + competencia[5:7]
+    partes = [b"<?xml version='1.0' encoding='UTF-8'?>\n",
+              b'<EnviarLoteRpsSincronoResposta xmlns="http://www.abrasf.org.br/nfse.xsd">\n',
+              f"  <NumeroLote>{lote}</NumeroLote>\n".encode(),
+              f"  <DataRecebimento>{agora:%Y-%m-%d %H:%M:%S}</DataRecebimento>\n".encode(),
+              f"  <Protocolo>COMP{lote}</Protocolo>\n".encode(),
+              b"  <ListaNfse>\n"]
+    for xml in xmls:
+        partes += [b"    <CompNfse>\n\n", _DECLARACAO.sub(b"", xml).strip(), b"\n    </CompNfse>\n"]
+    partes += [b"  </ListaNfse>\n", b"</EnviarLoteRpsSincronoResposta>\n"]
+    return b"".join(partes)
+
+
 def nome_do_arquivo(nota: NotaServico) -> str:
     outro = nota.tomador_nome if nota.prestador_doc else ""
     return nome_de_pasta(f"NFS-e {nota.numero} - {outro}".strip(" -"))[:60] + f" - {nota.chave[-8:]}"
@@ -487,7 +510,7 @@ def baixar_competencia(cliente: ClienteADN, cnpj: str, competencia: str, destino
     emitidas = emitidas if com_emitidas else []
     recebidas = recebidas if com_recebidas else []
     sem_pdf_no_portal = False  # o portal não entregou o PDF das primeiras notas: não insiste nas outras
-    pasta_mes = pasta_empresa(destino, nome, cnpj, codigo) / competencia
+    pasta_mes = pasta_empresa(destino, nome, cnpj, codigo) / pasta_competencia(competencia)
     res.pasta = pasta_mes
     for lista, sub in ((emitidas, PASTA_EMITIDAS), (recebidas, PASTA_RECEBIDAS)):
         if not lista:
@@ -511,6 +534,12 @@ def baixar_competencia(cliente: ClienteADN, cnpj: str, competencia: str, destino
                     sem_pdf_no_portal = res.pdfs == 0 and res.pdfs_faltando >= 3
     res.emitidas = [n for n, _ in emitidas]
     res.recebidas = [n for n, _ in recebidas]
+    # todas as notas do mês num XML só, no envelope ABRASF (o que a importação da Domínio lê)
+    for lista, sub in ((emitidas, PASTA_EMITIDAS), (recebidas, PASTA_RECEBIDAS)):
+        if lista:
+            arquivo = pasta_mes / f"{sub} {pasta_competencia(competencia)} - lote ABRASF.xml"
+            arquivo.write_bytes(lote_abrasf([xml for _, xml in lista], competencia))
+            res.lotes.append(arquivo)
     if relatorio and (res.emitidas or res.recebidas):
         pasta_mes.mkdir(parents=True, exist_ok=True)
         res.relatorio = relatorio_retencoes(res.emitidas, res.recebidas, pasta_mes / f"Retenções NFS-e {competencia}.xlsx",
