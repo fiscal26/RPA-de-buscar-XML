@@ -189,7 +189,7 @@ e sem captcha. O acesso é o **certificado digital A1 (e-CNPJ)** da empresa; o d
       avisa quando faltar 30 dias para vencer.
    2. Em **Agendar > Portal Nacional (NFS-e)**, envie a planilha modelo da NFS-e (CNPJ, nome e os serviços).
    3. Cada empresa ganha, em `Arquivos baixados/<ID>-<Nome>/<MMAAAA>/`, as pastas `NFS-e Emitidas` e
-      `NFS-e Recebidas` (XML e PDF), o `Retenções NFS-e AAAA-MM.xlsx` e o mês inteiro num XML só (`NFS-e Emitidas MMAAAA - lote ABRASF.xml`
+      `NFS-e Recebidas` (XML e PDF), o `Retenções NFS-e AAAA-MM.xlsx` e o mês inteiro num XML só (`NFS-e Emitidas MMAAAA.xml`
       e o das recebidas), no envelope ABRASF que a importação da Domínio lê.
 5. **Teste sem o portal:** `robo\testar_nfse.bat` (pede o .pfx e a senha na hora; nada fica gravado).
 

@@ -186,8 +186,8 @@ def test_baixa_a_competencia_separa_e_monta_o_relatorio(tmp_path):
     assert len(list((r.pasta / nfse.PASTA_RECEBIDAS).glob("*.xml"))) == 1
     # o mês num XML só, no envelope ABRASF (importação da Domínio): cada nota entra como veio, com a assinatura
     import xml.etree.ElementTree as ET
-    lotes = sorted(p.name for p in r.pasta.glob("*lote ABRASF.xml"))
-    assert lotes == [f"{nfse.PASTA_EMITIDAS} 092026 - lote ABRASF.xml", f"{nfse.PASTA_RECEBIDAS} 092026 - lote ABRASF.xml"]
+    lotes = sorted(p.name for p in r.pasta.glob("*.xml"))
+    assert lotes == [f"{nfse.PASTA_EMITIDAS} 092026.xml", f"{nfse.PASTA_RECEBIDAS} 092026.xml"]
     lote = (r.pasta / lotes[0]).read_bytes()
     raiz = ET.fromstring(lote)
     abrasf = "{http://www.abrasf.org.br/nfse.xsd}"
