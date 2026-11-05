@@ -968,12 +968,26 @@ def executar_nfse(cfg: dict, t: dict, privada, sessao_falsa=None) -> Resultado:
     # (procuração eletrônica, desde 01/11/2026). Sem ele, o Portal Nacional passou a recusar a consulta.
     consulta = cnpj
     procuracao = bool(t.get("procurador"))
+    meses_extra: list[tuple[str, int]] = []
     try:
         with nfse.contexto_tls(pfx, senha) as ctx:
             cliente = nfse.ClienteADN(sessao_falsa or nfse.sessao_com_certificado(ctx), cnpj_consulta=consulta)
-            r = nfse.baixar_competencia(cliente, cnpj, competencia, destino_da_tarefa(cfg, t), t["nome"], t.get("codigo") or "",
-                                        pdf="nfse_pdf" in tipos, com_emitidas="nfse_emitidas" in tipos,
-                                        com_recebidas="nfse_recebidas" in tipos, relatorio="nfse_retencoes" in tipos)
+            destino, codigo = destino_da_tarefa(cfg, t), t.get("codigo") or ""
+            opcoes = dict(pdf="nfse_pdf" in tipos, com_emitidas="nfse_emitidas" in tipos,
+                          com_recebidas="nfse_recebidas" in tipos, relatorio="nfse_retencoes" in tipos)
+            anteriores = nfse.meses_sem_busca(destino, t["nome"], cnpj, codigo, competencia)
+            r = nfse.baixar_competencia(cliente, cnpj, competencia, destino, t["nome"], codigo, **opcoes)
+            # MEI (cadastrado como MEI na SEFAZ ou que emite NFS-e como MEI) que ainda não tinha o ano: os meses de
+            # janeiro até a competência saem junto, do cache já atualizado (como no Dossiê MEI)
+            if anteriores and (t.get("mei") or nfse.eh_mei(cnpj)):
+                for mes in anteriores:
+                    extra = nfse.baixar_competencia(cliente, cnpj, mes, destino, t["nome"], codigo, atualizar=False,
+                                                    **opcoes)
+                    n = len(extra.emitidas) + len(extra.recebidas)
+                    if n:
+                        meses_extra.append((mes, n))
+                log.info("   MEI %s: meses anteriores do ano conferidos (%s)", t["nome"],
+                         ", ".join(f"{m[5:]}/{m[:4]}: {n} nota(s)" for m, n in meses_extra) or "nenhuma nota")
     except nfse.ErroADN as e:
         texto = str(e)
         if "certificado" in texto.lower() and "E2214" not in texto:
@@ -1009,6 +1023,8 @@ def executar_nfse(cfg: dict, t: dict, privada, sessao_falsa=None) -> Resultado:
                                       else {"situacao": "sem_movimento", "mensagem": "sem notas na competência", "sem_notas": True})
     if r.canceladas:
         partes.append(f"{r.canceladas} cancelada(s) fora")
+    if meses_extra:
+        partes.append(f"e mais {sum(n for _, n in meses_extra)} nota(s) dos meses anteriores do ano (MEI)")
     pasta = r.pasta.parent.name if r.pasta else ""
     return Resultado("concluido" if total else "sem_notas", "NFS-e: " + ", ".join(partes) if partes else "NFS-e: nada a baixar",
                      qtd_xml=total, detalhes=detalhes, pasta=pasta)

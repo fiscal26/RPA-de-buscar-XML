@@ -15,7 +15,8 @@ NS = "http://www.sped.fazenda.gov.br/nfse"
 
 
 def nota_xml(chave, numero, prest, toma, toma_nome, valor, compet="2026-09", tp_ret_iss="1", iss=0.0,
-             irrf=0.0, csll=0.0, inss=0.0, pis=0.0, cofins=0.0, tp_ret_pc="2", total_ret=None, liquido=None) -> bytes:
+             irrf=0.0, csll=0.0, inss=0.0, pis=0.0, cofins=0.0, tp_ret_pc="2", total_ret=None, liquido=None,
+             simples="") -> bytes:
     total = round((iss if tp_ret_iss in ("2", "3") else 0) + irrf + csll + inss
                   + (pis if tp_ret_pc in ("1", "3") else 0) + (cofins if tp_ret_pc in ("1", "3") else 0), 2)
     total_ret = total if total_ret is None else total_ret
@@ -28,7 +29,7 @@ def nota_xml(chave, numero, prest, toma, toma_nome, valor, compet="2026-09", tp_
   <vTotalRet>{total_ret:.2f}</vTotalRet><vLiq>{liquido:.2f}</vLiq></valores>
  <DPS versao="1.00"><infDPS Id="DPS1">
   <dhEmi>{compet}-15T10:00:00-03:00</dhEmi><dCompet>{compet}-15</dCompet>
-  <prest><CNPJ>{prest}</CNPJ></prest>
+  <prest><CNPJ>{prest}</CNPJ>{f"<regTrib><opSimpNac>{simples}</opSimpNac></regTrib>" if simples else ""}</prest>
   <toma><CNPJ>{toma}</CNPJ><xNome>{toma_nome}</xNome></toma>
   <serv><cServ><cTribNac>010101</cTribNac><xDescServ>Consultoria</xDescServ></cServ></serv>
   <valores><vServPrest><vServ>{valor:.2f}</vServ></vServPrest>
@@ -350,3 +351,43 @@ def test_empresa_sem_procuracao_para_o_escritorio(chaves, cfg_nfse):
     r = robo_xml.executar_nfse(cfg_nfse, t, chaves[0], sessao_falsa=recusa)
     assert r.status == "certificado" and "procuração" in r.mensagem
     assert r.detalhes["nfse_emitidas"]["mensagem"] == "sem procuração da empresa para o escritório"
+
+
+def _docs_mei(simples="2"):
+    chaves = [f"2507507{i:043d}" for i in range(11, 15)]
+    return [
+        (1, "NFSE", chaves[0], nota_xml(chaves[0], "1", DONO, CLIENTE, "Cliente Um SA", 300.0, compet="2026-02", simples=simples)),
+        (2, "NFSE", chaves[1], nota_xml(chaves[1], "2", DONO, CLIENTE, "Cliente Um SA", 400.0, compet="2026-07", simples=simples)),
+        (3, "NFSE", chaves[2], nota_xml(chaves[2], "3", DONO, CLIENTE, "Cliente Um SA", 500.0, compet="2026-09", simples=simples)),
+    ]
+
+
+def test_mei_sem_busca_anterior_baixa_desde_janeiro(chaves, cfg_nfse, tmp_path):
+    """MEI (emite NFS-e como MEI) que nunca teve busca: sai com os meses de janeiro até a competência."""
+    import robo_xml
+    r = robo_xml.executar_nfse(cfg_nfse, tarefa(chaves, ["nfse_emitidas"]), chaves[0], sessao_falsa=PortalFalso(_docs_mei()))
+    base = tmp_path / "destino" / "Arquivos baixados" / "7-Lotivisse"
+    assert (base / "092026" / nfse.PASTA_EMITIDAS).is_dir()
+    assert (base / "022026" / nfse.PASTA_EMITIDAS).is_dir() and (base / "072026" / nfse.PASTA_EMITIDAS).is_dir()
+    assert (base / "072026" / f"{nfse.PASTA_EMITIDAS} 072026.xml").exists()
+    assert r.qtd_xml == 1 and "meses anteriores" in r.mensagem, r
+    # na próxima competência, os meses que já têm pasta não são refeitos
+    (base / "022026" / nfse.PASTA_EMITIDAS / "marca.txt").write_text("x")
+    assert nfse.meses_sem_busca(tmp_path / "destino", "Lotivisse", DONO, "7", "2026-10") == [
+        "2026-01", "2026-03", "2026-04", "2026-05", "2026-06", "2026-08"]
+
+
+def test_mei_pelo_cadastro_da_sefaz(chaves, cfg_nfse, tmp_path):
+    """Marcado como MEI na planilha da SEFAZ (a fila manda mei=true), mesmo sem o opSimpNac nas notas."""
+    import robo_xml
+    t = {**tarefa(chaves, ["nfse_emitidas"]), "mei": True}
+    robo_xml.executar_nfse(cfg_nfse, t, chaves[0], sessao_falsa=PortalFalso(_docs_mei(simples="")))
+    assert (tmp_path / "destino" / "Arquivos baixados" / "7-Lotivisse" / "072026").is_dir()
+
+
+def test_empresa_que_nao_e_mei_baixa_so_a_competencia(chaves, cfg_nfse, tmp_path):
+    import robo_xml
+    r = robo_xml.executar_nfse(cfg_nfse, tarefa(chaves, ["nfse_emitidas"]), chaves[0], sessao_falsa=PortalFalso(_docs_mei(simples="3")))
+    base = tmp_path / "destino" / "Arquivos baixados" / "7-Lotivisse"
+    assert (base / "092026").is_dir() and not (base / "072026").exists() and not (base / "022026").exists()
+    assert "meses anteriores" not in r.mensagem
