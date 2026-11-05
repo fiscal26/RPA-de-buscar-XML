@@ -3,6 +3,7 @@ import { contexto } from "@/lib/sessao";
 import { competenciaBR, mesAnterior } from "@/lib/documentos";
 import FormAgendamento from "../FormAgendamento";
 import FormAgendamentoNfse from "../FormAgendamentoNfse";
+import { empresasComCnpj } from "@/lib/cadastro-nfse";
 
 export default async function Agendar({ searchParams }: { searchParams: Promise<{ origem?: string }> }) {
   const nfse = (await searchParams).origem === "nfse";
@@ -19,6 +20,13 @@ export default async function Agendar({ searchParams }: { searchParams: Promise<
   const organizacoes = admin
     ? (await supabase.from("organizacoes").select("id, nome").eq("ativo", true).order("nome")).data ?? []
     : undefined;
+  // NFS-e: as empresas cadastradas (para marcar) e os certificados (para escolher), sem nada cifrado
+  const [empresasNfse, certificadosNfse] = nfse ? await Promise.all([
+    empresasComCnpj(supabase).then((l) => l.map(({ org_id, cnpj, nome, codigo }) => ({ org_id, cnpj, nome, codigo }))),
+    supabase.from("xml_nfse_certificados").select("id, org_id, nome, cnpj, validade, procurador").order("nome")
+      .then(({ data }) => (data ?? []).map((c) => ({ id: c.id as string, org_id: c.org_id as string, nome: (c.nome as string) ?? "",
+        cnpj: c.cnpj as string, procurador: !!c.procurador, vencido: !!c.validade && Date.parse(c.validade as string) < Date.now() }))),
+  ]) : [[], []];
   return (
     <>
       <h1>Agendar uma competência</h1>
@@ -38,7 +46,7 @@ export default async function Agendar({ searchParams }: { searchParams: Promise<
             <h2 className="titulo-cartao">Antes de enviar</h2>
             <ol className="preparo">
               <li>Em <Link href="/painel/certificados">Certificados</Link>, envie o certificado do escritório (vale para as empresas que deram procuração no e-CAC) ou o A1 de cada empresa (o da matriz serve às filiais).</li>
-              <li>Escolha <b>Todas as empresas cadastradas</b> para baixar de todas as empresas com CNPJ, sem planilha, ou baixe a planilha modelo da NFS-e e preencha uma empresa por linha: CNPJ e nome.</li>
+              <li>Escolha <b>Escolher entre as cadastradas</b> e marque as empresas (ou Selecionar todas), sem planilha; ou baixe a planilha modelo da NFS-e e preencha uma empresa por linha: CNPJ e nome.</li>
               <li>Apague o X dos serviços de que a empresa não precisa.</li>
             </ol>
             <a className="botao" href="/modelos/modelo_empresas_nfse.xlsx" download>Baixar a planilha modelo da NFS-e</a>
@@ -60,7 +68,7 @@ export default async function Agendar({ searchParams }: { searchParams: Promise<
             </details>
           </section>
           <div className="cartao">
-            <FormAgendamentoNfse organizacoes={organizacoes} competencia={mesAnterior()} />
+            <FormAgendamentoNfse organizacoes={organizacoes} competencia={mesAnterior()} empresas={empresasNfse} certificados={certificadosNfse} />
           </div>
         </div>
       ) : (

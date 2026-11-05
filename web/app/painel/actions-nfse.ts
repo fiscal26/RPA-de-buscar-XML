@@ -10,6 +10,7 @@ import { cnpjValido, cpfValido, formatarDocumento, soDigitos } from "@/lib/docum
 import { IDS_TIPOS_NFSE } from "@/lib/xml";
 import { certificadoDoCnpj, usaProcuracao } from "@/lib/nfse";
 import { corrigirNome } from "@/lib/nomes";
+import { empresasComCnpj } from "@/lib/cadastro-nfse";
 
 /** Situação do certificado A1 de uma empresa: o dela, o da matriz (mesma raiz do CNPJ) ou nenhum. */
 export type SituacaoCertificado = "proprio" | "matriz" | "escritorio" | "vencido" | "falta";
@@ -23,6 +24,7 @@ export type PreviaNfse = {
   erro?: string; ok?: string; agendamentoId?: string;
   itens?: ItemNfse[]; erros?: string[]; avisos?: string[];
   nomeArquivo?: string; orgId?: string; competencia?: string; executarEm?: string | null;
+  certificadoId?: string | null; certificadoNome?: string;
 };
 
 type Certificado = { cnpj: string; validade: string | null; procurador?: boolean };
@@ -67,10 +69,12 @@ export async function prepararAgendamentoNfse(_: PreviaNfse | undefined, form: F
 
   let leitura;
   if (doCadastro) {
-    leitura = await empresasDoCadastro(supabase, orgId);
-    if (!leitura.empresas.length) {
-      return { erro: "Nenhuma empresa com CNPJ no cadastro ainda. Envie uma planilha (da NFS-e ou da SEFAZ) uma primeira vez." };
-    }
+    const escolhidas = new Set(form.getAll("cnpjs").map((c) => soDigitos(String(c))));
+    if (!escolhidas.size) return { erro: "Marque as empresas que o robô deve rodar (ou Selecionar todas)." };
+    const empresas = (await empresasComCnpj(supabase, orgId)).filter((e) => escolhidas.has(e.cnpj))
+      .map((e, i) => ({ cnpj: e.cnpj, nome: e.nome, codigo: e.codigo, tipos: e.tipos, linha: i + 1 }));
+    if (!empresas.length) return { erro: "Nenhuma das empresas marcadas está no cadastro desta organização." };
+    leitura = { empresas, erros: [] as string[], avisos: [] as string[] };
   } else {
     try {
       leitura = await lerPlanilhaNfse(arquivo as File);
@@ -82,16 +86,24 @@ export async function prepararAgendamentoNfse(_: PreviaNfse | undefined, form: F
 
   const [{ data: empresasCad }, { data: certificados }] = await Promise.all([
     supabase.from("xml_nfse_empresas").select("cnpj").eq("org_id", orgId),
-    supabase.from("xml_nfse_certificados").select("cnpj, validade, procurador").eq("org_id", orgId),
+    supabase.from("xml_nfse_certificados").select("id, nome, cnpj, validade, procurador").eq("org_id", orgId),
   ]);
+  // certificado escolhido no agendamento (vazio = automático: o da empresa, o da matriz ou o do escritório)
+  const certificadoId = String(form.get("certificado_id") ?? "") || null;
+  const escolhido = certificadoId ? (certificados ?? []).find((c) => c.id === certificadoId) : undefined;
+  if (certificadoId && !escolhido) return { erro: "O certificado escolhido não é desta organização. Escolha outro." };
+  const usados = (escolhido ? [escolhido] : certificados ?? []) as Certificado[];
   const cadastradas = new Set((empresasCad ?? []).map((e) => e.cnpj as string));
   const itens: ItemNfse[] = leitura.empresas.map((e) => ({
-    ...e, cadastrada: cadastradas.has(e.cnpj), certificado: certificadoPara(e.cnpj, (certificados ?? []) as Certificado[]),
+    ...e, cadastrada: cadastradas.has(e.cnpj), certificado: certificadoPara(e.cnpj, usados),
   }));
   const avisos = [...leitura.avisos];
   const sem = itens.filter((i) => i.certificado === "falta" || i.certificado === "vencido");
   if (sem.length) {
-    avisos.push(`${sem.length} ${sem.length === 1 ? "empresa está" : "empresas estão"} sem certificado A1 válido (nem da matriz, nem do escritório): `
+    avisos.push(escolhido
+      ? `O certificado escolhido não serve para ${sem.length} ${sem.length === 1 ? "empresa" : "empresas"} (não é dela, nem da matriz, nem do escritório com procuração, ou está vencido): `
+        + `${sem.slice(0, 5).map((i) => i.nome).join(", ")}${sem.length > 5 ? "…" : ""}. Escolha "Automático" ou outro certificado.`
+      : `${sem.length} ${sem.length === 1 ? "empresa está" : "empresas estão"} sem certificado A1 válido (nem da matriz, nem do escritório): `
       + `${sem.slice(0, 5).map((i) => i.nome).join(", ")}${sem.length > 5 ? "…" : ""}. Envie em Certificados antes da hora marcada.`);
   }  const porProcuracao = itens.filter((i) => i.certificado === "escritorio");
   if (porProcuracao.length) {
@@ -99,28 +111,9 @@ export async function prepararAgendamentoNfse(_: PreviaNfse | undefined, form: F
       + "Confira se cada uma deu procuração eletrônica ao escritório no e-CAC (com acesso à NFS-e).");
   }
 
-  const nomeArquivo = doCadastro ? "Todas as empresas cadastradas" : (arquivo as File).name;
-  return { itens, erros: leitura.erros, avisos, nomeArquivo, orgId, competencia, executarEm };
-}
-
-/** Todas as empresas da organização com CNPJ: as da NFS-e (com os serviços escolhidos) e as da SEFAZ (com todos
- *  os serviços da NFS-e). Para baixar com o certificado do escritório sem montar uma planilha. */
-async function empresasDoCadastro(supabase: Awaited<ReturnType<typeof contexto>>["supabase"], orgId: string) {
-  const [{ data: nfse }, { data: sefaz }] = await Promise.all([
-    supabase.from("xml_nfse_empresas").select("cnpj, nome, codigo, tipos").eq("org_id", orgId).order("nome"),
-    supabase.from("xml_empresas").select("cnpj, nome, codigo").eq("org_id", orgId).order("nome"),
-  ]);
-  const vistas = new Set<string>();
-  const empresas: { cnpj: string; nome: string; codigo: string; tipos: string[]; linha: number }[] = [];
-  for (const e of [...(nfse ?? []), ...(sefaz ?? []).map((x) => ({ ...x, tipos: IDS_TIPOS_NFSE }))]) {
-    const cnpj = soDigitos(String(e.cnpj ?? ""));
-    if (!cnpjValido(cnpj) || vistas.has(cnpj)) continue;
-    vistas.add(cnpj);
-    const tipos = ((e.tipos as string[] | null) ?? IDS_TIPOS_NFSE).filter((t) => IDS_TIPOS_NFSE.includes(t));
-    empresas.push({ cnpj, nome: String(e.nome ?? "") || formatarDocumento(cnpj), codigo: String(e.codigo ?? ""),
-      tipos: tipos.length ? tipos : IDS_TIPOS_NFSE, linha: empresas.length + 1 });
-  }
-  return { empresas, erros: [] as string[], avisos: [] as string[] };
+  const nomeArquivo = doCadastro ? "Empresas cadastradas" : (arquivo as File).name;
+  const certificadoNome = escolhido ? `${escolhido.nome || formatarDocumento(escolhido.cnpj)} (${formatarDocumento(escolhido.cnpj)})` : undefined;
+  return { itens, erros: leitura.erros, avisos, nomeArquivo, orgId, competencia, executarEm, certificadoId, certificadoNome };
 }
 
 export async function confirmarAgendamentoNfse(previa: PreviaNfse): Promise<PreviaNfse> {
@@ -133,6 +126,10 @@ export async function confirmarAgendamentoNfse(previa: PreviaNfse): Promise<Prev
   const executarEm = previa.executarEm && !Number.isNaN(Date.parse(previa.executarEm)) ? previa.executarEm : new Date().toISOString();
   const agora = new Date().toISOString();
   const db = clienteAdmin(); // a organização já foi conferida pela sessão acima
+  if (previa.certificadoId) {  // a prévia volta do navegador: o certificado tem de ser desta organização
+    const { data: cert } = await db.from("xml_nfse_certificados").select("id").eq("id", previa.certificadoId).eq("org_id", orgId).maybeSingle();
+    if (!cert) return { erro: "O certificado escolhido não é desta organização. Leia a planilha de novo." };
+  }
 
   // empresas (uma por CNPJ); o nome renomeado no portal vale mais que o da planilha
   const { data: fixos } = await db.from("xml_nfse_empresas").select("cnpj, nome").eq("org_id", orgId).eq("nome_fixo", true);
@@ -158,6 +155,7 @@ export async function confirmarAgendamentoNfse(previa: PreviaNfse): Promise<Prev
   const { data: ag, error } = await db.from("xml_agendamentos").insert({
     org_id: orgId, criado_por: user.id, nome_arquivo: (previa.nomeArquivo ?? "").slice(0, 200), origem: "nfse",
     competencia: `${competencia}-01`, executar_em: executarEm, total: empresas.length,
+    ...(previa.certificadoId ? { certificado_id: previa.certificadoId } : {}),
   }).select("id").single();
   if (error) return { erro: error.message };
   const { error: erroTarefas } = await db.from("xml_tarefas").insert(empresas.map((e) => ({
