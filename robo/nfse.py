@@ -537,7 +537,7 @@ def baixar_competencia(cliente: ClienteADN, cnpj: str, competencia: str, destino
     # todas as notas do mês num XML só, no envelope ABRASF (o que a importação da Domínio lê)
     for lista, sub in ((emitidas, PASTA_EMITIDAS), (recebidas, PASTA_RECEBIDAS)):
         if lista:
-            arquivo = pasta_mes / f"{sub} {pasta_competencia(competencia)} - lote ABRASF.xml"
+            arquivo = pasta_mes / f"{sub} {pasta_competencia(competencia)}.xml"
             arquivo.write_bytes(lote_abrasf([xml for _, xml in lista], competencia))
             res.lotes.append(arquivo)
     if relatorio and (res.emitidas or res.recebidas):
