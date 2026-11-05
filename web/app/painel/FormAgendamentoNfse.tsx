@@ -21,6 +21,7 @@ export default function FormAgendamentoNfse({ organizacoes, competencia }: { org
   const [resultado, setResultado] = useState<PreviaNfse | null>(null);
   const [enviando, iniciar] = useTransition();
   const [quando, setQuando] = useState<"agora" | "agendar">("agora");
+  const [fonte, setFonte] = useState<"planilha" | "cadastro">("planilha");
 
   function confirmar() {
     if (!previa) return;
@@ -56,8 +57,23 @@ export default function FormAgendamentoNfse({ organizacoes, competencia }: { org
             </select>
           </>
         )}
-        <label htmlFor="nfse-arquivo">Planilha das empresas da NFS-e (.xlsx)</label>
-        <input id="nfse-arquivo" name="arquivo" type="file" accept=".xlsx,.xlsm,.csv" required />
+        <label>Empresas</label>
+        <div className="opcoes">
+          <label><input type="radio" name="fonte" value="planilha" checked={fonte === "planilha"} onChange={() => setFonte("planilha")} /> As de uma planilha</label>
+          <label><input type="radio" name="fonte" value="cadastro" checked={fonte === "cadastro"} onChange={() => setFonte("cadastro")} /> Todas as empresas cadastradas</label>
+        </div>
+        {fonte === "planilha" ? (
+          <>
+            <label htmlFor="nfse-arquivo">Planilha das empresas da NFS-e (.xlsx)</label>
+            <input id="nfse-arquivo" name="arquivo" type="file" accept=".xlsx,.xlsm,.csv" required />
+          </>
+        ) : (
+          <p className="suave">
+            Todas as empresas com CNPJ em <Link href="/painel/empresas">Empresas</Link> (as da NFS-e e as da SEFAZ), sem planilha.
+            Com o certificado do escritório, o robô baixa as de todas que deram procuração no e-CAC; a prévia mostra qual
+            certificado cada uma vai usar.
+          </p>
+        )}
 
         <label htmlFor="nfse-competencia">Competência</label>
         <input id="nfse-competencia" name="competencia" type="month" defaultValue={competencia} required style={{ maxWidth: 220 }} />

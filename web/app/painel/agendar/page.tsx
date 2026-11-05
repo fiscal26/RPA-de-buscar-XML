@@ -38,7 +38,7 @@ export default async function Agendar({ searchParams }: { searchParams: Promise<
             <h2 className="titulo-cartao">Antes de enviar</h2>
             <ol className="preparo">
               <li>Em <Link href="/painel/certificados">Certificados</Link>, envie o certificado do escritório (vale para as empresas que deram procuração no e-CAC) ou o A1 de cada empresa (o da matriz serve às filiais).</li>
-              <li>Baixe a planilha modelo da NFS-e e preencha uma empresa por linha: CNPJ e nome.</li>
+              <li>Escolha <b>Todas as empresas cadastradas</b> para baixar de todas as empresas com CNPJ, sem planilha, ou baixe a planilha modelo da NFS-e e preencha uma empresa por linha: CNPJ e nome.</li>
               <li>Apague o X dos serviços de que a empresa não precisa.</li>
             </ol>
             <a className="botao" href="/modelos/modelo_empresas_nfse.xlsx" download>Baixar a planilha modelo da NFS-e</a>
