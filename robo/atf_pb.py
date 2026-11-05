@@ -410,6 +410,10 @@ class AtfPB:
         self._url_tela: dict[str, tuple] = {}  # tela -> (quadro, endereço)
         self._dossie_cache: dict[tuple, dict] = {}  # (IE, início) -> Optante SIMEI e linhas de Docs fiscais
         self._respostas: list[str] = []
+        # consulta cujo Consultar já foi clicado e ainda sem resposta: o ATF às vezes mostra o "Nenhum registro
+        # satisfaz a pesquisa" (num alerta) depois do tempo de espera; quando chega, vale para ela
+        self._envio_em_preparo = None
+        self._envio_aguardando = None
         self._mensagens_lidas: set[str] = set()   # consultas (mensagens mãe) já concluídas
         self._filhas_lidas: set[str] = set()
         self._diag_mensagem_salvo = False
@@ -726,11 +730,26 @@ class AtfPB:
 
     # ------------------------------------------------------------------ consulta (envio)
     def _dialogo(self, dialogo):
-        self._respostas.append(dialogo.message)
+        mensagem = dialogo.message
+        self._respostas.append(mensagem)
         try:
             dialogo.accept()
         except Exception:
             pass
+        envio = self._envio_aguardando
+        if envio is not None and _SEM_NOTAS.search(mensagem) and not _CONFIRMADA.search(mensagem):
+            envio.sem_notas = True
+            envio.resposta = mensagem[:300]
+            self._envio_aguardando = None
+            self._log(f"Resposta do ATF que chegou depois ({envio.tipo} IE {envio.ie}): {mensagem[:120]}")
+
+    def esperar_respostas_atrasadas(self, segundos: int):
+        """Antes de contar quantas mensagens esperar na caixa: dá tempo para o ATF responder à última consulta
+        (o "Nenhum registro satisfaz a pesquisa" que demora). Sem notas, o ATF não manda mensagem nenhuma."""
+        limite = time.time() + segundos
+        while self._envio_aguardando is not None and time.time() < limite:
+            pausa(self.page, 0.8, 1.2)
+        self._envio_aguardando = None
 
     def _avisos_na_tela(self) -> str:
         """Textos de alerta/modal/toast visíveis (a resposta do ATF ao clicar em Consultar)."""
@@ -761,6 +780,7 @@ class AtfPB:
         self._respostas = []
         self._hora_consulta = None
         envio = Envio(ie=ie, tipo=tipo)
+        self._envio_em_preparo = envio
         try:
             if not self.atf["tentar_automatico"]:
                 raise EtapaNaoConcluida("modo automático desligado")
@@ -784,8 +804,10 @@ class AtfPB:
             self.ultimo_uso = time.time()
         envio.resposta = resposta[:300]
         envio.hora = self._hora_consulta
+        if resposta and self._envio_aguardando is envio:
+            self._envio_aguardando = None  # respondeu a tempo
         if _CONFIRMADA.search(resposta):
-            pass  # "O resultado será enviado para sua caixa de mensagens do ATF"
+            envio.sem_notas = False  # "O resultado será enviado para sua caixa de mensagens do ATF"
         elif _SEM_NOTAS.search(resposta):
             envio.sem_notas = True
         elif _ERRO_CONSULTA.search(resposta):
@@ -922,6 +944,7 @@ class AtfPB:
             raise EtapaNaoConcluida("botão Consultar não encontrado")
         self._log(f"Consultando {bloco} IE {ie}, {inicio:%d/%m/%Y} a {fim:%d/%m/%Y}, exibição XML")
         self._hora_consulta = self.hora_servidor() or datetime.now()
+        self._envio_aguardando = self._envio_em_preparo  # daqui em diante, a resposta (mesmo atrasada) é desta consulta
         self._clicar_botao(consultar)
 
     def _campo_do_bloco(self, bloco: str, css: str, ordem: int = 1, texto: str = ""):

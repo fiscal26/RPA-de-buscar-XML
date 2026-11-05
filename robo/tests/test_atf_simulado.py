@@ -109,6 +109,8 @@ def _responder(tela: str, campos: dict) -> str:
     q = {"tela": tela, "emit": emit, "dest": dest, "ini": campos.get("edtDtInicial", ""),
          "fim": campos.get("edtDtFinal", ""), "exib": campos.get("cmbTpExibicao", "")}
     ESTADO["consultas"].append(q)
+    if ESTADO.pop("sem_notas_atrasado", False):
+        return "ALERTA_ATRASADO"  # sem notas: nenhuma mensagem na caixa, só o alerta (que demora)
     if emit and dest:
         ESTADO["recusas"].append(q)
         return "Erro: informe apenas o Emitente ou o Destinatário."
@@ -260,6 +262,8 @@ def form_consulta(tela: str, aviso: str = "") -> str:
         f'</select><iframe src="/atf/componentes/CodDescLstBS.jsp?id={tela}_cmp{suf}" height="120"></iframe>'
         f'<label>UF</label><select name="cmbUF{suf}"><option>---</option></select>')
     alerta = f'<div class="alert alert-success">{aviso}</div>' if aviso else ""
+    if aviso == "ALERTA_ATRASADO":  # como no ATF real: o "Nenhum registro" vem num alerta, depois da espera do robô
+        alerta = "<script>setTimeout(() => alert('Nenhum registro satisfaz a pesquisa.'), 7000)</script>"
     return (sessao() + f'<h5>{titulo}</h5>{alerta}<form method="post" action="/atf/fis/consultar_{tela}.do">{datas}'
             '<label>Situação</label><select name="cmbSituacao"><option>---</option></select>'
             + bloco("Emitente", "Emit")
@@ -864,3 +868,19 @@ def test_botao_coberto_pelo_layout_do_atf(ambiente):
     novas = ESTADO["consultas"][antes:]
     assert any(c["emit"] == IE_EMPRESA for c in novas), novas  # a consulta foi feita
     assert "Faça no Chrome" not in r.mensagem, r
+
+
+def test_sem_notas_que_chega_atrasado_vira_sem_movimento(ambiente):
+    """O ATF mostra o "Nenhum registro satisfaz a pesquisa" num alerta e às vezes depois da espera do robô.
+    Sem notas não há mensagem na caixa: a consulta tem de ficar como sem movimento, e não "aguardando o ATF"."""
+    cfg, _ = ambiente
+    ESTADO["sem_notas_atrasado"] = True
+    executor = robo_xml.Executor(cfg)
+    try:
+        (r,) = executor.executar_rodada([_trabalho(IE_OUTRA, "Mercado", ["nfce"], codigo="016")])
+    finally:
+        ESTADO.pop("sem_notas_atrasado", None)
+        executor.fechar()
+    assert r.detalhes["nfce"]["sem_notas"], r
+    assert r.detalhes["nfce"]["situacao"] == "sem_movimento", r
+    assert not r.pendente, r
