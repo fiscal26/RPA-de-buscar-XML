@@ -699,6 +699,16 @@ class Portal:
             raise RuntimeError(f"alertas MEI -> {r.status_code}: {r.text[:200]}")
         return r.json()
 
+    def pegar_monitor(self, robo: str, maximo: int) -> list[dict]:
+        """Monitor Fiscal: empresas cuja consulta diária da NF-e venceu, com o certificado A1 cifrado."""
+        return self._r("POST", "/rest/v1/rpc/xml_nfe_pegar_monitor", json={"p_robo": robo, "p_max": maximo}).json() or []
+
+    def concluir_monitor(self, mid: str, r: dict) -> int:
+        return self._r("POST", "/rest/v1/rpc/xml_nfe_concluir", json={
+            "p_id": mid, "p_ultimo_nsu": r.get("ultimo_nsu") or 0, "p_max_nsu": r.get("max_nsu") or 0,
+            "p_notas": r.get("notas") or [], "p_status": r["status"], "p_mensagem": r.get("mensagem", "")[:500],
+            "p_espera_minutos": r.get("espera_minutos") or 0}).json() or 0
+
     def sinal(self, robo: str, info: dict):
         self._r("POST", "/rest/v1/xml_robos", json={"id": robo, "ultimo_sinal": agora(), "versao": VERSAO, "info": info},
                 headers={"Prefer": "resolution=merge-duplicates,return=minimal"})
@@ -766,6 +776,17 @@ class Robo:
             if lote_nfse:  # NFS-e não usa o Chrome: vai antes da fila do ATF
                 self.processar_nfse(lote_nfse)
                 continue
+            if self.cfg["portal"].get("monitor_nfe", True):
+                try:
+                    lote_monitor = self.portal.pegar_monitor(self.nome, 5)
+                except Exception as e:  # tabela ainda não criada (schema.sql antigo): segue com as outras filas
+                    lote_monitor = []
+                    if not getattr(self, "_aviso_monitor", False):
+                        log.warning("Monitor Fiscal indisponível no portal (rode o schema.sql de novo): %s", e)
+                        self._aviso_monitor = True
+                if lote_monitor:
+                    self.processar_monitor(lote_monitor)
+                    continue
             if "sefaz" not in filas:
                 time.sleep(self.cfg["portal"]["intervalo_segundos"])
                 continue
@@ -879,6 +900,25 @@ class Robo:
             self._finalizar(t, r)
             self._sinal()
         self.tarefas_atuais = []
+
+    def processar_monitor(self, lote: list[dict]):
+        log.info("Monitor Fiscal (NF-e destinadas): %d empresa(s)", len(lote))
+        for m in lote:
+            if self.parar:
+                break
+            try:
+                r = executar_monitor(self.cfg, m, self.privada)
+            except Exception:
+                log.exception("Erro inesperado no Monitor Fiscal de %s", m["nome"])
+                r = {"status": "erro", "mensagem": "Falha inesperada na consulta; o robô tenta de novo em 1 hora.",
+                     "ultimo_nsu": m.get("ultimo_nsu") or 0, "notas": [], "espera_minutos": 61}
+            try:
+                novas = self.portal.concluir_monitor(m["id"], r)
+            except Exception as e:  # os arquivos já estão salvos; a próxima consulta continua do NSU antigo
+                log.warning("   Monitor Fiscal de %s não gravado no portal: %s", m["nome"], e)
+                novas = 0
+            log.info("   %s -> %s: %s%s", m["nome"], r["status"], r.get("mensagem", ""), f" ({novas} nova(s))" if novas else "")
+            self._sinal()
 
     def _repescar(self, ler: bool = True):
         """Fila vazia: lê Minhas Mensagens mais uma vez para as tarefas que esperavam XML. Se ainda faltar,
@@ -1028,6 +1068,54 @@ def executar_nfse(cfg: dict, t: dict, privada, sessao_falsa=None) -> Resultado:
     pasta = r.pasta.parent.name if r.pasta else ""
     return Resultado("concluido" if total else "sem_notas", "NFS-e: " + ", ".join(partes) if partes else "NFS-e: nada a baixar",
                      qtd_xml=total, detalhes=detalhes, pasta=pasta)
+
+
+def executar_monitor(cfg: dict, m: dict, privada, sessao_falsa=None) -> dict:
+    """Uma empresa do Monitor Fiscal: abre o A1 (só na memória), consulta o Ambiente Nacional da NF-e desde o
+    último NSU e devolve o que gravar no portal (notas, NSU, situação e quando consultar de novo)."""
+    import nfe
+    import nfse
+
+    base = {"ultimo_nsu": m.get("ultimo_nsu") or 0, "notas": []}
+    try:
+        pfx = cripto.decifrar_arquivo(m["pfx_cifrado"], privada)
+        senha = cripto.decifrar(m["senha_cifrada"], privada)
+    except cripto.SenhaIlegivel as e:
+        return {**base, "status": "certificado", "mensagem": f"Certificado não pôde ser aberto: {e}"}
+    try:
+        info = nfse.dados_do_certificado(pfx, senha)
+        validade = info["validade"]
+        if validade and validade.replace(tzinfo=validade.tzinfo or timezone.utc) < datetime.now(timezone.utc):
+            return {**base, "status": "certificado",
+                    "mensagem": f"O certificado A1 venceu em {validade:%d/%m/%Y}. Envie o certificado novo em Certificados."}
+        opc = cfg.get("monitor_nfe") or {}
+        with nfse.contexto_tls(pfx, senha) as ctx:
+            if sessao_falsa is None:  # a SEFAZ usa certificados da ICP-Brasil, que não vêm no sistema
+                cadeia = nfe.cadeia_icp_brasil(Path(cfg["chaves"]["privada"]).parent)
+                if cadeia:
+                    ctx.load_verify_locations(str(cadeia))
+            sessao = sessao_falsa or nfse.sessao_com_certificado(ctx)
+            cliente = nfe.ClienteNfe(sessao, m["cnpj"], uf=str(opc.get("uf_autor", "25")), ambiente=str(opc.get("ambiente", "1")),
+                                     assinador=nfe.assinador_do_pfx(pfx, senha), dormir=time.sleep)
+            r = nfe.monitorar(cliente, int(m.get("ultimo_nsu") or 0), destino_da_tarefa(cfg, m), m["nome"], m.get("codigo") or "",
+                              ciencia=bool(m.get("ciencia", True)), pendentes=m.get("pendentes") or [],
+                              pdf=bool(opc.get("pdf", True)))
+    except (nfse.ErroADN, nfe.ErroSefaz) as e:
+        texto = str(e)
+        if "certificado" in texto.lower():
+            return {**base, "status": "certificado", "mensagem": texto}
+        return {**base, "status": "erro", "mensagem": texto, "espera_minutos": 61}
+    finally:
+        del pfx, senha
+    partes = [f"{r.novas_completas} nota(s) com XML"]
+    if r.resumos:
+        partes.append(f"{r.resumos} aguardando o XML completo")
+    if r.canceladas:
+        partes.append(f"{r.canceladas} cancelada(s)")
+    if r.aviso:
+        partes.append(r.aviso)
+    return {"status": "ok", "mensagem": ", ".join(partes), "ultimo_nsu": r.ult_nsu, "max_nsu": r.max_nsu,
+            "notas": [n.para_portal() for n in r.notas.values()], "espera_minutos": r.espera_minutos}
 
 
 # ====================================================================== modo local

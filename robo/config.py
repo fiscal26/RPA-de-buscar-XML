@@ -227,6 +227,12 @@ PADRAO = {
         # O ATF encerra a sessão com 15 min sem uso: depois disso o robô entra de novo.
         "minutos_sessao": 12,
     },
+    "monitor_nfe": {
+        # UF de quem consulta (cUFAutor; 25 = Paraíba) e ambiente (1 = produção, 2 = homologação)
+        "uf_autor": "25",
+        "ambiente": "1",
+        "pdf": True,
+    },
     "mei": {
         # Dossiê MEI: na competência, o robô busca também os meses do ano que ainda não estão no
         # acompanhamento (de janeiro em diante). True = busca todos de novo (o mesmo que --mei-ano).
@@ -243,6 +249,8 @@ PADRAO = {
         # Filas que este robô atende: "sefaz" (ATF, usa o Chrome) e "nfse" (Portal Nacional, só a API).
         # Com dois robôs, dá para dividir: ex. o do computador com ["sefaz"] e o da VPS com ["nfse"].
         "filas": ["sefaz", "nfse"],
+        # Monitor Fiscal: consulta todo dia o Ambiente Nacional da NF-e (notas destinadas) das empresas monitoradas
+        "monitor_nfe": True,
         # Endereço do portal: o robô avisa quando grava o Dossiê MEI, e a equipe recebe o alerta de limite na hora
         "site": "https://xml.lotivisse.com.br",
     },

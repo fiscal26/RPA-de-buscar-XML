@@ -540,5 +540,216 @@ grant execute on function public.xml_mei_registrar_ie(text, text, jsonb, date) t
 revoke all on function public.xml_cancelar_agendamento(uuid) from public, anon;
 grant execute on function public.xml_cancelar_agendamento(uuid) to authenticated;
 
+-- ========================================================================= Monitor Fiscal (NF-e destinadas)
+-- O robô consulta todo dia, no horário escolhido pelo escritório (padrão 11h), o Ambiente Nacional da NF-e (NFeDistribuicaoDFe) com o certificado A1 de cada
+-- empresa monitorada e traz as notas em que ela é a destinatária (de qualquer estado), com o XML e o PDF.
+create table if not exists public.xml_nfe_monitor (
+  id               uuid primary key default gen_random_uuid(),
+  org_id           uuid not null references public.organizacoes(id) on delete cascade,
+  cnpj             text not null check (cnpj ~ '^[0-9]{14}$'),
+  nome             text not null default '',
+  codigo           text not null default '',
+  ciencia          boolean not null default true,      -- manifesta "Ciência da Operação" para baixar o XML completo
+  ativo            boolean not null default true,
+  ultimo_nsu       bigint not null default 0,
+  max_nsu          bigint not null default 0,
+  status           text not null default 'fila' check (status in ('fila', 'processando', 'ok', 'erro', 'certificado')),
+  mensagem         text not null default '',
+  proxima_consulta timestamptz not null default now(),
+  ultima_consulta  timestamptz,
+  ultima_nota_em   timestamptz,                        -- quando a última nota nova foi encontrada
+  iniciado_em      timestamptz,
+  robo             text,
+  adicionado_por   uuid references auth.users(id) on delete set null,
+  criado_em        timestamptz not null default now(),
+  unique (org_id, cnpj)
+);
+create index if not exists xml_nfe_monitor_fila_idx on public.xml_nfe_monitor (proxima_consulta) where ativo;
+
+create table if not exists public.xml_nfe_notas (
+  org_id          uuid not null references public.organizacoes(id) on delete cascade,
+  chave           text not null check (chave ~ '^[0-9]{44}$'),
+  cnpj            text not null,                       -- a empresa monitorada (destinatária)
+  numero          text not null default '',
+  serie           text not null default '',
+  emitente_cnpj   text not null default '',
+  emitente_nome   text not null default '',
+  emitente_uf     text not null default '',
+  valor           numeric(15,2),
+  emissao         timestamptz,
+  situacao        text not null default 'autorizada' check (situacao in ('autorizada', 'cancelada', 'denegada')),
+  completa        boolean not null default false,      -- o XML completo já veio (senão, só o resumo)
+  manifestada_em  timestamptz,
+  pdf             boolean not null default false,
+  encontrada_em   timestamptz not null default now(),
+  primary key (org_id, chave)
+);
+create index if not exists xml_nfe_notas_empresa_idx on public.xml_nfe_notas (org_id, cnpj, emissao desc);
+
+-- Horário da consulta diária, escolhido pelo escritório (padrão 11h, horário de Brasília)
+alter table public.organizacoes add column if not exists monitor_hora time not null default '11:00';
+
+-- Próxima consulta: hoje no horário do escritório, se ainda der (e se já passou 1 hora da última consulta,
+-- regra do Ambiente Nacional); senão, amanhã no mesmo horário
+drop function if exists public.xml_nfe_proxima_11h();
+create or replace function public.xml_nfe_proxima(p_org uuid, p_ultima timestamptz default null) returns timestamptz
+language sql stable security definer set search_path = public as $$
+  select case when hoje > greatest(now(), coalesce(p_ultima + interval '1 hour', now())) then hoje else hoje + interval '1 day' end
+    from (select ((date_trunc('day', now() at time zone 'America/Fortaleza')
+                   + coalesce((select o.monitor_hora from public.organizacoes o where o.id = p_org), time '11:00'))
+                  at time zone 'America/Fortaleza') as hoje) h
+$$;
+
+-- O escritório trocou o horário: as próximas consultas passam para o horário novo
+create or replace function public.xml_nfe_reagendar(p_org uuid) returns integer
+language plpgsql security definer set search_path = public as $$
+declare n integer;
+begin
+  update public.xml_nfe_monitor set proxima_consulta = public.xml_nfe_proxima(org_id, ultima_consulta)
+   where org_id = p_org and ativo and status <> 'processando';
+  get diagnostics n = row_count;
+  return n;
+end $$;
+
+-- Fila do robô: empresas cuja consulta venceu, com o certificado A1 dela (ou o da matriz, mesma raiz do CNPJ:
+-- o Ambiente Nacional só entrega ao próprio interessado) e as notas que ainda esperam o XML completo
+drop function if exists public.xml_nfe_pegar_monitor(text, integer);
+create or replace function public.xml_nfe_pegar_monitor(p_robo text, p_max integer default 5)
+returns table (id uuid, cnpj text, nome text, codigo text, ciencia boolean, ultimo_nsu bigint, org_nome text,
+               certificado_cnpj text, pfx_cifrado text, senha_cifrada text, pendentes jsonb)
+language plpgsql security definer set search_path = public as $$
+#variable_conflict use_column
+declare
+  v_ids uuid[];
+begin
+  update public.xml_nfe_monitor set status = 'fila', iniciado_em = null, robo = null
+   where status = 'processando' and iniciado_em < now() - interval '90 minutes';
+
+  update public.xml_nfe_monitor m set status = 'certificado', proxima_consulta = public.xml_nfe_proxima(m.org_id, m.ultima_consulta),
+         mensagem = 'Sem certificado A1 desta empresa (nem da matriz). Envie em Certificados.'
+   where m.ativo and m.status <> 'processando' and m.proxima_consulta <= now()
+     and not exists (select 1 from public.xml_nfse_certificados c
+                      where c.org_id = m.org_id and length(c.cnpj) = 14 and left(c.cnpj, 8) = left(m.cnpj, 8));
+
+  select array_agg(x.id) into v_ids from (
+    select m.id from public.xml_nfe_monitor m
+     where m.ativo and m.status <> 'processando' and m.proxima_consulta <= now()
+     order by m.proxima_consulta
+     limit greatest(1, least(p_max, 20))
+     for update of m skip locked) x;
+  if v_ids is null then return; end if;
+
+  update public.xml_nfe_monitor set status = 'processando', iniciado_em = now(), robo = p_robo where xml_nfe_monitor.id = any(v_ids);
+
+  return query
+  select m.id, m.cnpj, m.nome, m.codigo, m.ciencia, m.ultimo_nsu, o.nome, c.cnpj, c.pfx_cifrado, c.senha_cifrada,
+         coalesce((select jsonb_agg(jsonb_build_object('chave', n.chave, 'manifestada', n.manifestada_em is not null))
+                     from (select n.chave, n.manifestada_em from public.xml_nfe_notas n
+                            where n.org_id = m.org_id and n.cnpj = m.cnpj and not n.completa and n.situacao = 'autorizada'
+                              and n.encontrada_em > now() - interval '90 days'
+                            order by n.encontrada_em desc limit 100) n), '[]'::jsonb)
+    from public.xml_nfe_monitor m
+    join public.organizacoes o on o.id = m.org_id
+    cross join lateral (
+      select c.cnpj, c.pfx_cifrado, c.senha_cifrada from public.xml_nfse_certificados c
+       where c.org_id = m.org_id and length(c.cnpj) = 14 and left(c.cnpj, 8) = left(m.cnpj, 8)
+       order by (c.cnpj = m.cnpj) desc, (substr(c.cnpj, 9, 4) = '0001') desc, c.atualizado_em desc
+       limit 1) c
+   where m.id = any(v_ids);
+end $$;
+
+-- O robô devolve a consulta: grava as notas (sem perder o que já se sabia) e marca a próxima consulta
+-- (o horário do escritório no dia seguinte, ou daqui a p_espera_minutos quando o Ambiente Nacional pediu para esperar)
+drop function if exists public.xml_nfe_concluir(uuid, bigint, bigint, jsonb, text, text, integer);
+create or replace function public.xml_nfe_concluir(p_id uuid, p_ultimo_nsu bigint, p_max_nsu bigint, p_notas jsonb,
+                                                  p_status text, p_mensagem text, p_espera_minutos integer default 0)
+returns integer
+language plpgsql security definer set search_path = public as $$
+declare
+  m public.xml_nfe_monitor;
+  v_novas integer := 0;
+begin
+  select * into m from public.xml_nfe_monitor where id = p_id;
+  if not found then return 0; end if;
+
+  with dados as (
+    select n.* from jsonb_to_recordset(coalesce(p_notas, '[]'::jsonb)) as n(
+      chave text, numero text, serie text, emitente_cnpj text, emitente_nome text, emitente_uf text,
+      valor numeric, emissao timestamptz, situacao text, completa boolean, manifestada boolean, pdf boolean)
+     where n.chave ~ '^[0-9]{44}$'
+  ), gravadas as (
+    insert into public.xml_nfe_notas as t (org_id, chave, cnpj, numero, serie, emitente_cnpj, emitente_nome, emitente_uf,
+                                           valor, emissao, situacao, completa, manifestada_em, pdf)
+    select m.org_id, d.chave, m.cnpj, coalesce(d.numero, ''), coalesce(d.serie, ''), coalesce(d.emitente_cnpj, ''),
+           coalesce(d.emitente_nome, ''), coalesce(d.emitente_uf, ''), d.valor, d.emissao,
+           case when d.situacao in ('autorizada', 'cancelada', 'denegada') then d.situacao else 'autorizada' end,
+           coalesce(d.completa, false), case when d.manifestada then now() end, coalesce(d.pdf, false)
+      from dados d
+    on conflict (org_id, chave) do update set
+      numero        = coalesce(nullif(excluded.numero, ''), t.numero),
+      serie         = coalesce(nullif(excluded.serie, ''), t.serie),
+      emitente_cnpj = coalesce(nullif(excluded.emitente_cnpj, ''), t.emitente_cnpj),
+      emitente_nome = coalesce(nullif(excluded.emitente_nome, ''), t.emitente_nome),
+      emitente_uf   = coalesce(nullif(excluded.emitente_uf, ''), t.emitente_uf),
+      valor         = coalesce(excluded.valor, t.valor),
+      emissao       = coalesce(excluded.emissao, t.emissao),
+      -- cancelada vale mais que autorizada (o evento pode chegar antes ou depois da nota)
+      situacao      = case when t.situacao = 'cancelada' or excluded.situacao = 'cancelada' then 'cancelada'
+                           when excluded.situacao = 'denegada' then 'denegada' else t.situacao end,
+      completa      = t.completa or excluded.completa,
+      manifestada_em = coalesce(t.manifestada_em, excluded.manifestada_em),
+      pdf           = t.pdf or excluded.pdf
+    returning (xmax = 0) as nova
+  )
+  select count(*) filter (where nova) into v_novas from gravadas;
+
+  update public.xml_nfe_monitor set
+    ultimo_nsu = greatest(ultimo_nsu, coalesce(p_ultimo_nsu, 0)),
+    max_nsu = greatest(max_nsu, coalesce(p_max_nsu, 0)),
+    status = case when p_status in ('ok', 'erro', 'certificado') then p_status else 'ok' end,
+    mensagem = left(coalesce(p_mensagem, ''), 500),
+    ultima_consulta = now(),
+    ultima_nota_em = case when v_novas > 0 then now() else ultima_nota_em end,
+    proxima_consulta = case when coalesce(p_espera_minutos, 0) > 0 then now() + make_interval(mins => p_espera_minutos)
+                            else public.xml_nfe_proxima(org_id, now()) end,
+    iniciado_em = null, robo = null
+  where id = p_id;
+  return v_novas;
+end $$;
+
+-- "Consultar agora" do portal: antecipa a consulta, respeitando 1 hora desde a última (regra do Ambiente Nacional)
+create or replace function public.xml_nfe_consultar_agora(p_id uuid) returns timestamptz
+language plpgsql security definer set search_path = public as $$
+declare v timestamptz;
+begin
+  update public.xml_nfe_monitor
+     set proxima_consulta = greatest(now(), coalesce(ultima_consulta + interval '1 hour', now())),
+         status = case when status = 'processando' then status else 'fila' end
+   where id = p_id and ativo and status <> 'processando'
+     and (org_id = (select public.minha_org()) or public.sou_admin())
+  returning proxima_consulta into v;
+  return v;
+end $$;
+
+alter table public.xml_nfe_monitor enable row level security;
+alter table public.xml_nfe_notas   enable row level security;
+drop policy if exists xml_nfe_monitor_ler on public.xml_nfe_monitor;
+create policy xml_nfe_monitor_ler on public.xml_nfe_monitor for select to authenticated
+  using ((select public.sou_admin()) or org_id = (select public.minha_org()));
+drop policy if exists xml_nfe_notas_ler on public.xml_nfe_notas;
+create policy xml_nfe_notas_ler on public.xml_nfe_notas for select to authenticated
+  using ((select public.sou_admin()) or org_id = (select public.minha_org()));
+
+revoke all on function public.xml_nfe_pegar_monitor(text, integer) from public, anon, authenticated;
+grant execute on function public.xml_nfe_pegar_monitor(text, integer) to service_role;
+revoke all on function public.xml_nfe_concluir(uuid, bigint, bigint, jsonb, text, text, integer) from public, anon, authenticated;
+grant execute on function public.xml_nfe_concluir(uuid, bigint, bigint, jsonb, text, text, integer) to service_role;
+revoke all on function public.xml_nfe_reagendar(uuid) from public, anon, authenticated;
+grant execute on function public.xml_nfe_reagendar(uuid) to service_role;
+revoke all on function public.xml_nfe_proxima(uuid, timestamptz) from public, anon, authenticated;
+grant execute on function public.xml_nfe_proxima(uuid, timestamptz) to service_role;
+revoke all on function public.xml_nfe_consultar_agora(uuid) from public, anon;
+grant execute on function public.xml_nfe_consultar_agora(uuid) to authenticated;
+
 -- avisa a API (PostgREST) para reler as tabelas e funções novas
 notify pgrst, 'reload schema';

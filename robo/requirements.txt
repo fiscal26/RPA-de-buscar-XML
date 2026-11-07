@@ -3,3 +3,5 @@ requests
 openpyxl
 cryptography
 pillow
+lxml
+brazilfiscalreport==1.3.1

@@ -14,6 +14,7 @@ const ITENS = [
   { href: "/painel/agendar", nome: "Agendar", icone: "agendar" },
   { href: "/painel/agendamentos", nome: "Agendamentos", icone: "agendamentos" },
   { href: "/painel/empresas", nome: "Empresas", icone: "empresas" },
+  { href: "/painel/monitor", nome: "Monitor Fiscal", icone: "monitor" },
   { href: "/painel/certificados", nome: "Certificados", icone: "certificado" },
   { href: "/painel/mei", nome: "Monitoramento MEI", icone: "mei" },
 ];
