@@ -51,14 +51,20 @@ export async function consultarAgora(form: FormData) {
 export async function salvarHorario(_: EstadoMonitor, form: FormData): Promise<EstadoMonitor> {
   const { perfil, admin } = await contexto();
   if (!admin && perfil.papel !== "gestor") return { erro: "Só o gestor do escritório muda o horário." };
-  const orgId = admin ? String(form.get("org_id") ?? "") : perfil.org_id ?? "";
-  if (!orgId) return { erro: "Escolha a organização." };
   const hora = String(form.get("hora") ?? "");
   if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(hora)) return { erro: "Escolha um horário válido." };
   const db = clienteAdmin();
-  const { error } = await db.from("organizacoes").update({ monitor_hora: hora }).eq("id", orgId);
-  if (error) return { erro: `Não consegui salvar: ${error.message}` };
-  await db.rpc("xml_nfe_reagendar", { p_org: orgId });
+  // o horário é do escritório de quem salva; o administrador sem escritório próprio ajusta todos
+  let orgs = perfil.org_id ? [perfil.org_id] : [];
+  if (!orgs.length && admin) orgs = ((await db.from("organizacoes").select("id")).data ?? []).map((o) => o.id as string);
+  if (!orgs.length) return { erro: "Seu acesso não está ligado a um escritório." };
+  const { error } = await db.from("organizacoes").update({ monitor_hora: hora }).in("id", orgs);
+  if (error) {
+    return { erro: /monitor_hora/.test(error.message)
+      ? "O banco ainda não tem o campo do horário: rode o schema.sql de novo no Supabase."
+      : `Não consegui salvar: ${error.message}` };
+  }
+  for (const id of orgs) await db.rpc("xml_nfe_reagendar", { p_org: id });
   revalidatePath("/painel/monitor");
   return { ok: `Pronto: a consulta diária passa a ser às ${horaBR(hora)}.` };
 }

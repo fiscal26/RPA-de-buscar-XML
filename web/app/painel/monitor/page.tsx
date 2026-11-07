@@ -3,7 +3,7 @@ import Icone from "@/components/Icones";
 import { contexto } from "@/lib/sessao";
 import { empresasComCnpj } from "@/lib/cadastro-nfse";
 import { situacaoValidade } from "@/lib/nfse";
-import { UFS, horaBR, type MonitorLinha } from "@/lib/monitor";
+import { horaBR, type MonitorLinha } from "@/lib/monitor";
 import AdicionarMonitor from "./AdicionarMonitor";
 import HorarioMonitor from "./HorarioMonitor";
 import TabelaMonitor, { type LinhaTabela } from "./TabelaMonitor";
@@ -30,7 +30,9 @@ export default async function MonitorFiscal() {
   ]);
   const orgs = (organizacoes ?? []) as { id: string; nome: string; monitor_hora: string | null }[];
   const minhaOrg = orgs.find((o) => o.id === perfil.org_id);
-  const hora = horaBR(admin ? orgs[0]?.monitor_hora : minhaOrg?.monitor_hora);
+  // o administrador sem escritório próprio configura todos os escritórios de uma vez
+  const configOrg = minhaOrg ?? (admin ? orgs[0] : undefined);
+  const hora = horaBR(configOrg?.monitor_hora);
   const monitores = (m ?? []) as unknown as MonitorLinha[];
   const certificados = (c ?? []) as Cert[];
   const notasMes = (n ?? []) as NotaMes[];
@@ -65,7 +67,7 @@ export default async function MonitorFiscal() {
         <div>
           <h1>Monitor Fiscal</h1>
           <p className="suave">
-            Todo dia, {admin ? "no horário de cada escritório" : `às ${hora}`}, o robô consulta o Ambiente Nacional da NF-e
+            Todo dia, às {hora}, o robô consulta o Ambiente Nacional da NF-e
             e traz as notas destinadas a cada empresa monitorada, de qualquer estado, com o XML e o PDF (DANFE).
           </p>
         </div>
@@ -73,7 +75,7 @@ export default async function MonitorFiscal() {
       {gerencia && (
         <section className="cartao config-monitor">
           <h2 className="titulo-cartao">Configurações</h2>
-          <HorarioMonitor organizacoes={admin ? orgs : orgs.filter((o) => o.id === perfil.org_id)} admin={admin} />
+          <HorarioMonitor hora={configOrg?.monitor_hora ?? null} />
         </section>
       )}
       {gerencia && <AdicionarMonitor empresas={candidatas} organizacoes={admin ? orgs.map(({ id, nome }) => ({ id, nome })) : undefined} />}
@@ -114,20 +116,6 @@ export default async function MonitorFiscal() {
         )}
       </section>
 
-      <section className="cartao">
-        <h2 className="titulo-cartao">Cobertura</h2>
-        <div className="cobertura">
-          <span className="cobertura-rotulo">NF-e destinadas</span>
-          <span className="ufs">{UFS.map((uf) => <span key={uf} className="uf ativa">{uf}</span>)}</span>
-          <span className="cobertura-rotulo">NF-e emitidas e NFC-e</span>
-          <span className="suave">Em breve: dependem da SEFAZ de cada estado (a da Paraíba ainda não oferece).</span>
-        </div>
-        <p className="suave">
-          A nota que só chega em resumo ganha a <b>Ciência da Operação</b> (evento neutro, que não confirma nem recusa a
-          compra) para o XML completo vir; dá para desligar por empresa ao incluir. O certificado precisa ser o da própria
-          empresa ou o da matriz: a procuração do e-CAC não vale no Ambiente Nacional da NF-e.
-        </p>
-      </section>
     </>
   );
 }

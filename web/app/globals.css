@@ -841,16 +841,10 @@ td.nome-empresa { min-width: 10rem; }
 .acoes-icone form { margin: 0; }
 .painel-numeros.monitor-numeros { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); grid-template-rows: auto; }
 .monitor-numeros .valor-moeda { font-size: 1.45rem; }
-.cobertura { display: grid; grid-template-columns: max-content 1fr; gap: 0.6rem 1rem; align-items: center; margin: 0.5rem 0 1rem; }
-.cobertura-rotulo { font-weight: 600; color: var(--forte); }
-.ufs { display: flex; flex-wrap: wrap; gap: 0.35rem; }
-.uf { font: 600 0.75rem/1 var(--fonte-texto); padding: 0.35rem 0.5rem; border-radius: 6px; background: var(--carbono); color: var(--suave); }
-.uf.ativa { background: var(--carimbo-fundo); color: var(--carimbo); }
 .filtro-mes { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin: 0; }
 .filtro-mes input { margin: 0; max-width: 180px; }
 .filtro-mes label { margin: 0; font-weight: 400; }
 .chave-nfe { font-size: 0.72rem; word-break: break-all; min-width: 180px; }
-@media (max-width: 600px) { .cobertura { grid-template-columns: 1fr; } }
 .config-monitor { padding-top: 1rem; padding-bottom: 1rem; }
 .config-monitor .titulo-cartao { margin-bottom: 0.5rem; }
 .horario-monitor { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.75rem; margin: 0; }
