@@ -1057,7 +1057,8 @@ def executar_nfse(cfg: dict, t: dict, privada, sessao_falsa=None) -> Resultado:
             detalhes["nfse_pdf"] = {"situacao": "erro" if not r.pdfs else "concluido",
                                     "mensagem": f"o Portal Nacional não entregou {r.pdfs_faltando} PDF(s)", "arquivos": r.pdfs}
         else:
-            detalhes["nfse_pdf"] = {"situacao": "concluido", "mensagem": f"{r.pdfs} PDF(s)", "arquivos": r.pdfs}
+            extra = f" ({r.pdfs_gerados} gerado(s) a partir do XML)" if r.pdfs_gerados else ""
+            detalhes["nfse_pdf"] = {"situacao": "concluido", "mensagem": f"{r.pdfs} PDF(s){extra}", "arquivos": r.pdfs}
     if "nfse_retencoes" in tipos:
         detalhes["nfse_retencoes"] = ({"situacao": "concluido", "mensagem": "relatório salvo", "arquivos": 1} if r.relatorio
                                       else {"situacao": "sem_movimento", "mensagem": "sem notas na competência", "sem_notas": True})
