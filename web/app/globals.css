@@ -851,3 +851,10 @@ td.nome-empresa { min-width: 10rem; }
 .filtro-mes label { margin: 0; font-weight: 400; }
 .chave-nfe { font-size: 0.72rem; word-break: break-all; min-width: 180px; }
 @media (max-width: 600px) { .cobertura { grid-template-columns: 1fr; } }
+.config-monitor { padding-top: 1rem; padding-bottom: 1rem; }
+.config-monitor .titulo-cartao { margin-bottom: 0.5rem; }
+.horario-monitor { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.75rem; margin: 0; }
+.horario-monitor label { margin: 0; font-weight: 500; }
+.horario-monitor select { width: auto; margin: 0; }
+.texto-ok { color: var(--carimbo); font-weight: 500; }
+.texto-erro { color: var(--erro); font-weight: 500; }

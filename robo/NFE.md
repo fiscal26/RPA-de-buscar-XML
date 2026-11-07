@@ -1,6 +1,7 @@
 # Monitor Fiscal: NF-e destinadas (Ambiente Nacional)
 
-O robô consulta, todo dia às 11h (horário de Brasília), o **Ambiente Nacional da NF-e** com o certificado A1 de cada
+O robô consulta, todo dia no horário escolhido pelo escritório (padrão 11h, horário de Brasília; o gestor muda em
+Monitor Fiscal > Configurações), o **Ambiente Nacional da NF-e** com o certificado A1 de cada
 empresa monitorada no portal (aba Monitor Fiscal) e traz as notas em que ela é a **destinatária**, de qualquer estado.
 
 ## Serviços usados

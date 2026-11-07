@@ -5,6 +5,7 @@ import { contexto } from "@/lib/sessao";
 import { clienteAdmin } from "@/lib/supabase/admin";
 import { empresasComCnpj } from "@/lib/cadastro-nfse";
 import { soDigitos } from "@/lib/documentos";
+import { horaBR } from "@/lib/monitor";
 
 export type EstadoMonitor = { ok?: string; erro?: string } | undefined;
 
@@ -44,4 +45,20 @@ export async function consultarAgora(form: FormData) {
   const { supabase } = await contexto();
   await supabase.rpc("xml_nfe_consultar_agora", { p_id: String(form.get("id") ?? "") });
   revalidatePath("/painel/monitor");
+}
+
+/** Horário da consulta diária do escritório (só gestor ou administrador). As próximas consultas mudam na hora. */
+export async function salvarHorario(_: EstadoMonitor, form: FormData): Promise<EstadoMonitor> {
+  const { perfil, admin } = await contexto();
+  if (!admin && perfil.papel !== "gestor") return { erro: "Só o gestor do escritório muda o horário." };
+  const orgId = admin ? String(form.get("org_id") ?? "") : perfil.org_id ?? "";
+  if (!orgId) return { erro: "Escolha a organização." };
+  const hora = String(form.get("hora") ?? "");
+  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(hora)) return { erro: "Escolha um horário válido." };
+  const db = clienteAdmin();
+  const { error } = await db.from("organizacoes").update({ monitor_hora: hora }).eq("id", orgId);
+  if (error) return { erro: `Não consegui salvar: ${error.message}` };
+  await db.rpc("xml_nfe_reagendar", { p_org: orgId });
+  revalidatePath("/painel/monitor");
+  return { ok: `Pronto: a consulta diária passa a ser às ${horaBR(hora)}.` };
 }

@@ -541,7 +541,7 @@ revoke all on function public.xml_cancelar_agendamento(uuid) from public, anon;
 grant execute on function public.xml_cancelar_agendamento(uuid) to authenticated;
 
 -- ========================================================================= Monitor Fiscal (NF-e destinadas)
--- O robô consulta todo dia, às 11h, o Ambiente Nacional da NF-e (NFeDistribuicaoDFe) com o certificado A1 de cada
+-- O robô consulta todo dia, no horário escolhido pelo escritório (padrão 11h), o Ambiente Nacional da NF-e (NFeDistribuicaoDFe) com o certificado A1 de cada
 -- empresa monitorada e traz as notas em que ela é a destinatária (de qualquer estado), com o XML e o PDF.
 create table if not exists public.xml_nfe_monitor (
   id               uuid primary key default gen_random_uuid(),
@@ -586,12 +586,30 @@ create table if not exists public.xml_nfe_notas (
 );
 create index if not exists xml_nfe_notas_empresa_idx on public.xml_nfe_notas (org_id, cnpj, emissao desc);
 
--- Próxima consulta diária: hoje às 11h (horário de Brasília) se ainda der com folga de 1 hora; senão, amanhã
-create or replace function public.xml_nfe_proxima_11h() returns timestamptz
-language sql stable as $$
-  select case when hoje > now() + interval '1 hour' then hoje else hoje + interval '1 day' end
-    from (select ((date_trunc('day', now() at time zone 'America/Fortaleza') + time '11:00') at time zone 'America/Fortaleza') as hoje) h
+-- Horário da consulta diária, escolhido pelo escritório (padrão 11h, horário de Brasília)
+alter table public.organizacoes add column if not exists monitor_hora time not null default '11:00';
+
+-- Próxima consulta: hoje no horário do escritório, se ainda der (e se já passou 1 hora da última consulta,
+-- regra do Ambiente Nacional); senão, amanhã no mesmo horário
+drop function if exists public.xml_nfe_proxima_11h();
+create or replace function public.xml_nfe_proxima(p_org uuid, p_ultima timestamptz default null) returns timestamptz
+language sql stable security definer set search_path = public as $$
+  select case when hoje > greatest(now(), coalesce(p_ultima + interval '1 hour', now())) then hoje else hoje + interval '1 day' end
+    from (select ((date_trunc('day', now() at time zone 'America/Fortaleza')
+                   + coalesce((select o.monitor_hora from public.organizacoes o where o.id = p_org), time '11:00'))
+                  at time zone 'America/Fortaleza') as hoje) h
 $$;
+
+-- O escritório trocou o horário: as próximas consultas passam para o horário novo
+create or replace function public.xml_nfe_reagendar(p_org uuid) returns integer
+language plpgsql security definer set search_path = public as $$
+declare n integer;
+begin
+  update public.xml_nfe_monitor set proxima_consulta = public.xml_nfe_proxima(org_id, ultima_consulta)
+   where org_id = p_org and ativo and status <> 'processando';
+  get diagnostics n = row_count;
+  return n;
+end $$;
 
 -- Fila do robô: empresas cuja consulta venceu, com o certificado A1 dela (ou o da matriz, mesma raiz do CNPJ:
 -- o Ambiente Nacional só entrega ao próprio interessado) e as notas que ainda esperam o XML completo
@@ -607,7 +625,7 @@ begin
   update public.xml_nfe_monitor set status = 'fila', iniciado_em = null, robo = null
    where status = 'processando' and iniciado_em < now() - interval '90 minutes';
 
-  update public.xml_nfe_monitor m set status = 'certificado', proxima_consulta = public.xml_nfe_proxima_11h(),
+  update public.xml_nfe_monitor m set status = 'certificado', proxima_consulta = public.xml_nfe_proxima(m.org_id, m.ultima_consulta),
          mensagem = 'Sem certificado A1 desta empresa (nem da matriz). Envie em Certificados.'
    where m.ativo and m.status <> 'processando' and m.proxima_consulta <= now()
      and not exists (select 1 from public.xml_nfse_certificados c
@@ -641,7 +659,7 @@ begin
 end $$;
 
 -- O robô devolve a consulta: grava as notas (sem perder o que já se sabia) e marca a próxima consulta
--- (11h do dia seguinte, ou daqui a p_espera_minutos quando o Ambiente Nacional pediu para esperar)
+-- (o horário do escritório no dia seguinte, ou daqui a p_espera_minutos quando o Ambiente Nacional pediu para esperar)
 drop function if exists public.xml_nfe_concluir(uuid, bigint, bigint, jsonb, text, text, integer);
 create or replace function public.xml_nfe_concluir(p_id uuid, p_ultimo_nsu bigint, p_max_nsu bigint, p_notas jsonb,
                                                   p_status text, p_mensagem text, p_espera_minutos integer default 0)
@@ -693,7 +711,7 @@ begin
     ultima_consulta = now(),
     ultima_nota_em = case when v_novas > 0 then now() else ultima_nota_em end,
     proxima_consulta = case when coalesce(p_espera_minutos, 0) > 0 then now() + make_interval(mins => p_espera_minutos)
-                            else public.xml_nfe_proxima_11h() end,
+                            else public.xml_nfe_proxima(org_id, now()) end,
     iniciado_em = null, robo = null
   where id = p_id;
   return v_novas;
@@ -726,6 +744,10 @@ revoke all on function public.xml_nfe_pegar_monitor(text, integer) from public, 
 grant execute on function public.xml_nfe_pegar_monitor(text, integer) to service_role;
 revoke all on function public.xml_nfe_concluir(uuid, bigint, bigint, jsonb, text, text, integer) from public, anon, authenticated;
 grant execute on function public.xml_nfe_concluir(uuid, bigint, bigint, jsonb, text, text, integer) to service_role;
+revoke all on function public.xml_nfe_reagendar(uuid) from public, anon, authenticated;
+grant execute on function public.xml_nfe_reagendar(uuid) to service_role;
+revoke all on function public.xml_nfe_proxima(uuid, timestamptz) from public, anon, authenticated;
+grant execute on function public.xml_nfe_proxima(uuid, timestamptz) to service_role;
 revoke all on function public.xml_nfe_consultar_agora(uuid) from public, anon;
 grant execute on function public.xml_nfe_consultar_agora(uuid) to authenticated;
 

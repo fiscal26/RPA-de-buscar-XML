@@ -194,7 +194,7 @@ só dos últimos 3 dias, e não vão para o Google Drive. Baixe pelo WinSCP. Par
 no comando acima e reinicie de novo.
 
 ## Monitor Fiscal (NF-e destinadas)
-O robô de XML também atende o Monitor Fiscal do portal: todo dia às 11h consulta o Ambiente Nacional da NF-e de cada
+O robô de XML também atende o Monitor Fiscal do portal: todo dia, no horário escolhido pelo escritório, consulta o Ambiente Nacional da NF-e de cada
 empresa monitorada (veja `robo/NFE.md`). Ele usa duas bibliotecas novas (assinatura do evento e PDF do DANFE). Depois
 do `sudo lotivisse atualizar xml`, instale-as uma vez e reinicie:
 

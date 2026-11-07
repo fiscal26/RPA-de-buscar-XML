@@ -25,3 +25,9 @@ export const UFS = ["AC", "AL", "AM", "AP", "BA", "CE", "DF", "ES", "GO", "MA", 
   "PR", "RJ", "RN", "RO", "RR", "RS", "SC", "SE", "SP", "TO"];
 
 export const reaisMonitor = (v: number) => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+
+/** "11:00:00" -> "11h"; "07:30" -> "7h30" (horário de Brasília da consulta diária). */
+export const horaBR = (h: string | null | undefined) => {
+  const [hh, mm] = (h || "11:00").slice(0, 5).split(":");
+  return mm === "00" ? `${Number(hh)}h` : `${Number(hh)}h${mm}`;
+};

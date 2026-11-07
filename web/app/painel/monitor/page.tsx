@@ -3,8 +3,9 @@ import Icone from "@/components/Icones";
 import { contexto } from "@/lib/sessao";
 import { empresasComCnpj } from "@/lib/cadastro-nfse";
 import { situacaoValidade } from "@/lib/nfse";
-import { UFS, type MonitorLinha } from "@/lib/monitor";
+import { UFS, horaBR, type MonitorLinha } from "@/lib/monitor";
 import AdicionarMonitor from "./AdicionarMonitor";
+import HorarioMonitor from "./HorarioMonitor";
 import TabelaMonitor, { type LinhaTabela } from "./TabelaMonitor";
 
 type Cert = { org_id: string; cnpj: string; validade: string | null };
@@ -25,8 +26,11 @@ export default async function MonitorFiscal() {
     supabase.from("xml_nfe_notas").select("org_id, cnpj, valor, situacao").gte("emissao", inicioMes).limit(20000),
     supabase.from("xml_nfe_notas").select("chave", { count: "exact", head: true }),
     gerencia ? empresasComCnpj(supabase) : Promise.resolve([]),
-    admin ? supabase.from("organizacoes").select("id, nome").eq("ativo", true).order("nome").then((r) => r.data ?? []) : Promise.resolve(undefined),
+    supabase.from("organizacoes").select("id, nome, monitor_hora").eq("ativo", true).order("nome").then((r) => r.data ?? []),
   ]);
+  const orgs = (organizacoes ?? []) as { id: string; nome: string; monitor_hora: string | null }[];
+  const minhaOrg = orgs.find((o) => o.id === perfil.org_id);
+  const hora = horaBR(admin ? orgs[0]?.monitor_hora : minhaOrg?.monitor_hora);
   const monitores = (m ?? []) as unknown as MonitorLinha[];
   const certificados = (c ?? []) as Cert[];
   const notasMes = (n ?? []) as NotaMes[];
@@ -61,12 +65,18 @@ export default async function MonitorFiscal() {
         <div>
           <h1>Monitor Fiscal</h1>
           <p className="suave">
-            Todo dia, às 11h, o robô consulta o Ambiente Nacional da NF-e e traz as notas destinadas a cada empresa
-            monitorada, de qualquer estado, com o XML e o PDF (DANFE).
+            Todo dia, {admin ? "no horário de cada escritório" : `às ${hora}`}, o robô consulta o Ambiente Nacional da NF-e
+            e traz as notas destinadas a cada empresa monitorada, de qualquer estado, com o XML e o PDF (DANFE).
           </p>
         </div>
       </div>
-      {gerencia && <AdicionarMonitor empresas={candidatas} organizacoes={organizacoes} />}
+      {gerencia && (
+        <section className="cartao config-monitor">
+          <h2 className="titulo-cartao">Configurações</h2>
+          <HorarioMonitor organizacoes={admin ? orgs : orgs.filter((o) => o.id === perfil.org_id)} admin={admin} />
+        </section>
+      )}
+      {gerencia && <AdicionarMonitor empresas={candidatas} organizacoes={admin ? orgs.map(({ id, nome }) => ({ id, nome })) : undefined} />}
 
       <div className="painel-numeros monitor-numeros">
         <div className="numero-cartao">
