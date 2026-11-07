@@ -24,7 +24,9 @@ export default async function Certificados() {
         O robô baixa as NFS-e pela API oficial do Portal Nacional com um certificado digital A1. Pode ser o da própria
         empresa (o da matriz serve às filiais) ou, desde novembro de 2026, o <b>certificado do escritório</b>: com ele, o
         robô baixa as notas de todas as empresas que deram procuração eletrônica ao escritório no e-CAC. Qual certificado
-        cada empresa usa aparece em <Link href="/painel/empresas">Empresas</Link>.
+        cada empresa usa aparece em <Link href="/painel/empresas">Empresas</Link>. O mesmo A1 da empresa (ou da matriz)
+        serve ao <Link href="/painel/monitor">Monitor Fiscal</Link>, que traz as NF-e destinadas a ela; ali a procuração
+        do escritório não vale.
       </p>
 
       <section className="cartao">

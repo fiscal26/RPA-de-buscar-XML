@@ -192,3 +192,13 @@ sudo systemctl restart lotivisse-robo@xml
 Os prints ficam em `/home/lotivisse/xml/arquivos/_diagnostico/passos/` (uma pasta por sessão, com o `passos.txt`),
 só dos últimos 3 dias, e não vão para o Google Drive. Baixe pelo WinSCP. Para desligar, troque `True` por `False`
 no comando acima e reinicie de novo.
+
+## Monitor Fiscal (NF-e destinadas)
+O robô de XML também atende o Monitor Fiscal do portal: todo dia às 11h consulta o Ambiente Nacional da NF-e de cada
+empresa monitorada (veja `robo/NFE.md`). Ele usa duas bibliotecas novas (assinatura do evento e PDF do DANFE). Depois
+do `sudo lotivisse atualizar xml`, instale-as uma vez e reinicie:
+
+```
+sudo -u lotivisse /home/lotivisse/xml/venv/bin/pip install -q -r /home/lotivisse/xml/app/servidor/requirements.txt
+sudo systemctl restart lotivisse-robo@xml
+```

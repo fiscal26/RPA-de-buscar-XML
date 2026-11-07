@@ -8,7 +8,8 @@ import Icone from "./Icones";
 type Aviso = { id: string; tipo: string; gravidade: "erro" | "alerta"; titulo: string; texto: string; link: string; quando: string | null };
 
 const CHAVE = "notificacoes-vistas";
-const TIPO: Record<string, string> = { acao: "Precisa da sua ação", mei: "Monitoramento MEI", certificado: "Certificado", robo: "Robô" };
+const TIPO: Record<string, string> = { acao: "Precisa da sua ação", mei: "Monitoramento MEI", certificado: "Certificado", robo: "Robô",
+  monitor: "Monitor Fiscal", nfe: "Monitor Fiscal" };
 
 function vistas(): Set<string> {
   try { return new Set(JSON.parse(localStorage.getItem(CHAVE) ?? "[]") as string[]); } catch { return new Set(); }
