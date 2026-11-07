@@ -391,3 +391,22 @@ def test_empresa_que_nao_e_mei_baixa_so_a_competencia(chaves, cfg_nfse, tmp_path
     base = tmp_path / "destino" / "Arquivos baixados" / "7-Lotivisse"
     assert (base / "092026").is_dir() and not (base / "072026").exists() and not (base / "022026").exists()
     assert "meses anteriores" not in r.mensagem
+
+
+def test_portal_sem_pdf_o_robo_gera_o_danfse_do_xml(tmp_path):
+    """O Portal Nacional às vezes não entrega o PDF: o robô gera o DANFSe a partir do XML e para de insistir."""
+    class SemPdf(PortalFalso):
+        def get(self, url, params=None, headers=None, timeout=None):
+            if "/danfse/" in url:
+                self.pedidos.append((url, {}))
+                return Resposta(404, {"Erros": [{"Codigo": "E404", "Descricao": "não encontrado"}]})
+            return super().get(url, params, headers, timeout)
+
+    docs = [(i, "NFSE", f"2507507{i:043d}", nota_xml(f"2507507{i:043d}", str(i), DONO, CLIENTE, "Cliente Um SA", 100.0 * i))
+            for i in range(1, 7)]
+    portal = SemPdf(docs)
+    r = nfse.baixar_competencia(cliente(portal), DONO, "2026-09", tmp_path / "d", "X", cache_raiz=tmp_path / "cache")
+    pdfs = list((r.pasta / nfse.PASTA_EMITIDAS).glob("*.pdf"))
+    assert len(pdfs) == 6 and all(p.read_bytes().startswith(b"%PDF") for p in pdfs)
+    assert r.pdfs == 6 and r.pdfs_gerados == 6 and r.pdfs_faltando == 0
+    assert sum("/danfse/" in p[0] for p in portal.pedidos) <= 4  # depois de 3 sem PDF, não pede mais ao portal

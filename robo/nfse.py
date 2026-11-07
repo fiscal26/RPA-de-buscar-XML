@@ -437,6 +437,7 @@ class ResultadoNfse:
     canceladas: int = 0
     pdfs: int = 0
     pdfs_faltando: int = 0
+    pdfs_gerados: int = 0      # DANFSe gerados pelo robô a partir do XML (o portal não entregou)
     pasta: Path | None = None
     relatorio: Path | None = None
     novos_documentos: int = 0
@@ -517,6 +518,20 @@ def meses_sem_busca(destino: str | Path, nome: str, cnpj: str, codigo: str, comp
     return [f"{ano}-{m:02d}" for m in range(1, mes) if not (base / pasta_competencia(f"{ano}-{m:02d}")).exists()]
 
 
+def danfse_do_xml(xml: bytes) -> bytes | None:
+    """DANFSe (modelo nacional) gerado a partir do XML da nota, quando o Portal Nacional não entrega o PDF."""
+    try:
+        from brazilfiscalreport.danfse import Danfse
+    except ImportError:
+        return None
+    try:
+        pdf = Danfse(xml=xml.decode("utf-8", errors="replace")).output()
+    except Exception as e:  # nota com algum campo que a biblioteca não conhece: fica só o XML
+        log.warning("   DANFSe não gerado a partir do XML: %s", e)
+        return None
+    return bytes(pdf) if pdf else None
+
+
 def nome_do_arquivo(nota: NotaServico) -> str:
     outro = nota.tomador_nome if nota.prestador_doc else ""
     return nome_de_pasta(f"NFS-e {nota.numero} - {outro}".strip(" -"))[:60] + f" - {nota.chave[-8:]}"
@@ -549,12 +564,16 @@ def baixar_competencia(cliente: ClienteADN, cnpj: str, competencia: str, destino
                     res.pdfs += 1
                     continue
                 conteudo = None if sem_pdf_no_portal else cliente.danfse(nota.chave)
+                if not conteudo:  # o portal não entregou: gera o DANFSe a partir do XML, no modelo oficial
+                    sem_pdf_no_portal = sem_pdf_no_portal or res.pdfs_gerados >= 3 and res.pdfs == res.pdfs_gerados
+                    conteudo = danfse_do_xml(xml)
+                    if conteudo:
+                        res.pdfs_gerados += 1
                 if conteudo:
                     arq_pdf.write_bytes(conteudo)
                     res.pdfs += 1
                 else:
                     res.pdfs_faltando += 1
-                    sem_pdf_no_portal = res.pdfs == 0 and res.pdfs_faltando >= 3
     res.emitidas = [n for n, _ in emitidas]
     res.recebidas = [n for n, _ in recebidas]
     # todas as notas do mês num XML só, no envelope ABRASF (o que a importação da Domínio lê)
