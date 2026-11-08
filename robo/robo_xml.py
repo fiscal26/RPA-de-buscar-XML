@@ -44,7 +44,7 @@ import arquivos
 import config
 import cripto
 import planilha
-from atf_pb import (SERVICOS, TIPO_TELA, MensagensIndisponiveis, AtfPB, Diagnostico, Envio, EtapaNaoConcluida, Recolha,
+from atf_pb import (SERVICOS, TIPO_TELA, MensagensIndisponiveis, AtfPB, Diagnostico, Emissao, Envio, EtapaNaoConcluida, Recolha,
                     SenhaInvalida, SessaoExpirada, SiteForaDoAr)
 from navegador import Chrome, ChromeIndisponivel
 
@@ -254,11 +254,19 @@ class Executor:
         for t in trabalhos:
             log.info("%s — %s", t.rotulo, ", ".join(arquivos.TIPOS.get(x, x) for x in t.tipos))
             for tipo in t.tipos:
+                if tipo in TIPO_TELA and atf.bloqueada(t.ie):  # o login não tem acesso: pula o resto da empresa
+                    envios[(t.ie, tipo)] = Envio(ie=t.ie, tipo=tipo, ok=False, resposta=sem_permissao(atf.bloqueada(t.ie)))
+                    self._progresso(t, tipo, "erro", envios[(t.ie, tipo)].resposta)
+                    continue
                 if tipo in TIPO_TELA:
                     nome = arquivos.TIPOS.get(tipo, tipo)
                     self._progresso(t, tipo, "andamento", "consultando no ATF")
                     # primeiro em HTML (responde na hora): sem notas, nem pede o XML
                     n = com_sessao(atf.conferir_html, tipo, t.ie, t.inicio, t.fim, nome) if html_antes else None
+                    if atf.bloqueada(t.ie):  # a consulta em HTML já mostrou que o login não tem acesso
+                        envios[(t.ie, tipo)] = Envio(ie=t.ie, tipo=tipo, ok=False, resposta=sem_permissao(atf.bloqueada(t.ie)))
+                        self._progresso(t, tipo, "erro", envios[(t.ie, tipo)].resposta)
+                        continue
                     if n == 0:
                         envios[(t.ie, tipo)] = Envio(ie=t.ie, tipo=tipo, sem_notas=True, notas_html=0,
                                                      resposta="Nenhum registro (consulta em HTML)")
@@ -266,6 +274,8 @@ class Executor:
                         continue
                     envio = envios[(t.ie, tipo)] = com_sessao(atf.solicitar, tipo, t.ie, t.inicio, t.fim, nome)
                     envio.notas_html = n
+                    if atf.bloqueada(t.ie):
+                        envio.ok, envio.resposta = False, sem_permissao(atf.bloqueada(t.ie))
                     if not envio.ok:
                         self._progresso(t, tipo, "erro", envio.resposta or "consulta não aceita")
                     elif envio.sem_notas:
@@ -277,6 +287,10 @@ class Executor:
         emissoes: dict[tuple[str, str], object] = {}
         for t in trabalhos:
             for tipo in t.tipos:
+                if tipo in SERVICOS and atf.bloqueada(t.ie):
+                    e = emissoes[(t.ie, tipo)] = Emissao(ie=t.ie, tipo=tipo, ok=False, resposta=sem_permissao(atf.bloqueada(t.ie)))
+                    self._progresso(t, tipo, **situacao_emissao(e))
+                    continue
                 if tipo in SERVICOS:
                     nome = arquivos.TIPOS.get(tipo, tipo)
                     extra = {}
@@ -590,6 +604,12 @@ def detalhes_finais(tipos: list[str], r: Resultado, andamento: dict) -> dict:
             "o ATF não devolveu o XML" if tipo in TIPO_TELA else "não foi concluído nesta execução")
         detalhes[tipo] = {**(d or {}), "situacao": "erro", "mensagem": motivo}
     return detalhes
+
+
+def sem_permissao(mensagem_atf: str) -> str:
+    """Texto do erro quando o login do ATF não tem acesso à empresa (os outros serviços dela são pulados)."""
+    return (f"o login do ATF não tem permissão sobre esta empresa ({mensagem_atf.rstrip('.')}). Confira se o cliente "
+            "autorizou o contador no ATF, ou use o login certo na planilha; os outros serviços desta empresa foram pulados")
 
 
 def situacao_emissao(e) -> dict:

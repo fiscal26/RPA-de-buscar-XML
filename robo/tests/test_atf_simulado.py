@@ -46,6 +46,8 @@ EMPRESA = "11222333000181"
 FORNECEDOR = "45723174000110"
 IE_ESTRANHA = "161112226"  # empresa fora da rodada (consulta feita à mão no mesmo login)
 IE_INEXISTENTE = "160555558"  # o Pesquisar do ATF não traz nome
+IE_SEM_PERMISSAO = "160777775"  # o login do contador não tem acesso a esta empresa
+_ALERTA_PERMISSAO = "<script>alert('Usuário sem permissão sobre um ou mais contribuinte(s) utilizado(s).')</script>"
 INTERVALO_CAIXA = 3  # segundos entre leituras da caixa de mensagens (no ATF real: 60)
 CHROME = os.environ.get("CHROME_TESTE") or next(
     (str(p) for p in Path("/opt/pw-browsers").glob("chromium-*/chrome-linux/chrome")), shutil.which("chromium") or "")
@@ -418,7 +420,7 @@ class AtfFalso(BaseHTTPRequestHandler):
 
     def _componente(self, cid: str, ie: str) -> str:
         suf = cid.rsplit("_cmp", 1)[1]
-        nome = "" if not ie or ie == IE_INEXISTENTE else f"EMPRESA {ie}"
+        nome = "" if not ie or ie in (IE_INEXISTENTE, IE_SEM_PERMISSAO) else f"EMPRESA {ie}"
         return (f'<form method="post" action="/atf/componentes/CodDescLstBS.jsp"><input type="hidden" name="id" value="{cid}">'
                 f'<div class="form-floating"><input type="text" name="hidNrDocumentocmp{suf}" id="hidNrDocumentocmp{suf}" '
                 f'class="form-control" value="{ie}"><label>Número</label></div>'
@@ -432,7 +434,7 @@ class AtfFalso(BaseHTTPRequestHandler):
     def _componente_simples(self, cid: str, ie: str) -> str:
         """componentes/CodDescLst.jsp (sem o BS) das telas de faturas, extrato, omissão e certidão."""
         comp = cid.rsplit("_", 1)[1]
-        nome = "" if not ie or ie == IE_INEXISTENTE else f"EMPRESA {ie}"
+        nome = "" if not ie or ie in (IE_INEXISTENTE, IE_SEM_PERMISSAO) else f"EMPRESA {ie}"
         return (f'<form method="post" action="/atf/componentes/CodDescLst.jsp"><input type="hidden" name="id" value="{cid}">'
                 f'- Número: <input type="text" name="hidNrDocumento{comp}" class="caixas" value="{ie}">'
                 '<input type="submit" name="btnPesquisar" value="Pesquisar" class="botoes">'
@@ -537,7 +539,9 @@ class AtfFalso(BaseHTTPRequestHandler):
             cid = campos["id"]
             suf = cid.rsplit("_cmp", 1)[1]
             ESTADO["blocos"][cid] = campos.get(f"hidNrDocumentocmp{suf}", "")
-            self._html(self._componente(cid, ESTADO["blocos"][cid]))
+            ESTADO.setdefault("pesquisas", []).append(ESTADO["blocos"][cid])
+            self._html(self._componente(cid, ESTADO["blocos"][cid])
+                       + (_ALERTA_PERMISSAO if ESTADO["blocos"][cid] == IE_SEM_PERMISSAO else ""))
         elif p == "/atf/dec/DECf_ApresentarDossierContribuinte.do":
             if "edtnrInscrEstadual" in campos:
                 ESTADO["dossie_ie"] = re.sub(r"\D", "", campos["edtnrInscrEstadual"])
@@ -551,7 +555,9 @@ class AtfFalso(BaseHTTPRequestHandler):
         elif p == "/atf/componentes/CodDescLst.jsp":
             cid = campos["id"]
             ESTADO["blocos"][cid] = campos.get(f"hidNrDocumento{cid.rsplit('_', 1)[1]}", "")
-            self._html(self._componente_simples(cid, ESTADO["blocos"][cid]))
+            ESTADO.setdefault("pesquisas", []).append(ESTADO["blocos"][cid])
+            self._html(self._componente_simples(cid, ESTADO["blocos"][cid])
+                       + (_ALERTA_PERMISSAO if ESTADO["blocos"][cid] == IE_SEM_PERMISSAO else ""))
         elif p == "/atf/arr/ARRf_LancamentoEmitirDarContribuinte2.do":
             ESTADO["ultima_ie_faturas"] = ESTADO["blocos"].get(
                 "ARRf_LancamentoEmitirDarContribuinte_cmpContribuinte", "")
@@ -978,3 +984,23 @@ def test_passo_a_passo_no_log_e_gravado(ambiente, caplog):
     (sessao,) = list((pasta / "diag_passos" / "passos").iterdir())
     assert "exibição HTML" in (sessao / "passos.txt").read_text(encoding="utf-8")
     assert list(sessao.glob("*.png"))
+
+
+def test_login_sem_permissao_pula_o_resto_da_empresa(ambiente):
+    """ "Usuário sem permissão sobre um ou mais contribuinte(s) utilizado(s).": o login não tem acesso à empresa.
+    Nada dela vai sair com esse login: o robô não insiste nos outros serviços e segue para a próxima empresa."""
+    cfg, _ = ambiente
+    ESTADO["pesquisas"] = []
+    executor = robo_xml.Executor(cfg)
+    try:
+        r1, r2 = executor.executar_rodada([
+            _trabalho(IE_SEM_PERMISSAO, "Sem acesso", ["nfe_saida", "nfe_entrada", "nfce", "certidao"], codigo="060"),
+            _trabalho(IE_OUTRA, "Mercado", ["nfce"], codigo="061"),
+        ])
+    finally:
+        executor.fechar()
+    assert ESTADO["pesquisas"].count(IE_SEM_PERMISSAO) == 1, ESTADO["pesquisas"]  # tentou uma vez só
+    for tipo in ("nfe_saida", "nfe_entrada", "nfce", "certidao"):
+        assert r1.detalhes[tipo]["situacao"] == "erro" and "permissão" in r1.detalhes[tipo]["mensagem"], (tipo, r1)
+    assert r1.status == "erro" and not r1.pendente, r1
+    assert r2.detalhes["nfce"]["notas"] == 1, r2  # a próxima empresa saiu normalmente
