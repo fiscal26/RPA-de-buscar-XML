@@ -44,7 +44,7 @@ import arquivos
 import config
 import cripto
 import planilha
-from atf_pb import (SERVICOS, TIPO_TELA, MensagensIndisponiveis, AtfPB, Diagnostico, Envio, EtapaNaoConcluida, Recolha,
+from atf_pb import (SERVICOS, TIPO_TELA, MensagensIndisponiveis, AtfPB, Diagnostico, Emissao, Envio, EtapaNaoConcluida, Recolha,
                     SenhaInvalida, SessaoExpirada, SiteForaDoAr)
 from navegador import Chrome, ChromeIndisponivel
 
@@ -254,11 +254,19 @@ class Executor:
         for t in trabalhos:
             log.info("%s — %s", t.rotulo, ", ".join(arquivos.TIPOS.get(x, x) for x in t.tipos))
             for tipo in t.tipos:
+                if tipo in TIPO_TELA and atf.bloqueada(t.ie):  # o login não tem acesso: pula o resto da empresa
+                    envios[(t.ie, tipo)] = Envio(ie=t.ie, tipo=tipo, ok=False, resposta=sem_permissao(atf.bloqueada(t.ie)))
+                    self._progresso(t, tipo, "erro", envios[(t.ie, tipo)].resposta)
+                    continue
                 if tipo in TIPO_TELA:
                     nome = arquivos.TIPOS.get(tipo, tipo)
                     self._progresso(t, tipo, "andamento", "consultando no ATF")
                     # primeiro em HTML (responde na hora): sem notas, nem pede o XML
                     n = com_sessao(atf.conferir_html, tipo, t.ie, t.inicio, t.fim, nome) if html_antes else None
+                    if atf.bloqueada(t.ie):  # a consulta em HTML já mostrou que o login não tem acesso
+                        envios[(t.ie, tipo)] = Envio(ie=t.ie, tipo=tipo, ok=False, resposta=sem_permissao(atf.bloqueada(t.ie)))
+                        self._progresso(t, tipo, "erro", envios[(t.ie, tipo)].resposta)
+                        continue
                     if n == 0:
                         envios[(t.ie, tipo)] = Envio(ie=t.ie, tipo=tipo, sem_notas=True, notas_html=0,
                                                      resposta="Nenhum registro (consulta em HTML)")
@@ -266,6 +274,8 @@ class Executor:
                         continue
                     envio = envios[(t.ie, tipo)] = com_sessao(atf.solicitar, tipo, t.ie, t.inicio, t.fim, nome)
                     envio.notas_html = n
+                    if atf.bloqueada(t.ie):
+                        envio.ok, envio.resposta = False, sem_permissao(atf.bloqueada(t.ie))
                     if not envio.ok:
                         self._progresso(t, tipo, "erro", envio.resposta or "consulta não aceita")
                     elif envio.sem_notas:
@@ -277,6 +287,10 @@ class Executor:
         emissoes: dict[tuple[str, str], object] = {}
         for t in trabalhos:
             for tipo in t.tipos:
+                if tipo in SERVICOS and atf.bloqueada(t.ie):
+                    e = emissoes[(t.ie, tipo)] = Emissao(ie=t.ie, tipo=tipo, ok=False, resposta=sem_permissao(atf.bloqueada(t.ie)))
+                    self._progresso(t, tipo, **situacao_emissao(e))
+                    continue
                 if tipo in SERVICOS:
                     nome = arquivos.TIPOS.get(tipo, tipo)
                     extra = {}
@@ -592,6 +606,12 @@ def detalhes_finais(tipos: list[str], r: Resultado, andamento: dict) -> dict:
     return detalhes
 
 
+def sem_permissao(mensagem_atf: str) -> str:
+    """Texto do erro quando o login do ATF não tem acesso à empresa (os outros serviços dela são pulados)."""
+    return (f"o login do ATF não tem permissão sobre esta empresa ({mensagem_atf.rstrip('.')}). Confira se o cliente "
+            "autorizou o contador no ATF, ou use o login certo na planilha; os outros serviços desta empresa foram pulados")
+
+
 def situacao_emissao(e) -> dict:
     """Situação de um serviço feito na hora (faturas, extrato, omissão, certidão, cartão, MEI)."""
     if e.arquivos:
@@ -703,6 +723,10 @@ class Portal:
         """Monitor Fiscal: empresas cuja consulta diária da NF-e venceu, com o certificado A1 cifrado."""
         return self._r("POST", "/rest/v1/rpc/xml_nfe_pegar_monitor", json={"p_robo": robo, "p_max": maximo}).json() or []
 
+    def devolver_monitor(self, mid: str):
+        self._r("PATCH", f"/rest/v1/xml_nfe_monitor?id=eq.{mid}&status=eq.processando",
+                json={"status": "fila", "iniciado_em": None, "robo": None}, headers={"Prefer": "return=minimal"})
+
     def concluir_monitor(self, mid: str, r: dict) -> int:
         return self._r("POST", "/rest/v1/rpc/xml_nfe_concluir", json={
             "p_id": mid, "p_ultimo_nsu": r.get("ultimo_nsu") or 0, "p_max_nsu": r.get("max_nsu") or 0,
@@ -737,6 +761,11 @@ class Robo:
         self.ultimo_sinal = 0.0
         self.chrome_ok = True
         self.parar = False
+        # filas de API (NFS-e e Monitor Fiscal): várias empresas ao mesmo tempo, em paralelo com o ATF
+        self._trava = threading.Lock()
+        self.em_paralelo: dict[str, dict] = {}       # id -> tarefa da NFS-e em andamento
+        self.monitores_em_curso: dict[str, dict] = {}  # id -> empresa do Monitor Fiscal em andamento
+        self._travas_cnpj: dict[str, threading.Lock] = {}
 
     def enviar_historico_mei(self):
         """Manda ao painel o faturamento MEI que já está salvo neste PC (meses consultados antes do painel)."""
@@ -765,32 +794,23 @@ class Robo:
             self.enviar_historico_mei()
         self.portal.devolver_tarefas(self.nome)
         threading.Thread(target=self._batimento, name="sinal-de-vida", daemon=True).start()
+        # NFS-e e Monitor Fiscal não usam o Chrome: cada fila tem a sua linha de trabalho, com várias empresas ao
+        # mesmo tempo, enquanto o ATF segue aqui (um login por vez, no Chrome)
+        p = self.cfg["portal"]
+        if "nfse" in filas:
+            threading.Thread(target=self._fila_paralela, name="fila-nfse", daemon=True,
+                             args=("NFS-e", self.portal.pegar_lote_nfse, self._uma_nfse, self.em_paralelo,
+                                   int(p.get("paralelo_nfse", 4)))).start()
+        if p.get("monitor_nfe", True):
+            threading.Thread(target=self._fila_paralela, name="fila-monitor", daemon=True,
+                             args=("Monitor Fiscal", self.portal.pegar_monitor, self._um_monitor, self.monitores_em_curso,
+                                   int(p.get("paralelo_monitor", 4)))).start()
         while not self.parar:
+            if "sefaz" not in filas:
+                time.sleep(p["intervalo_segundos"])
+                continue
             try:
                 self._sinal()
-                lote_nfse = self.portal.pegar_lote_nfse(self.nome, 10) if "nfse" in filas else []
-            except Exception as e:
-                log.warning("Sem contato com o portal: %s", e)
-                time.sleep(30)
-                continue
-            if lote_nfse:  # NFS-e não usa o Chrome: vai antes da fila do ATF
-                self.processar_nfse(lote_nfse)
-                continue
-            if self.cfg["portal"].get("monitor_nfe", True):
-                try:
-                    lote_monitor = self.portal.pegar_monitor(self.nome, 5)
-                except Exception as e:  # tabela ainda não criada (schema.sql antigo): segue com as outras filas
-                    lote_monitor = []
-                    if not getattr(self, "_aviso_monitor", False):
-                        log.warning("Monitor Fiscal indisponível no portal (rode o schema.sql de novo): %s", e)
-                        self._aviso_monitor = True
-                if lote_monitor:
-                    self.processar_monitor(lote_monitor)
-                    continue
-            if "sefaz" not in filas:
-                time.sleep(self.cfg["portal"]["intervalo_segundos"])
-                continue
-            try:
                 lote = self.portal.pegar_lote(self.nome, self.executor.login_aberto, self.cfg["atf"]["empresas_por_rodada"])
             except Exception as e:
                 log.warning("Sem contato com o portal: %s", e)
@@ -848,7 +868,9 @@ class Robo:
 
     def _sinal(self, forcar=False):
         if forcar or time.time() - self.ultimo_sinal > 30:
-            self.portal.sinal(self.nome, {"chrome": self.chrome_ok, "tarefas": [t["id"] for t in self.tarefas_atuais]})
+            paralelas = list(getattr(self, "em_paralelo", {}))  # cópia de uma vez (sob o GIL)
+            self.portal.sinal(self.nome, {"chrome": self.chrome_ok,
+                                          "tarefas": [t["id"] for t in list(self.tarefas_atuais)] + paralelas})
             self.ultimo_sinal = time.time()
 
     def processar(self, lote: list[dict]):
@@ -883,42 +905,92 @@ class Robo:
             else:
                 self._finalizar(t, r)
 
+    def _trava_do_cnpj(self, cnpj: str) -> threading.Lock:
+        """Uma empresa por vez: duas tarefas do mesmo CNPJ (ex.: duas competências) dividem o cache e as pastas."""
+        with self._trava:
+            return self._travas_cnpj.setdefault(cnpj, threading.Lock())
+
+    def _fila_paralela(self, nome: str, pegar, processar, em_curso: dict, paralelo: int):
+        """Linha de trabalho de uma fila de API: mantém até `paralelo` empresas em andamento ao mesmo tempo e pega
+        mais no portal assim que uma termina (de qualquer agendamento)."""
+        from concurrent.futures import ThreadPoolExecutor
+        paralelo = max(1, min(paralelo, 10))
+        log.info("Fila %s: até %d empresa(s) ao mesmo tempo.", nome, paralelo)
+        avisou = False
+        vaga = threading.Event()  # avisa a linha quando uma empresa termina (pega a próxima na hora)
+        with ThreadPoolExecutor(max_workers=paralelo, thread_name_prefix=f"fila-{nome}") as pool:
+            while not self.parar:
+                with self._trava:
+                    livres = paralelo - len(em_curso)
+                lote = []
+                if livres > 0:
+                    try:
+                        lote = pegar(self.nome, livres) or []
+                        avisou = False
+                    except Exception as e:  # sem contato, ou tabela ainda não criada (schema.sql antigo)
+                        if not avisou:
+                            log.warning("Fila %s indisponível no portal: %s", nome, e)
+                            avisou = True
+                        time.sleep(30)
+                        continue
+                for t in lote:
+                    with self._trava:
+                        em_curso[t["id"]] = t
+                    pool.submit(self._rodar_um, processar, t, em_curso, vaga)
+                if not lote:
+                    vaga.wait(self.cfg["portal"]["intervalo_segundos"] if livres > 0 else 30)
+                    vaga.clear()
+
+    def _rodar_um(self, processar, t: dict, em_curso: dict, vaga=None):
+        try:
+            with self._trava_do_cnpj(t.get("cnpj") or t["id"]):
+                processar(t)
+        except Exception:
+            log.exception("Erro inesperado em %s", t.get("nome"))
+        finally:
+            with self._trava:
+                em_curso.pop(t["id"], None)
+            if vaga is not None:
+                vaga.set()
+
+    def _uma_nfse(self, t: dict):
+        self.portal.atualizar_tarefa(t["id"], {"detalhes": {tipo: {"situacao": "andamento", "mensagem": ""}
+                                                            for tipo in t.get("tipos") or []}})
+        try:
+            r = executar_nfse(self.cfg, t, self.privada)
+        except Exception:
+            log.exception("Erro inesperado na NFS-e de %s", t["nome"])
+            r = Resultado("erro", "Falha inesperada ao buscar as NFS-e. Agende de novo; se repetir, fale com a LotiVisse.")
+        log.info("   NFS-e %s -> %s: %s", t["nome"], r.status, r.mensagem)
+        self._finalizar(t, r)
+
+    def _um_monitor(self, m: dict):
+        try:
+            r = executar_monitor(self.cfg, m, self.privada)
+        except Exception:
+            log.exception("Erro inesperado no Monitor Fiscal de %s", m["nome"])
+            r = {"status": "erro", "mensagem": "Falha inesperada na consulta; o robô tenta de novo em 1 hora.",
+                 "ultimo_nsu": m.get("ultimo_nsu") or 0, "notas": [], "espera_minutos": 61}
+        try:
+            novas = self.portal.concluir_monitor(m["id"], r)
+        except Exception as e:  # os arquivos já estão salvos; a próxima consulta continua do NSU antigo
+            log.warning("   Monitor Fiscal de %s não gravado no portal: %s", m["nome"], e)
+            novas = 0
+        log.info("   Monitor Fiscal %s -> %s: %s%s", m["nome"], r["status"], r.get("mensagem", ""),
+                 f" ({novas} nova(s))" if novas else "")
+
     def processar_nfse(self, lote: list[dict]):
-        log.info("NFS-e (Portal Nacional): %d empresa(s)", len(lote))
-        self.tarefas_atuais = lote
+        """Uma a uma (modo de teste); no robô ligado, a fila da NFS-e roda em paralelo (_fila_paralela)."""
         for t in lote:
             if self.parar:
                 break
-            self.portal.atualizar_tarefa(t["id"], {"detalhes": {tipo: {"situacao": "andamento", "mensagem": ""}
-                                                                for tipo in t.get("tipos") or []}})
-            try:
-                r = executar_nfse(self.cfg, t, self.privada)
-            except Exception:
-                log.exception("Erro inesperado na NFS-e de %s", t["nome"])
-                r = Resultado("erro", "Falha inesperada ao buscar as NFS-e. Agende de novo; se repetir, fale com a LotiVisse.")
-            log.info("   %s -> %s: %s", t["nome"], r.status, r.mensagem)
-            self._finalizar(t, r)
-            self._sinal()
-        self.tarefas_atuais = []
+            self._uma_nfse(t)
 
     def processar_monitor(self, lote: list[dict]):
-        log.info("Monitor Fiscal (NF-e destinadas): %d empresa(s)", len(lote))
         for m in lote:
             if self.parar:
                 break
-            try:
-                r = executar_monitor(self.cfg, m, self.privada)
-            except Exception:
-                log.exception("Erro inesperado no Monitor Fiscal de %s", m["nome"])
-                r = {"status": "erro", "mensagem": "Falha inesperada na consulta; o robô tenta de novo em 1 hora.",
-                     "ultimo_nsu": m.get("ultimo_nsu") or 0, "notas": [], "espera_minutos": 61}
-            try:
-                novas = self.portal.concluir_monitor(m["id"], r)
-            except Exception as e:  # os arquivos já estão salvos; a próxima consulta continua do NSU antigo
-                log.warning("   Monitor Fiscal de %s não gravado no portal: %s", m["nome"], e)
-                novas = 0
-            log.info("   %s -> %s: %s%s", m["nome"], r["status"], r.get("mensagem", ""), f" ({novas} nova(s))" if novas else "")
-            self._sinal()
+            self._um_monitor(m)
 
     def _repescar(self, ler: bool = True):
         """Fila vazia: lê Minhas Mensagens mais uma vez para as tarefas que esperavam XML. Se ainda faltar,
@@ -959,7 +1031,7 @@ class Robo:
                 log.warning("   alerta MEI não pedido ao portal: %s", e)
 
     def _finalizar(self, t, r: Resultado):
-        andamento = next((d for tid, d in self.em_curso.values() if tid == t["id"]), {})
+        andamento = next((d for tid, d in list(self.em_curso.values()) if tid == t["id"]), {})
         detalhes = detalhes_finais(arquivos.expandir_tipos(t.get("tipos") or []), r, andamento)
         self.portal.atualizar_tarefa(t["id"], {
             "status": r.status, "mensagem": r.mensagem[:500], "qtd_xml": r.qtd_xml,
@@ -969,9 +1041,17 @@ class Robo:
     def encerrar(self, *_):
         log.info("Encerrando...")
         self.parar = True
-        for t in self.tarefas_atuais + list(self.aguardando.values()):  # as tarefas em andamento voltam para a fila
+        with self._trava:
+            paralelas = list(self.em_paralelo.values())
+            monitores = list(self.monitores_em_curso.values())
+        for t in list(self.tarefas_atuais) + list(self.aguardando.values()) + paralelas:  # voltam para a fila
             try:
                 self.portal.atualizar_tarefa(t["id"], {"status": "pendente", "iniciado_em": None, "robo": None})
+            except Exception:
+                pass
+        for m in monitores:  # a consulta interrompida sai de novo na próxima volta do robô
+            try:
+                self.portal.devolver_monitor(m["id"])
             except Exception:
                 pass
         self.executor.fechar()

@@ -66,6 +66,8 @@ _BOTOES_ENTRAR = ['button[name="btnAvancar"]', 'button:has-text("Avançar")', 'i
                   'input[value*="Entrar" i]', 'input[value*="Acessar" i]', 'input[value*="OK" i]']
 _ERRO_CONSULTA = re.compile(r"\berro\b|inv[aá]lid|obrigat[oó]ri|n[aã]o\s+(foi\s+)?(encontrad|localizad|cadastrad)|"
                             r"informe\s+|preencha|n[aã]o\s+permitid|sem\s+permiss", re.I)
+# O login do ATF não tem acesso à empresa: nada dela vai sair com esse login (os outros serviços são pulados)
+_SEM_PERMISSAO = re.compile(r"sem\s+permiss[aã]o\s+sobre|usu[aá]rio\s+sem\s+permiss[aã]o|n[aã]o\s+(tem|possui)\s+permiss[aã]o", re.I)
 # Tela da consulta, depois de clicar em Consultar
 _CONFIRMADA = re.compile(r"resultado\s+ser[aá]\s+enviado|caixa\s+de\s+mensagens", re.I)
 # Mensagem final de uma consulta (as outras 2 mensagens da mesma consulta são de andamento)
@@ -434,6 +436,8 @@ class AtfPB:
         # satisfaz a pesquisa" (num alerta) depois do tempo de espera; quando chega, vale para ela
         self._envio_em_preparo = None
         self._envio_aguardando = None
+        # (login, IE) -> mensagem: o login não tem permissão sobre a empresa; o resto dela é pulado
+        self.sem_permissao: dict[tuple[str, str], str] = {}
         self._mensagens_lidas: set[str] = set()   # consultas (mensagens mãe) já concluídas
         self._filhas_lidas: set[str] = set()
         self._diag_mensagem_salvo = False
@@ -838,6 +842,7 @@ class AtfPB:
             self._log(f"{nome_tipo} IE {ie}: {e}")
             envio.ok = False
             envio.resposta = str(e)
+            self._ver_permissao(ie, str(e))
             return envio
         except Exception as e:
             self._log(f"{nome_tipo} IE {ie}: automático parou: {e}")
@@ -858,8 +863,25 @@ class AtfPB:
             envio.sem_notas = True
         elif _ERRO_CONSULTA.search(resposta):
             envio.ok = False
+            self._ver_permissao(ie, resposta)
         self._log(f"{nome_tipo} IE {ie}: consulta enviada" + (f" — ATF: {resposta[:120]}" if resposta else ""))
         return envio
+
+    def _ver_permissao(self, ie: str, *textos: str) -> bool:
+        """Guarda a empresa a que o login não tem acesso ("Usuário sem permissão sobre um ou mais contribuintes")."""
+        texto = " ".join(t for t in textos if t)
+        m = _SEM_PERMISSAO.search(texto)
+        if not m:
+            return False
+        trecho = next((linha.strip() for linha in texto.splitlines() if _SEM_PERMISSAO.search(linha)), m.group(0))
+        if (self.login_atual.lower(), ie) not in self.sem_permissao:
+            self._log(f"IE {ie}: o login {self.login_atual} não tem permissão sobre esta empresa; os outros serviços dela serão pulados")
+        self.sem_permissao[(self.login_atual.lower(), ie)] = trecho[:200]
+        return True
+
+    def bloqueada(self, ie: str) -> str:
+        """Mensagem do ATF se o login atual não tem permissão sobre a IE (senão, vazio)."""
+        return self.sem_permissao.get((self.login_atual.lower(), ie), "")
 
     def conferir_html(self, tipo: str, ie: str, inicio: date, fim: date, nome_tipo: str) -> int | None:
         """Refaz a consulta com Tipo de Exibição = HTML: o ATF mostra a lista na hora, com "(N) registro(s)
@@ -888,6 +910,8 @@ class AtfPB:
                 if _SEM_NOTAS.search(avisos):
                     self._log(f"{nome_tipo} IE {ie}: conferido em HTML, nenhum registro")
                     return 0
+                if self._ver_permissao(ie, avisos):
+                    return None
                 if _ERRO_CONSULTA.search(avisos):
                     self._log(f"{nome_tipo} IE {ie}: conferência em HTML não aceita: {avisos[:120]}")
                     return None
@@ -896,7 +920,8 @@ class AtfPB:
         except (SiteForaDoAr, SessaoExpirada):
             raise
         except Exception as e:
-            self._log(f"{nome_tipo} IE {ie}: não consegui conferir em HTML: {e}")
+            if not self._ver_permissao(ie, str(e)):
+                self._log(f"{nome_tipo} IE {ie}: não consegui conferir em HTML: {e}")
             return None
         finally:
             self._respostas = []
@@ -1183,6 +1208,9 @@ class AtfPB:
                     self._log(f"Não voltei ao ATF depois do PDF: {e}")
         if emissao.arquivos:
             emissao.ok, emissao.sem_dados = True, False
+        elif self._ver_permissao(ie, emissao.resposta, "\n".join(self._respostas)):
+            emissao.ok, emissao.sem_dados = False, False
+            emissao.resposta = emissao.resposta or self.bloqueada(ie)
         self._log(f"{nome_tipo} IE {ie}: {len(emissao.arquivos)} arquivo(s)" + (f" — {emissao.resposta[:150]}" if emissao.resposta else ""))
         return emissao
 

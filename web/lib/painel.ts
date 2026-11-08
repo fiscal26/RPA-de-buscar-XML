@@ -31,6 +31,12 @@ function acaoDe(t: TarefaPainel): Omit<Acao, "ie" | "nome" | "quando"> | null {
   }
   const tipos = expandirTipos(t.tipos);
   const erros = tipos.map((tipo) => ({ tipo, ...situacaoTarefa(t, tipo) })).filter((s) => s.chave === "erro");
+  if (erros.some((e) => /sem permiss[aã]o|n[aã]o tem permiss[aã]o/i.test(e.mensagem))) {
+    const login = t.xml_empresas?.xml_acessos?.login;
+    return { motivo: `O login do ATF${login ? ` ${login}` : ""} não tem permissão sobre esta empresa.`,
+      oQueFazer: "Confira se o cliente autorizou o contador no ATF (ou use o login certo na planilha) e agende de novo.",
+      link: "/painel/agendar", botao: "Agendar de novo" };
+  }
   const ie = erros.find((e) => IE_RECUSADA.test(e.mensagem));
   if (ie) {
     return { motivo: "O ATF não encontrou a inscrição estadual.",
