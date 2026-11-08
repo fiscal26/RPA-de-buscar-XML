@@ -215,3 +215,45 @@ def test_robo_grava_o_resultado_do_monitor_no_portal(monkeypatch):
     robo.processar_monitor([{"id": "m2", "nome": "Mercado", "ultimo_nsu": 9}])
     mid, r = robo.portal.concluidos[-1]
     assert mid == "m2" and r["status"] == "erro" and r["ultimo_nsu"] == 9 and r["espera_minutos"] == 61
+
+
+def test_filas_de_api_rodam_varias_empresas_ao_mesmo_tempo():
+    """NFS-e e Monitor Fiscal: até N empresas em paralelo, pegando mais assim que uma termina; o mesmo CNPJ
+    (duas competências) nunca roda junto, porque divide o cache e as pastas."""
+    import threading
+    import time
+
+    import robo_xml
+
+    fila = [{"id": f"t{i}", "nome": f"E{i}", "cnpj": f"{i:014d}"} for i in range(8)] + \
+           [{"id": "t8", "nome": "E0 de novo", "cnpj": f"{0:014d}"}]
+    robo = robo_xml.Robo.__new__(robo_xml.Robo)
+    robo.cfg, robo.nome, robo.parar = {"portal": {"intervalo_segundos": 0.05}}, "teste", False
+    robo._trava, robo._travas_cnpj = threading.Lock(), {}
+    em_curso, feitos, juntos, pico = {}, [], set(), [0]
+    trava = threading.Lock()
+
+    def pegar(nome, maximo):
+        with trava:
+            lote = fila[:maximo]
+            del fila[:maximo]
+        return lote
+
+    def processar(t):
+        with trava:
+            juntos.add(t["cnpj"])
+            pico[0] = max(pico[0], len(juntos))
+        time.sleep(0.2)
+        with trava:
+            juntos.discard(t["cnpj"])
+            feitos.append(t["id"])
+        if len(feitos) == 9:
+            robo.parar = True
+
+    linha = threading.Thread(target=robo._fila_paralela, args=("teste", pegar, processar, em_curso, 4))
+    inicio = time.time()
+    linha.start()
+    linha.join(10)
+    assert sorted(feitos) == sorted(f"t{i}" for i in range(9)) and not em_curso
+    assert pico[0] == 4                      # 4 ao mesmo tempo
+    assert time.time() - inicio < 1.5        # 9 tarefas de 0,2 s: em série levariam 1,8 s

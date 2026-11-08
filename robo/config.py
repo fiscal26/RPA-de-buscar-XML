@@ -251,6 +251,9 @@ PADRAO = {
         "filas": ["sefaz", "nfse"],
         # Monitor Fiscal: consulta todo dia o Ambiente Nacional da NF-e (notas destinadas) das empresas monitoradas
         "monitor_nfe": True,
+        # Quantas empresas ao mesmo tempo nas filas de API (NFS-e e Monitor Fiscal), em paralelo com o ATF
+        "paralelo_nfse": 4,
+        "paralelo_monitor": 4,
         # Endereço do portal: o robô avisa quando grava o Dossiê MEI, e a equipe recebe o alerta de limite na hora
         "site": "https://xml.lotivisse.com.br",
     },
