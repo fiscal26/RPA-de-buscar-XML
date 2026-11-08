@@ -848,8 +848,7 @@ class Robo:
 
     def _sinal(self, forcar=False):
         if forcar or time.time() - self.ultimo_sinal > 30:
-            with self._trava:
-                paralelas = list(self.em_paralelo)
+            paralelas = list(getattr(self, "em_paralelo", {}))  # cópia de uma vez (sob o GIL)
             self.portal.sinal(self.nome, {"chrome": self.chrome_ok,
                                           "tarefas": [t["id"] for t in list(self.tarefas_atuais)] + paralelas})
             self.ultimo_sinal = time.time()
