@@ -4,7 +4,8 @@ import { analisarAno, type Ajuste, type AnoMei, type MesAtf } from "@/lib/mei";
 
 export type MeiCarteira = { org: string; ie: string; nome: string; ano: AnoMei; ajustes: Ajuste[]; meses: MesAtf[] };
 type TarefaMei = { org_id: string; ie: string; nome: string; concluido_em: string | null;
-  detalhes: { mei?: { saidas?: number | null; entradas?: number | null; cartao?: number | null; sem_movimento?: boolean; limite_ano?: number } } | null;
+  detalhes: { mei?: { saidas?: number | null; entradas?: number | null; cartao?: number | null; sem_movimento?: boolean; limite_ano?: number;
+    mensagem?: string } } | null;
   xml_agendamentos: { competencia: string } | { competencia: string }[] | null };
 
 /**
@@ -46,6 +47,13 @@ export async function carregarMeis(supabase: SupabaseClient, ano: number, ie?: s
   for (const e of empresas ?? []) grupo(e.org_id, e.ie, e.nome);
   for (const m of (meses ?? []) as MesAtf[]) grupo(m.org_id, m.ie, m.nome).meses.push({ ...m, saidas: num(m.saidas), entradas: num(m.entradas), cartao: num(m.cartao) });
   for (const a of (ajustes ?? []) as Ajuste[]) grupo(a.org_id, a.ie, "").ajustes.push({ ...a, valor: Number(a.valor) });
+  // o robô viu no dossiê que a empresa não é MEI (Optante SIMEI: NÃO, ou regime normal, sem essa linha):
+  // vale a consulta mais recente, porque a empresa pode ter sido MEI e deixado de ser
+  const naoMei = new Map<string, boolean>();
+  for (const t of (rTarefas.data ?? []) as TarefaMei[]) {
+    const msg = t.detalhes?.mei?.mensagem ?? "";
+    if (msg) naoMei.set(chave(t.org_id, t.ie), /n[aã]o [eé] MEI/i.test(msg));
+  }
   for (const t of (rTarefas.data ?? []) as TarefaMei[]) {
     const d = t.detalhes?.mei;
     const ag = Array.isArray(t.xml_agendamentos) ? t.xml_agendamentos[0] : t.xml_agendamentos;
@@ -60,6 +68,12 @@ export async function carregarMeis(supabase: SupabaseClient, ano: number, ie?: s
     g.meses.push({ org_id: t.org_id, ie: t.ie, nome: t.nome, competencia, saidas: num(d.saidas), entradas: num(d.entradas),
       qtd_saidas: null, qtd_entradas: null, cartao: num(d.cartao), qtd_cartao: null, sem_movimento: d.sem_movimento ?? null,
       simei: null, inicio_atividade: inicio, itens: [], consultado_em: t.concluido_em, origem: "execucao" });
+  }
+
+  // fora do monitoramento quem não é MEI: nunca apareceu como optante no ano e o dossiê disse que não é
+  for (const [k, g] of grupos) {
+    const foiMei = g.meses.some((m) => m.simei === true);
+    if (!foiMei && (naoMei.get(k) || g.meses.some((m) => m.simei === false))) grupos.delete(k);
   }
 
   // maior faturamento primeiro

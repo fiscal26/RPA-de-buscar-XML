@@ -46,6 +46,7 @@ EMPRESA = "11222333000181"
 FORNECEDOR = "45723174000110"
 IE_ESTRANHA = "161112226"  # empresa fora da rodada (consulta feita à mão no mesmo login)
 IE_INEXISTENTE = "160555558"  # o Pesquisar do ATF não traz nome
+IE_REGIME_NORMAL = "160888880"  # posto de combustível: regime normal, sem a linha "Optante SIMEI"
 IE_SEM_PERMISSAO = "160777775"  # o login do contador não tem acesso a esta empresa
 _ALERTA_PERMISSAO = "<script>alert('Usuário sem permissão sobre um ou mais contribuinte(s) utilizado(s).')</script>"
 INTERVALO_CAIXA = 3  # segundos entre leituras da caixa de mensagens (no ATF real: 60)
@@ -211,10 +212,13 @@ def _dossie(ie: str, datas: tuple[str, str] | None = None) -> str:
                      f'return false">- Cartão:</a></td><td>---</td><td>---</td><td>{cartao_q}</td>'
                      f'<td>{cartao_v}</td></tr></table>')
     simei = "SIM" if ie == IE_EMPRESA else "NÃO"
+    # regime normal (ex.: posto de combustível): o ATF nem mostra a linha "Optante SIMEI"
+    linha_simei = ('<tr><td>- Regime de apuração:</td><td>NORMAL</td></tr>' if ie == IE_REGIME_NORMAL else
+                   f'<tr><td>- Regime de apuração:</td><td>SIMPLES NACIONAL</td></tr><tr><td>- Optante SIMEI:</td><td>{simei}</td></tr>')
     identificacao = ("" if datas else  # como no ATF: a Identificação é a aba aberta depois do Consultar
                      f'<table><tr><td>- Inscrição Estadual:</td><td>{ie}</td></tr>'
                      f'<tr><td>- Início atividade:</td><td>{"10/03/2026" if ie == IE_EMPRESA else "14/05/2010"}</td></tr>'
-                     f'<tr><td>- Optante SIMEI:</td><td>{simei}</td></tr></table>')
+                     f'{linha_simei}</table>')
     return (sessao() + f'<b>Dossiê do Contribuinte</b><br>{abas}{identificacao}<div id="docsEletronicos"><form>'
             '<a href="#" onclick="document.getElementById(\'docs\').style.display=\'block\'; return false">Docs fiscais</a>'
             f'</form></div><div id="docs" style="display:{"block" if datas else "none"}">'
@@ -1004,3 +1008,16 @@ def test_login_sem_permissao_pula_o_resto_da_empresa(ambiente):
         assert r1.detalhes[tipo]["situacao"] == "erro" and "permissão" in r1.detalhes[tipo]["mensagem"], (tipo, r1)
     assert r1.status == "erro" and not r1.pendente, r1
     assert r2.detalhes["nfce"]["notas"] == 1, r2  # a próxima empresa saiu normalmente
+
+
+def test_regime_normal_sem_linha_simei_nao_e_mei(ambiente):
+    """Empresa do regime normal: o dossiê nem mostra "Optante SIMEI". Não é MEI: nada vai para o Monitoramento MEI."""
+    cfg, pasta = ambiente
+    executor = robo_xml.Executor(cfg)
+    try:
+        (r,) = executor.executar_rodada([_trabalho(IE_REGIME_NORMAL, "Posto", ["mei"], codigo="070")])
+    finally:
+        executor.fechar()
+    assert r.detalhes["mei"]["sem_notas"] and "não é MEI" in r.detalhes["mei"]["mensagem"], r
+    assert "NORMAL" in r.detalhes["mei"]["mensagem"], r
+    assert not list((pasta / "xml").rglob("070-Posto/Dossiê MEI/*.json"))
