@@ -448,7 +448,8 @@ create or replace function public.xml_mei_registrar_ie(p_ie text, p_nome text, p
 returns integer language plpgsql security definer set search_path = public as $$
 declare v_org uuid; v_nome text; n integer := 0;
 begin
-  for v_org, v_nome in select org_id, nome from public.xml_empresas where ie = p_ie loop
+  -- só nos escritórios que marcam a empresa como MEI (quem tirou do monitoramento não recebe o histórico de volta)
+  for v_org, v_nome in select org_id, nome from public.xml_empresas where ie = p_ie and 'mei' = any(tipos) loop
     perform public.xml_mei_gravar(v_org, p_ie, coalesce(v_nome, p_nome), p_meses, p_inicio_atividade);
     n := n + 1;
   end loop;

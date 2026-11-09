@@ -1244,11 +1244,13 @@ class AtfPB:
         texto = self._texto_quadro(quadro)
         m = re.search(r"optante\s+simei:?\s*(sim|n[aã]o)", texto, re.I)
         simei = None if not m else m.group(1).lower() == "sim"
+        m = re.search(r"regime\s+de\s+apura[cç][aã]o:?[ \t]*([^\n\t]+)", texto, re.I)
+        regime = m.group(1).strip() if m else ""
         m = re.search(r"in[ií]cio\s+(?:de\s+)?atividade:?\s*(\d{2}/\d{2}/\d{4})", texto, re.I)
         inicio_atividade = datetime.strptime(m.group(1), "%d/%m/%Y").date() if m else None
         self._clicar_botao(self._no_quadro(quadro, aba))
         quadro, linhas = self._docs_fiscais_periodo(None, inicio, fim)
-        info = {"quadro": quadro, "simei": simei, "linhas": linhas, "inicio_atividade": inicio_atividade}
+        info = {"quadro": quadro, "simei": simei, "regime": regime, "linhas": linhas, "inicio_atividade": inicio_atividade}
         self._dossie_cache[(ie, inicio)] = {k: v for k, v in info.items() if k != "quadro"}
         return info
 
@@ -1329,9 +1331,14 @@ class AtfPB:
         a competência, para o cliente que chega sem acompanhamento). Meses antes do início da atividade
         ficam de fora."""
         info = self._dossie_cache.get((ie, inicio)) or self._consultar_dossie(frame, ie, inicio, fim)
-        if info["simei"] is False:
+        if info["simei"] is not True:
+            # MEI é sempre "Optante SIMEI: SIM". Sem essa linha (regime normal, por exemplo) também não é MEI
             emissao.sem_dados = True
-            emissao.resposta = "não é MEI (Optante SIMEI: NÃO); faturamento não consultado"
+            emissao.resposta = ("não é MEI (" + ("Optante SIMEI: NÃO" if info["simei"] is False else
+                                 "o dossiê não mostra Optante SIMEI: SIM")
+                                + (f"; regime de apuração: {info['regime']}" if info.get("regime") else "")
+                                + "); faturamento não consultado")
+            self._log(f"Dossiê MEI IE {ie}: {emissao.resposta}")
             return
         emissao.dados = ler_docs_fiscais(info["linhas"])
         emissao.dados["simei"] = info["simei"]

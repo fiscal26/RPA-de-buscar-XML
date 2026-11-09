@@ -9,7 +9,8 @@ import BarraLimite from "@/components/mei/BarraLimite";
 import GraficoMei from "@/components/mei/GraficoMei";
 import SeletorAno from "../SeletorAno";
 import FormAjuste from "./FormAjuste";
-import { removerAjuste } from "../actions";
+import { naoEhMei, removerAjuste } from "../actions";
+import BotaoNaoMei from "./BotaoNaoMei";
 
 export default async function PainelMei({ params, searchParams }: {
   params: Promise<{ ie: string }>; searchParams: Promise<{ ano?: string; org?: string }>;
@@ -17,7 +18,8 @@ export default async function PainelMei({ params, searchParams }: {
   const { ie } = await params;
   const sp = await searchParams;
   if (!/^\d{9}$/.test(ie)) notFound();
-  const { supabase } = await contexto();
+  const { supabase, perfil, admin } = await contexto();
+  const gerencia = admin || perfil.papel === "gestor";
   const atual = new Date().getFullYear();
   const ano = Number(sp.ano) >= 2018 && Number(sp.ano) <= atual ? Number(sp.ano) : atual;
   const { meis: lista } = await carregarMeis(supabase, ano, ie);
@@ -49,7 +51,16 @@ export default async function PainelMei({ params, searchParams }: {
             {consultado && ` · ATF consultado em ${dataHoraBR(consultado)}`}
           </p>
         </div>
-        <SeletorAno ano={ano} atual={atual} />
+        <div className="acoes-cabeca">
+          <SeletorAno ano={ano} atual={atual} />
+          {gerencia && (
+            <form action={naoEhMei}>
+              <input type="hidden" name="ie" value={mei.ie} />
+              <input type="hidden" name="org" value={mei.org} />
+              <BotaoNaoMei nome={mei.nome || "Esta empresa"} />
+            </form>
+          )}
+        </div>
       </div>
 
       <div className={`faixa ${classeFaixa} faixa-mei`}>
