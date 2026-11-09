@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { after } from "next/server";
 import { verificarAlertasMei } from "@/lib/alertas-mei";
 import { contexto } from "@/lib/sessao";
@@ -58,4 +59,26 @@ export async function removerAjuste(form: FormData) {
   if (!data) return;
   await clienteAdmin().from("xml_mei_ajustes").delete().eq("id", id);
   revalidatePath("/painel/mei", "layout");
+}
+
+/** "Não é MEI": tira a empresa do Monitoramento MEI do escritório. Apaga o faturamento lido do ATF, os lançamentos
+ *  e os alertas dela e desmarca o serviço MEI no cadastro (o robô não consulta mais o dossiê dela). Gestor ou admin. */
+export async function naoEhMei(form: FormData) {
+  const { perfil, admin } = await contexto();
+  if (!admin && perfil.papel !== "gestor") return;
+  const ie = String(form.get("ie") ?? "");
+  const org = admin ? String(form.get("org") ?? "") : perfil.org_id ?? "";
+  if (!/^\d{9}$/.test(ie) || !org) return;
+  const db = clienteAdmin();
+  await Promise.all([
+    db.from("xml_mei_meses").delete().eq("org_id", org).eq("ie", ie),
+    db.from("xml_mei_ajustes").delete().eq("org_id", org).eq("ie", ie),
+    db.from("xml_mei_alertas").delete().eq("org_id", org).eq("ie", ie),
+  ]);
+  const { data: empresas } = await db.from("xml_empresas").select("id, tipos").eq("org_id", org).eq("ie", ie);
+  for (const e of empresas ?? []) {
+    await db.from("xml_empresas").update({ tipos: (e.tipos as string[]).filter((t) => t !== "mei") }).eq("id", e.id);
+  }
+  revalidatePath("/painel/mei", "layout");
+  redirect("/painel/mei");
 }

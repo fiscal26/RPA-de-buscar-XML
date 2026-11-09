@@ -852,3 +852,8 @@ td.nome-empresa { min-width: 10rem; }
 .horario-monitor select { width: auto; margin: 0; }
 .texto-ok { color: var(--carimbo); font-weight: 500; }
 .texto-erro { color: var(--erro); font-weight: 500; }
+
+/* Monitoramento MEI: ações do cabeçalho do MEI */
+.acoes-cabeca { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; justify-content: flex-end; }
+.acoes-cabeca form { margin: 0; }
+button.perigo-texto { color: var(--erro); }
