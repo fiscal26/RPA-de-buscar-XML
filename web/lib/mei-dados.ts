@@ -20,7 +20,9 @@ export async function carregarMeis(supabase: SupabaseClient, ano: number, ie?: s
     .gte("competencia", de).lte("competencia", ate).limit(10000);
   let qAjustes = supabase.from("xml_mei_ajustes").select("id, org_id, ie, competencia, tipo, descricao, valor, criado_em")
     .gte("competencia", de).lte("competencia", ate).order("criado_em").limit(10000);
-  let qEmpresas = supabase.from("xml_empresas").select("org_id, ie, nome").contains("tipos", ["mei"]).limit(5000);
+  // todas as empresas do cadastro: as marcadas como MEI entram (mesmo sem consulta); as que não estão marcadas
+  // (ex.: "Não é MEI" no painel) ficam de fora, mesmo com faturamento antigo no histórico
+  let qEmpresas = supabase.from("xml_empresas").select("org_id, ie, nome, tipos").limit(20000);
   if (ie) {
     qMeses = qMeses.eq("ie", ie);
     qAjustes = qAjustes.eq("ie", ie);
@@ -44,7 +46,12 @@ export async function carregarMeis(supabase: SupabaseClient, ano: number, ie?: s
     if (nome && !g.nome) g.nome = nome;
     return g;
   };
-  for (const e of empresas ?? []) grupo(e.org_id, e.ie, e.nome);
+  const desmarcadas = new Set<string>();
+  for (const e of empresas ?? []) {
+    if (((e.tipos as string[] | null) ?? []).includes("mei")) grupo(e.org_id, e.ie, e.nome);
+    else desmarcadas.add(chave(e.org_id, e.ie));
+  }
+  for (const k of [...desmarcadas]) if (grupos.has(k)) desmarcadas.delete(k);  // a mesma IE marcada em outro cadastro vale
   for (const m of (meses ?? []) as MesAtf[]) grupo(m.org_id, m.ie, m.nome).meses.push({ ...m, saidas: num(m.saidas), entradas: num(m.entradas), cartao: num(m.cartao) });
   for (const a of (ajustes ?? []) as Ajuste[]) grupo(a.org_id, a.ie, "").ajustes.push({ ...a, valor: Number(a.valor) });
   // o robô viu no dossiê que a empresa não é MEI (Optante SIMEI: NÃO, ou regime normal, sem essa linha):
@@ -73,7 +80,7 @@ export async function carregarMeis(supabase: SupabaseClient, ano: number, ie?: s
   // fora do monitoramento quem não é MEI: nunca apareceu como optante no ano e o dossiê disse que não é
   for (const [k, g] of grupos) {
     const foiMei = g.meses.some((m) => m.simei === true);
-    if (!foiMei && (naoMei.get(k) || g.meses.some((m) => m.simei === false))) grupos.delete(k);
+    if (desmarcadas.has(k) || (!foiMei && (naoMei.get(k) || g.meses.some((m) => m.simei === false)))) grupos.delete(k);
   }
 
   // maior faturamento primeiro
