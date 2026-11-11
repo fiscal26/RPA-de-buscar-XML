@@ -461,6 +461,10 @@ def monitorar(cliente: ClienteNfe, ult_nsu: int, destino, nome: str, codigo: str
         for doc in r.documentos:
             _guardar_documento(doc, res, resumos, destino, nome, cnpj, codigo, pdf)
     res.resumos = sum(1 for n in res.notas.values() if not n.completa and n.situacao == "autorizada")
+    # ciência registrada agora e o XML ainda não liberado: a SEFAZ costuma soltar em minutos; tenta de novo em 1 hora
+    # (só depois de uma ciência nova, para não ficar consultando de hora em hora uma nota que não sai)
+    if res.manifestadas and any(not n.completa for n in res.notas.values() if n.manifestada) and not res.espera_minutos:
+        res.espera_minutos = 61
     return res
 
 

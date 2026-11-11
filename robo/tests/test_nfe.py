@@ -257,3 +257,15 @@ def test_filas_de_api_rodam_varias_empresas_ao_mesmo_tempo():
     assert sorted(feitos) == sorted(f"t{i}" for i in range(9)) and not em_curso
     assert pico[0] == 4                      # 4 ao mesmo tempo
     assert time.time() - inicio < 1.5        # 9 tarefas de 0,2 s: em série levariam 1,8 s
+
+
+def test_xml_que_nao_saiu_logo_depois_da_ciencia_volta_em_uma_hora(tmp_path, certificado):
+    """A SEFAZ registrou a ciência, mas ainda não liberou o XML: a próxima consulta sai em 1 hora, não no dia seguinte."""
+    pfx, _, _ = certificado
+    amb = AmbienteFalso({0: ret_dist("138", 1, 1, [doczip(1, "resNFe_v1.01.xsd", res_nfe(2))])})  # por chave: nada ainda
+    r = nfe.monitorar(_cliente(amb, pfx), 0, tmp_path, "Padaria", "15")
+    assert r.manifestadas == 1 and not r.notas[chave(2)].completa and r.espera_minutos == 61
+    # na volta, sem ciência nova (já registrada), a nota que ainda não saiu não prende o robô de hora em hora
+    amb2 = AmbienteFalso({})
+    r2 = nfe.monitorar(_cliente(amb2, pfx), 1, tmp_path, "Padaria", "15", pendentes=[{"chave": chave(2), "manifestada": True}])
+    assert r2.espera_minutos == 0 and not amb2.eventos
