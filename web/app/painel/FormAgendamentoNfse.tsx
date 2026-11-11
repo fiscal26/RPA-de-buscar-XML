@@ -1,8 +1,11 @@
 "use client";
 
+import Escolha from "@/components/ui/Escolha";
+import Segmentado from "@/components/ui/Segmentado";
+import SeletorArquivo from "@/components/ui/SeletorArquivo";
 import Link from "next/link";
 import { useActionState, useState, useTransition } from "react";
-import { competenciaBR, dataHoraBR, formatarDocumento } from "@/lib/documentos";
+import { competenciaBR, dataHoraBR, formatarDocumento, iniciais } from "@/lib/documentos";
 import { TIPOS_NFSE, nomeTipo } from "@/lib/xml";
 import { confirmarAgendamentoNfse, prepararAgendamentoNfse, type PreviaNfse, type SituacaoCertificado } from "./actions-nfse";
 
@@ -70,21 +73,17 @@ export default function FormAgendamentoNfse({ organizacoes, competencia, empresa
         {organizacoes && (
           <>
             <label htmlFor="nfse-org">Organização</label>
-            <select id="nfse-org" name="org_id" required value={org} onChange={(e) => { setOrg(e.target.value); setMarcadas(new Set()); }}>
-              <option value="" disabled>Escolha…</option>
-              {organizacoes.map((o) => <option key={o.id} value={o.id}>{o.nome}</option>)}
-            </select>
+<Escolha id="nfse-org" nome="org_id" rotulo="Organização" placeholder="Escolha a organização…" valor={org} aoMudar={(v) => { setOrg(v); setMarcadas(new Set()); }}
+              opcoes={organizacoes.map((o) => ({ id: o.id, titulo: o.nome }))} />
           </>
         )}
         <label>Empresas</label>
-        <div className="opcoes">
-          <label><input type="radio" name="fonte" value="planilha" checked={fonte === "planilha"} onChange={() => setFonte("planilha")} /> As de uma planilha</label>
-          <label><input type="radio" name="fonte" value="cadastro" checked={fonte === "cadastro"} onChange={() => setFonte("cadastro")} /> Escolher entre as cadastradas</label>
-        </div>
+        <Segmentado nome="fonte" rotulo="Empresas" valor={fonte} aoMudar={setFonte}
+          opcoes={[{ id: "planilha", texto: "As de uma planilha" }, { id: "cadastro", texto: "Escolher entre as cadastradas" }]} />
         {fonte === "planilha" ? (
           <>
-            <label htmlFor="nfse-arquivo">Planilha das empresas da NFS-e (.xlsx)</label>
-            <input id="nfse-arquivo" name="arquivo" type="file" accept=".xlsx,.xlsm,.csv" required />
+            <label htmlFor="nfse-arquivo">Planilha das empresas da NFS-e</label>
+            <SeletorArquivo id="nfse-arquivo" nome="arquivo" aceita=".xlsx,.xlsm,.csv" obrigatorio titulo="Escolher a planilha (.xlsx ou .csv)" />
           </>
         ) : organizacoes && !org ? (
           <p className="suave">Escolha a organização para ver as empresas cadastradas.</p>
@@ -108,8 +107,8 @@ export default function FormAgendamentoNfse({ organizacoes, competencia, empresa
               {daOrg.map((e) => (
                 <label key={e.cnpj} hidden={!visivel(e)}>
                   <input type="checkbox" name="cnpjs" value={e.cnpj} checked={marcadas.has(e.cnpj)} onChange={() => alternar(e.cnpj)} />
-                  <span className="suave id-empresa">{e.codigo || "—"}</span>
-                  <span className="nome-empresa">{e.nome}</span>
+                  <span className="avatar-q" aria-hidden="true">{iniciais(e.nome)}</span>
+                  <span className="nome-empresa">{e.nome}{e.codigo && <small className="suave"> · ID {e.codigo}</small>}</span>
                   <span className="doc suave">{formatarDocumento(e.cnpj)}</span>
                 </label>
               ))}
@@ -120,18 +119,13 @@ export default function FormAgendamentoNfse({ organizacoes, competencia, empresa
         {certsDaOrg.length > 0 && (
           <>
             <label htmlFor="nfse-certificado">Certificado</label>
-            <select id="nfse-certificado" name="certificado_id" defaultValue="" key={org}>
-              <option value="">Automático: o da empresa, o da matriz ou o do escritório</option>
-              {[true, false].map((proc) => certsDaOrg.some((c) => c.procurador === proc) && (
-                <optgroup key={String(proc)} label={proc ? "Do escritório (procuração)" : "Das empresas"}>
-                  {certsDaOrg.filter((c) => c.procurador === proc).map((c) => (
-                    <option key={c.id} value={c.id} disabled={c.vencido}>
-                      {c.nome || formatarDocumento(c.cnpj)} ({formatarDocumento(c.cnpj)}){c.vencido ? " - vencido" : ""}
-                    </option>
-                  ))}
-                </optgroup>
-              ))}
-            </select>
+            <Escolha id="nfse-certificado" nome="certificado_id" rotulo="Certificado" key={org} busca={certsDaOrg.length > 8} opcoes={[
+              { id: "", titulo: "Automático", sub: "O da empresa, o da matriz ou o do escritório", etiqueta: "auto" },
+              ...[true, false].flatMap((proc) => certsDaOrg.filter((c) => c.procurador === proc).map((c) => ({
+                id: c.id, titulo: c.nome || formatarDocumento(c.cnpj), desativada: c.vencido,
+                sub: `${formatarDocumento(c.cnpj)}${c.vencido ? " · vencido" : ""}`,
+                grupo: proc ? "Do escritório (procuração)" : "Das empresas" }))),
+            ]} />
             <p className="suave">Com um certificado escolhido, o robô usa só ele para todas as empresas deste agendamento.</p>
           </>
         )}
@@ -141,10 +135,8 @@ export default function FormAgendamentoNfse({ organizacoes, competencia, empresa
         <p className="suave">Vêm as notas com essa competência (o mês do serviço), emitidas e recebidas.</p>
 
         <label>Quando executar</label>
-        <div className="opcoes">
-          <label><input type="radio" name="quando" value="agora" checked={quando === "agora"} onChange={() => setQuando("agora")} /> Assim que possível</label>
-          <label><input type="radio" name="quando" value="agendar" checked={quando === "agendar"} onChange={() => setQuando("agendar")} /> Em data e hora marcadas</label>
-        </div>
+        <Segmentado nome="quando" rotulo="Quando executar" valor={quando} aoMudar={setQuando}
+          opcoes={[{ id: "agora", texto: "Assim que possível" }, { id: "agendar", texto: "Em data e hora marcadas" }]} />
         {quando === "agendar" && (
           <>
             <input name="executar_em" type="datetime-local" required style={{ maxWidth: 260 }} />

@@ -1,7 +1,8 @@
 "use client";
 
 import { useActionState, useEffect, useState } from "react";
-import { formatarDocumento } from "@/lib/documentos";
+import { formatarDocumento, iniciais } from "@/lib/documentos";
+import Escolha from "@/components/ui/Escolha";
 import { adicionarMonitor } from "./actions";
 
 type Empresa = { org_id: string; cnpj: string; nome: string; codigo: string };
@@ -41,10 +42,8 @@ export default function AdicionarMonitor({ empresas, organizacoes }: { empresas:
           {organizacoes && (
             <>
               <label htmlFor="mon-org">Organização</label>
-              <select id="mon-org" name="org_id" required value={org} onChange={(e) => { setOrg(e.target.value); setMarcadas(new Set()); }}>
-                <option value="" disabled>Escolha…</option>
-                {organizacoes.map((o) => <option key={o.id} value={o.id}>{o.nome}</option>)}
-              </select>
+              <Escolha id="mon-org" nome="org_id" rotulo="Organização" placeholder="Escolha a organização…" valor={org}
+                aoMudar={(v) => { setOrg(v); setMarcadas(new Set()); }} opcoes={organizacoes.map((o) => ({ id: o.id, titulo: o.nome }))} />
             </>
           )}
           {organizacoes && !org ? null : !daOrg.length ? (
@@ -64,8 +63,8 @@ export default function AdicionarMonitor({ empresas, organizacoes }: { empresas:
                 {daOrg.map((e) => (
                   <label key={e.cnpj} hidden={!visivel(e)}>
                     <input type="checkbox" name="cnpjs" value={e.cnpj} checked={marcadas.has(e.cnpj)} onChange={() => alternar(e.cnpj)} />
-                    <span className="suave id-empresa">{e.codigo || "—"}</span>
-                    <span className="nome-empresa">{e.nome}</span>
+                    <span className="avatar-q" aria-hidden="true">{iniciais(e.nome)}</span>
+                    <span className="nome-empresa">{e.nome}{e.codigo && <small className="suave"> · ID {e.codigo}</small>}</span>
                     <span className="doc suave">{formatarDocumento(e.cnpj)}</span>
                   </label>
                 ))}

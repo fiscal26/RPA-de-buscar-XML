@@ -1,5 +1,7 @@
 "use client";
 
+import Escolha from "@/components/ui/Escolha";
+import SeletorArquivo from "@/components/ui/SeletorArquivo";
 import { useActionState, useEffect, useRef } from "react";
 import { salvarCertificado } from "../actions-nfse";
 
@@ -17,15 +19,13 @@ export default function FormCertificado({ organizacoes }: { organizacoes?: Org[]
         {organizacoes && (
           <div>
             <label htmlFor="c-org">Escritório</label>
-            <select id="c-org" name="org_id" required defaultValue="">
-              <option value="" disabled>Escolha…</option>
-              {organizacoes.map((o) => <option key={o.id} value={o.id}>{o.nome}</option>)}
-            </select>
+            <Escolha id="c-org" nome="org_id" rotulo="Escritório" placeholder="Escolha o escritório…"
+              opcoes={organizacoes.map((o) => ({ id: o.id, titulo: o.nome }))} />
           </div>
         )}
         <div>
-          <label htmlFor="c-arquivo">Certificado A1 (.pfx ou .p12)</label>
-          <input id="c-arquivo" name="arquivo" type="file" accept=".pfx,.p12,application/x-pkcs12" required />
+          <label htmlFor="c-arquivo">Certificado A1</label>
+          <SeletorArquivo id="c-arquivo" nome="arquivo" aceita=".pfx,.p12,application/x-pkcs12" obrigatorio titulo="Escolher o certificado (.pfx ou .p12)" />
         </div>
         <div>
           <label htmlFor="c-senha">Senha do certificado</label>

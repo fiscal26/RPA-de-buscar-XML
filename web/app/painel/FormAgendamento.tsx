@@ -1,5 +1,8 @@
 "use client";
 
+import Escolha from "@/components/ui/Escolha";
+import Segmentado from "@/components/ui/Segmentado";
+import SeletorArquivo from "@/components/ui/SeletorArquivo";
 import Link from "next/link";
 import { useActionState, useState, useTransition } from "react";
 import { competenciaBR, dataHoraBR, formatarIe } from "@/lib/documentos";
@@ -42,24 +45,20 @@ export default function FormAgendamento({ organizacoes, competencia }: { organiz
         {organizacoes && (
           <>
             <label htmlFor="org_id">Organização</label>
-            <select id="org_id" name="org_id" required defaultValue="">
-              <option value="" disabled>Escolha…</option>
-              {organizacoes.map((o) => <option key={o.id} value={o.id}>{o.nome}</option>)}
-            </select>
+<Escolha id="org_id" nome="org_id" rotulo="Organização" placeholder="Escolha a organização…"
+              opcoes={organizacoes.map((o) => ({ id: o.id, titulo: o.nome }))} />
           </>
         )}
-        <label htmlFor="arquivo">Planilha das empresas (.xlsx)</label>
-        <input id="arquivo" name="arquivo" type="file" accept=".xlsx,.xlsm,.csv" required />
+        <label htmlFor="arquivo">Planilha das empresas</label>
+        <SeletorArquivo id="arquivo" nome="arquivo" aceita=".xlsx,.xlsm,.csv" obrigatorio titulo="Escolher a planilha (.xlsx ou .csv)" />
 
         <label htmlFor="competencia">Competência</label>
         <input id="competencia" name="competencia" type="month" defaultValue={competencia} required style={{ maxWidth: 220 }} />
         <p className="suave">O robô busca do 1º ao último dia do mês.</p>
 
         <label>Quando executar</label>
-        <div className="opcoes">
-          <label><input type="radio" name="quando" value="agora" checked={quando === "agora"} onChange={() => setQuando("agora")} /> Assim que possível</label>
-          <label><input type="radio" name="quando" value="agendar" checked={quando === "agendar"} onChange={() => setQuando("agendar")} /> Em data e hora marcadas</label>
-        </div>
+        <Segmentado nome="quando" rotulo="Quando executar" valor={quando} aoMudar={setQuando}
+          opcoes={[{ id: "agora", texto: "Assim que possível" }, { id: "agendar", texto: "Em data e hora marcadas" }]} />
         {quando === "agendar" && (
           <>
             <input name="executar_em" type="datetime-local" required style={{ maxWidth: 260 }} />

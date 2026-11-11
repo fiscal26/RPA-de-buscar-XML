@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import Icone from "@/components/Icones";
 import BotaoRemover from "../empresas/BotaoRemover";
-import { dataBR, dataHoraBR, formatarDocumento } from "@/lib/documentos";
+import { dataBR, dataHoraBR, formatarDocumento, iniciais } from "@/lib/documentos";
 import { SITUACAO_MONITOR, reaisMonitor, type MonitorLinha } from "@/lib/monitor";
 import { consultarAgora, removerMonitor } from "./actions";
 
@@ -45,7 +45,10 @@ export default function TabelaMonitor({ linhas, gerencia, admin }: { linhas: Lin
                   <td><span className="compras-mes">{reaisMonitor(x.comprasMes)}</span>
                     {x.notasMes > 0 && <small className="suave"> {x.notasMes} nota{x.notasMes > 1 ? "s" : ""}</small>}</td>
                   <td className="doc">{formatarDocumento(x.cnpj)}</td>
-                  <td className="nome-empresa">{x.codigo && <span className="suave">{x.codigo} · </span>}{x.nome}</td>
+                  <td className="nome-empresa">
+                    <span className="com-avatar"><span className="avatar-q" aria-hidden="true">{iniciais(x.nome)}</span>
+                      <span>{x.nome}{x.codigo && <small className="suave"> ID {x.codigo}</small>}</span></span>
+                  </td>
                   <td>
                     {x.certificado
                       ? <span className={`status ${x.certificado.classe}`}>

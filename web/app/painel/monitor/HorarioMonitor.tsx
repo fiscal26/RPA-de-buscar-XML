@@ -1,5 +1,6 @@
 "use client";
 
+import Escolha from "@/components/ui/Escolha";
 import { useActionState } from "react";
 import { horaBR } from "@/lib/monitor";
 import { salvarHorario } from "./actions";
@@ -12,9 +13,8 @@ export default function HorarioMonitor({ hora }: { hora: string | null }) {
   return (
     <form action={acao} className="horario-monitor">
       <label htmlFor="mon-hora">Consultar todo dia às</label>
-      <select id="mon-hora" name="hora" defaultValue={(hora ?? "11:00").slice(0, 5)}>
-        {HORARIOS.map((h) => <option key={h} value={h}>{horaBR(h)}</option>)}
-      </select>
+      <Escolha id="mon-hora" nome="hora" rotulo="Horário da consulta" padrao={(hora ?? "11:00").slice(0, 5)} busca={false} avatar={false} compacta
+        opcoes={HORARIOS.map((h) => ({ id: h, titulo: horaBR(h) }))} />
       <button type="submit" className="secundario" disabled={salvando}>{salvando ? "Salvando…" : "Salvar horário"}</button>
       <span className="suave">Horário de Brasília.</span>
       {estado && <span className={estado.erro ? "texto-erro" : "texto-ok"}>{estado.erro ?? estado.ok}</span>}
