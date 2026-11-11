@@ -1,5 +1,7 @@
 "use client";
 
+import BotaoConfirmar from "@/components/ui/BotaoConfirmar";
+import Escolha from "@/components/ui/Escolha";
 import Icone from "@/components/Icones";
 import { useActionState, useRef } from "react";
 import { criarEscritorio, criarPessoa, excluirEscritorio, excluirPessoa, trocarSenha, type EstadoEquipe } from "./actions";
@@ -54,17 +56,14 @@ export function FormPessoa({ organizacoes }: { organizacoes?: Org[] }) {
           <>
             <div>
               <label htmlFor="p-org">Escritório</label>
-              <select id="p-org" name="org_id" required defaultValue="">
-                <option value="" disabled>Escolha…</option>
-                {organizacoes.map((o) => <option key={o.id} value={o.id}>{o.nome}</option>)}
-              </select>
+              <Escolha id="p-org" nome="org_id" rotulo="Escritório" placeholder="Escolha o escritório…"
+                opcoes={organizacoes.map((o) => ({ id: o.id, titulo: o.nome }))} />
             </div>
             <div>
               <label htmlFor="p-papel">Papel</label>
-              <select id="p-papel" name="papel" defaultValue="usuario">
-                <option value="usuario">Colaborador</option>
-                <option value="gestor">Gestor</option>
-              </select>
+              <Escolha id="p-papel" nome="papel" rotulo="Papel" padrao="usuario" avatar={false} opcoes={[
+                { id: "usuario", titulo: "Colaborador", sub: "Usa o portal do escritório" },
+                { id: "gestor", titulo: "Gestor", sub: "Também cadastra a equipe" }]} />
             </div>
           </>
         )}
@@ -93,14 +92,13 @@ export function FormSenha({ id }: { id: string }) {
 export function ExcluirPessoa({ id, nome }: { id: string; nome: string }) {
   const [estado, acao, enviando] = useActionState(excluirPessoa, undefined);
   return (
-    <form action={acao} onSubmit={(e) => {
-      if (!confirm(`Excluir o acesso de ${nome}? A pessoa não consegue mais entrar. Para só bloquear por um tempo, use Desativar.`)) e.preventDefault();
-    }}>
+    <form action={acao}>
       <input type="hidden" name="id" value={id} />
-      <button type="submit" className="perigo botao-icone" disabled={enviando} aria-label={`Excluir o acesso de ${nome}`}
-        data-dica={enviando ? "Excluindo…" : "Excluir"}>
+      <BotaoConfirmar className="perigo botao-icone" desativado={enviando} rotulo={`Excluir o acesso de ${nome}`}
+        dica={enviando ? "Excluindo…" : "Excluir"} titulo={`Excluir o acesso de ${nome}?`}
+        texto="A pessoa não consegue mais entrar. Para só bloquear por um tempo, use Desativar.">
         <Icone nome="lixeira" tamanho={18} />
-      </button>
+      </BotaoConfirmar>
       {estado?.erro && <span className="erro-texto">{estado.erro}</span>}
     </form>
   );

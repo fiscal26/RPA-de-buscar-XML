@@ -1,5 +1,6 @@
 "use client";
 
+import Escolha from "@/components/ui/Escolha";
 import { useActionState, useEffect, useRef } from "react";
 import { adicionarAjuste } from "../actions";
 import { MESES_LONGOS } from "@/lib/mei";
@@ -17,17 +18,14 @@ export default function FormAjuste({ org, ie, ano, mesPadrao }: { org: string; i
       <input type="hidden" name="ie" value={ie} />
       {estado && <div className={`faixa ${estado.erro ? "erro" : "ok"}`}>{estado.erro ?? estado.ok}</div>}
       <div className="form-ajuste-campos">
-        <label>Mês
-          <select name="competencia" defaultValue={`${ano}-${String(mesPadrao + 1).padStart(2, "0")}`}>
-            {MESES_LONGOS.map((m, i) => <option key={m} value={`${ano}-${String(i + 1).padStart(2, "0")}`}>{m}</option>)}
-          </select>
-        </label>
-        <label>Tipo
-          <select name="tipo" defaultValue="receita">
-            <option value="receita">Receita (faturamento)</option>
-            <option value="compra">Compra</option>
-          </select>
-        </label>
+        <div className="rotulo">Mês
+          <Escolha nome="competencia" rotulo="Mês" padrao={`${ano}-${String(mesPadrao + 1).padStart(2, "0")}`} busca={false} avatar={false}
+            opcoes={MESES_LONGOS.map((m, i) => ({ id: `${ano}-${String(i + 1).padStart(2, "0")}`, titulo: m[0].toUpperCase() + m.slice(1) }))} />
+        </div>
+        <div className="rotulo">Tipo
+          <Escolha nome="tipo" rotulo="Tipo" padrao="receita" avatar={false}
+            opcoes={[{ id: "receita", titulo: "Receita (faturamento)" }, { id: "compra", titulo: "Compra" }]} />
+        </div>
         <label className="largo">Descrição
           <input name="descricao" type="text" maxLength={120} placeholder="Ex.: vendas sem nota para pessoa física" required />
         </label>

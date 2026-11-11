@@ -80,3 +80,9 @@ export function mesAnterior(hoje = new Date()) {
   const ref = new Date(Date.UTC(hoje.getFullYear(), hoje.getMonth() - 1, 1));
   return ref.toISOString().slice(0, 7);
 }
+
+/** Iniciais para o quadradinho da empresa: "Padaria Central Ltda" -> "PC". */
+export function iniciais(nome?: string | null) {
+  const p = (nome || "").replace(/\b(ltda|me|epp|eireli|s\.?a\.?|de|da|do|dos|das|e)\b/gi, "").trim().split(/\s+/).filter(Boolean);
+  return ((p[0]?.[0] || "") + (p[1]?.[0] || "")).toUpperCase() || "?";
+}
