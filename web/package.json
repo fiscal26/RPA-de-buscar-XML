@@ -8,7 +8,8 @@
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "test:mei": "node --test tests/mei.test.cjs",
-    "test:mei:db": "node --test tests/mei-db.test.cjs"
+    "test:mei:db": "node --test tests/mei-db.test.cjs",
+    "test:cnpja": "node --test tests/cnpja.test.cjs tests/cnpja-db.test.cjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.7",
