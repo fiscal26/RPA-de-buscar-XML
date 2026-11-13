@@ -295,7 +295,8 @@ def test_so_emitidas_sem_relatorio_nem_pdf(chaves, cfg_nfse, tmp_path):
     import robo_xml
     portal = PortalFalso(documentos_exemplo())
     r = robo_xml.executar_nfse(cfg_nfse, tarefa(chaves, ["nfse_emitidas"]), chaves[0], sessao_falsa=portal)
-    assert r.qtd_xml == 2 and set(r.detalhes) == {"nfse_emitidas"}
+    assert r.qtd_xml == 2 and set(r.detalhes) == {"nfse_emitidas", "mei_nfse"}
+    assert r.detalhes["mei_nfse"]["meses"] == [{"competencia": "2026-09-01", "valor": 11000.0, "quantidade": 2}]
     pasta = tmp_path / "destino" / "Arquivos baixados" / "7-Lotivisse" / "092026"
     assert not (pasta / nfse.PASTA_RECEBIDAS).exists() and not list(pasta.glob("*.xlsx"))
     assert not list(pasta.rglob("*.pdf")) and not any("/danfse/" in p[0] for p in portal.pedidos)
@@ -307,6 +308,26 @@ def test_certificado_com_senha_errada(chaves, cfg_nfse):
     t["senha_cifrada"] = __import__("cripto").cifrar("errada", chaves[1])
     r = robo_xml.executar_nfse(cfg_nfse, t, chaves[0], sessao_falsa=PortalFalso([]))
     assert r.status == "certificado" and "senha" in r.mensagem and r.detalhes["nfse_emitidas"]["situacao"] == "erro"
+    assert "mei_nfse" not in r.detalhes  # uma falha nunca apaga o último faturamento válido
+
+
+def test_resumo_mei_reprocessado_inclui_cancelamento_sem_duplicar(chaves, cfg_nfse):
+    import robo_xml
+    t = tarefa(chaves, ["nfse_emitidas"])
+    r = robo_xml.executar_nfse(cfg_nfse, t, chaves[0], sessao_falsa=PortalFalso(documentos_exemplo()))
+    assert r.detalhes["mei_nfse"]["meses"][0]["valor"] == 11000.0  # bruto, não o líquido retido
+    # O evento novo cancela a nota de 10 mil; recebidas e outra competência não entram na receita.
+    cancelamento = [(7, "EVENTO", C2, evento_xml(C2))]
+    for _ in range(2):
+        r = robo_xml.executar_nfse(cfg_nfse, t, chaves[0], sessao_falsa=PortalFalso(cancelamento))
+        assert r.detalhes["mei_nfse"]["meses"] == [{"competencia": "2026-09-01", "valor": 1000.0, "quantidade": 1}]
+
+
+def test_mei_sem_nota_registra_zero_confirmado(chaves, cfg_nfse):
+    import robo_xml
+    r = robo_xml.executar_nfse(cfg_nfse, tarefa(chaves, ["nfse_emitidas"]), chaves[0], sessao_falsa=PortalFalso([]))
+    assert r.status == "sem_notas"
+    assert r.detalhes["mei_nfse"]["meses"] == [{"competencia": "2026-09-01", "valor": 0.0, "quantidade": 0}]
 
 
 def test_portal_recusa_o_certificado_e_fora_do_ar(chaves, cfg_nfse):

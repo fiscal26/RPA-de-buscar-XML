@@ -6,9 +6,11 @@ import { nomeTipo } from "@/lib/xml";
 import { removerEmpresa } from "../actions";
 import BotaoRemover from "./BotaoRemover";
 import Renomear from "./Renomear";
+import FormCadastroMei from "../mei/FormCadastroMei";
+import type { CadastroMei } from "@/lib/mei-carteira";
 
 type Empresa = {
-  id: string; ie: string; cnpj: string; codigo: string; nome: string; nome_fixo?: boolean; tipos: string[]; atualizado_em: string;
+  id: string; org_id: string; ie: string; cnpj: string; codigo: string; nome: string; nome_fixo?: boolean; tipos: string[]; atualizado_em: string;
   xml_acessos?: { login: string } | null; organizacoes?: { nome: string } | null;
 };
 type EmpresaNfse = {
@@ -29,18 +31,25 @@ function Remover({ id, nome, origem }: { id: string; nome: string; origem: "sefa
 }
 
 export default async function Empresas() {
-  const { supabase, admin } = await contexto();
+  const { supabase, admin, perfil } = await contexto();
   // as senhas e os certificados cifrados nem são lidos aqui (o banco só libera o login, o CNPJ e as datas)
-  const [{ data: e }, { data: a }, { data: n }, { data: c }] = await Promise.all([
+  const [{ data: e }, { data: a }, { data: n }, { data: c }, rMei, rSugestoes] = await Promise.all([
     supabase.from("xml_empresas").select("*, xml_acessos(login), organizacoes(nome)").order("nome"),
     supabase.from("xml_acessos").select("id, login, atualizado_em").order("login"),
     supabase.from("xml_nfse_empresas").select("id, org_id, cnpj, codigo, nome, nome_fixo, tipos, organizacoes(nome)").order("nome"),
     supabase.from("xml_nfse_certificados").select("org_id, cnpj, validade, procurador"),
+    supabase.from("xml_mei_cadastros").select("org_id, cnpj, nome, ativo, inicio_atividade, inicio_mei, fim_mei"),
+    supabase.from("xml_tarefas").select("org_id, ie").contains("detalhes", { mei_nfse: { detectado_no_xml: true } }).limit(10000),
   ]);
   const empresas = (e ?? []) as unknown as Empresa[];
   const acessos = (a ?? []) as Acesso[];
   const empresasNfse = (n ?? []) as unknown as EmpresaNfse[];
   const certificados = (c ?? []) as Certificado[];
+  const cadastros = (rMei.data ?? []) as CadastroMei[];
+  const opcoesMei = [...new Map([...empresasNfse, ...empresas].filter((x) => /^\d{14}$/.test(x.cnpj))
+    .map((x) => [`${x.org_id}|${x.cnpj}`, { org: x.org_id, cnpj: x.cnpj, nome: x.nome,
+      escritorio: admin ? x.organizacoes?.nome ?? "" : "",
+      sugestao: (rSugestoes.data ?? []).some((t) => t.org_id === x.org_id && t.ie === x.cnpj) }])).values()];
 
   return (
     <>
@@ -49,6 +58,15 @@ export default async function Empresas() {
         As empresas entram pela planilha do agendamento, uma lista para a SEFAZ e outra para a NFS-e. Os nomes são corrigidos
         ao entrar (por exemplo, “lidi@ne silv4” vira “Lidiane Silva”); o nome renomeado aqui não muda mais com a planilha.
       </p>
+
+      {(admin || perfil.papel === "gestor") && <section className="cartao" id="cadastro-mei">
+        <h2 className="titulo-cartao">Cadastro de MEI</h2>
+        <p className="suave">Inclua prestadoras no Monitoramento MEI mesmo sem inscrição estadual ou notas emitidas.
+          Escolha uma empresa cadastrada abaixo para marcar ou editar o enquadramento.</p>
+        {rMei.error ? <p className="faixa alerta">O cadastro MEI ficará disponível após a atualização do banco.</p>
+          : opcoesMei.length ? <FormCadastroMei empresas={opcoesMei} cadastros={cadastros} />
+          : <p className="suave">Cadastre primeiro uma empresa com CNPJ por um agendamento da SEFAZ ou da NFS-e.</p>}
+      </section>}
 
       <section className="cartao">
         <div className="cartao-topo">

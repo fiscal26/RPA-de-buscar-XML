@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { contexto } from "@/lib/sessao";
-import { formatarIe } from "@/lib/documentos";
+import { formatarIe, formatarDocumento } from "@/lib/documentos";
 import { carregarMeis } from "@/lib/mei-dados";
 import { FRACAO_COMPRAS, LIMITE_ANO, MESES_LONGOS, NIVEIS, mil, pct, reais } from "@/lib/mei";
 import SeletorAno from "./SeletorAno";
@@ -51,7 +51,7 @@ export default async function MonitoramentoMei({ searchParams }: { searchParams:
             e R$ 64.800 de compras (proporcionais no ano de abertura).
           </p>
         </div>
-        <SeletorAno ano={ano} atual={atual} />
+        <div className="acoes-cabeca"><Link href="/painel/empresas#cadastro-mei" className="botao secundario">Cadastrar ou editar MEI</Link><SeletorAno ano={ano} atual={atual} /></div>
       </div>
 
       {erros.length > 0 && (
@@ -90,8 +90,8 @@ export default async function MonitoramentoMei({ searchParams }: { searchParams:
         {meis.length === 0 ? (
           <div className="vazio-mei">
             <p><b>Nenhum MEI acompanhado em {ano}.</b></p>
-            <p className="suave">Marque a coluna “Dossiê MEI” na planilha das empresas MEI e agende a competência. Na primeira vez, o robô busca o ano desde janeiro.</p>
-            <Link href="/painel/agendar" className="botao">Agendar competência</Link>
+            <p className="suave">Cadastre uma prestadora como MEI em Empresas, ou marque “Dossiê MEI” na planilha da SEFAZ. Ela aparece mesmo antes da primeira consulta.</p>
+            <Link href="/painel/empresas#cadastro-mei" className="botao">Cadastrar MEI</Link>
           </div>
         ) : (
           <div className="ranking" role="table" aria-label="MEIs por faturamento no ano">
@@ -114,7 +114,7 @@ export default async function MonitoramentoMei({ searchParams }: { searchParams:
                   <span role="cell" className="ranking-pos">{posicao.get(m)}</span>
                   <span role="cell" className="ranking-nome">
                     <b>{m.nome || "MEI"}</b>
-                    <span className="suave">IE {formatarIe(m.ie)}{m.ano.primeiroMes > 0 ? ` · abriu em ${MESES_LONGOS[m.ano.primeiroMes]}` : ""}</span>
+                    <span className="suave">{m.cnpj ? `CNPJ ${formatarDocumento(m.cnpj)}` : `IE ${formatarIe(m.ie)}`}{m.ano.primeiroMes > 0 ? ` · abriu em ${MESES_LONGOS[m.ano.primeiroMes]}` : ""}</span>
                   </span>
                   <span role="cell" className="ranking-barras" aria-label={`Faturamento ${reais(f.total)}, compras ${reais(c.total)}`}>
                     {referencias.map((r) => <i key={r.classe} className={`ranking-ref ${r.classe}`} style={{ left: x(r.v) }} />)}
@@ -123,8 +123,8 @@ export default async function MonitoramentoMei({ searchParams }: { searchParams:
                     <span className="ranking-barra s-comp" style={{ width: x(c.total) }} />
                   </span>
                   <span role="cell" className="num"><b>{reais(f.total, 0)}</b><span className="suave">{pct(f.pct)} do limite</span></span>
-                  <span role="cell" className="num"><b>{reais(c.total, 0)}</b><span className="suave">{pct(c.pct)} do limite</span></span>
-                  <span role="cell"><span className={`status ${nivel.classe}`}><span aria-hidden="true">{nivel.sinal}</span> {nivel.nome}</span></span>
+                  <span role="cell" className="num"><b>{c.nivel === "sem_dados" ? "—" : reais(c.total, 0)}</b><span className="suave">{c.nivel === "sem_dados" ? "sem consulta" : `${pct(c.pct)} do limite`}</span></span>
+                  <span role="cell"><span className={`status ${m.ano.conferirFontes ? "st-alerta" : nivel.classe}`}><span aria-hidden="true">{nivel.sinal}</span> {m.ano.conferirFontes ? "Conferir fontes" : nivel.nome}</span></span>
                 </Link>
               );
             })}
@@ -136,9 +136,9 @@ export default async function MonitoramentoMei({ searchParams }: { searchParams:
         )}
       </section>
       <p className="suave nota-rodape">
-        Faturamento do mês: o maior valor entre as notas de saída e as vendas no cartão (o cartão pode estar dentro das notas ou não),
+        Faturamento do mês: o maior valor entre as notas de saída somadas às NFS-e emitidas e as vendas no cartão,
         mais as receitas lançadas manualmente. Compras: notas de entrada mais as compras lançadas manualmente. Fonte: Dossiê do
-        contribuinte no ATF da SEFAZ-PB.
+        contribuinte no ATF da SEFAZ-PB e NFS-e emitidas válidas do Portal Nacional, por competência. NFS-e recebidas não são faturamento.
       </p>
     </>
   );
