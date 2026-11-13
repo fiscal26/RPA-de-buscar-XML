@@ -1,12 +1,26 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { analisarAno, type Ajuste, type AnoMei, type MesAtf } from "@/lib/mei";
+import { type Ajuste, type AnoMei, type MesAtf } from "@/lib/mei";
+import { consolidarCarteira, type CadastroMei, type MesNfse } from "@/lib/mei-carteira";
 
-export type MeiCarteira = { org: string; ie: string; nome: string; ano: AnoMei; ajustes: Ajuste[]; meses: MesAtf[] };
+export type MeiCarteira = { org: string; ie: string; cnpj: string; aliases: string[]; nome: string;
+  cadastro?: CadastroMei; ano: AnoMei; ajustes: Ajuste[]; meses: MesAtf[] };
 type TarefaMei = { org_id: string; ie: string; nome: string; concluido_em: string | null;
   detalhes: { mei?: { saidas?: number | null; entradas?: number | null; cartao?: number | null; sem_movimento?: boolean; limite_ano?: number;
     mensagem?: string } } | null;
   xml_agendamentos: { competencia: string } | { competencia: string }[] | null };
+
+// O limite configurado no Supabase costuma ser 1.000 linhas por resposta: um ano de carteira
+// ultrapassa isso facilmente. Paginar evita sumir com empresas e meses silenciosamente.
+async function lerTodas<T>(q: { range: (inicio: number, fim: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }> }) {
+  const data: T[] = [];
+  for (let inicio = 0; ; inicio += 500) {
+    const r = await q.range(inicio, inicio + 499);
+    if (r.error) return { data, error: r.error };
+    data.push(...(r.data ?? []));
+    if (!r.data || r.data.length < 500) return { data, error: null };
+  }
+}
 
 /**
  * MEIs do ano: os que têm Dossiê MEI consultado e os marcados como MEI na planilha (ainda sem consulta).
@@ -17,24 +31,22 @@ export async function carregarMeis(supabase: SupabaseClient, ano: number, ie?: s
   const de = `${ano}-01-01`, ate = `${ano}-12-01`;
   let qMeses = supabase.from("xml_mei_meses")
     .select("org_id, ie, nome, competencia, saidas, entradas, qtd_saidas, qtd_entradas, cartao, qtd_cartao, sem_movimento, simei, inicio_atividade, itens, consultado_em")
-    .gte("competencia", de).lte("competencia", ate).limit(10000);
+    .gte("competencia", de).lte("competencia", ate).order("org_id").order("ie").order("competencia");
   let qAjustes = supabase.from("xml_mei_ajustes").select("id, org_id, ie, competencia, tipo, descricao, valor, criado_em")
-    .gte("competencia", de).lte("competencia", ate).order("criado_em").limit(10000);
+    .gte("competencia", de).lte("competencia", ate).order("criado_em").order("id");
   // todas as empresas do cadastro: as marcadas como MEI entram (mesmo sem consulta); as que não estão marcadas
   // (ex.: "Não é MEI" no painel) ficam de fora, mesmo com faturamento antigo no histórico
-  let qEmpresas = supabase.from("xml_empresas").select("org_id, ie, nome, tipos").limit(20000);
-  if (ie) {
-    qMeses = qMeses.eq("ie", ie);
-    qAjustes = qAjustes.eq("ie", ie);
-    qEmpresas = qEmpresas.eq("ie", ie);
-  }
+  const qEmpresas = supabase.from("xml_empresas").select("org_id, ie, cnpj, nome, tipos").order("org_id").order("ie");
   // execuções do Dossiê MEI: cobrem o mês que ainda não chegou em xml_mei_meses (robô antigo ou falha no envio)
   let qTarefas = supabase.from("xml_tarefas").select("org_id, ie, nome, detalhes, concluido_em, xml_agendamentos!inner(competencia)")
     .contains("tipos", ["mei"]).gte("xml_agendamentos.competencia", de).lte("xml_agendamentos.competencia", ate)
-    .order("concluido_em", { ascending: true }).limit(5000);
-  if (ie) qTarefas = qTarefas.eq("ie", ie);
-  const [rMeses, rAjustes, rEmpresas, rTarefas] = await Promise.all([qMeses, qAjustes, qEmpresas, qTarefas]);
-  const erros = [rMeses, rAjustes, rEmpresas, rTarefas].map((r) => r.error?.message).filter(Boolean) as string[];
+    .order("concluido_em", { ascending: true }).order("id");
+  const [rMeses, rAjustes, rEmpresas, rTarefas, rCadastros, rNfse] = await Promise.all([lerTodas(qMeses), lerTodas(qAjustes), lerTodas(qEmpresas), lerTodas(qTarefas),
+    lerTodas(supabase.from("xml_mei_cadastros").select("org_id, cnpj, nome, ativo, inicio_atividade, inicio_mei, fim_mei").order("org_id").order("cnpj")),
+    lerTodas(supabase.from("xml_mei_nfse_meses").select("org_id, cnpj, competencia, valor, quantidade, consultado_em, iniciado_em")
+      .gte("competencia", de).lte("competencia", ate).order("org_id").order("cnpj").order("competencia")),
+  ]);
+  const erros = [rMeses, rAjustes, rEmpresas, rTarefas, rCadastros, rNfse].map((r) => r.error?.message).filter(Boolean) as string[];
   const meses = rMeses.data, ajustes = rAjustes.data, empresas = rEmpresas.data;
 
   const chave = (o: string, i: string) => `${o}|${i}`;
@@ -53,7 +65,7 @@ export async function carregarMeis(supabase: SupabaseClient, ano: number, ie?: s
   }
   for (const k of [...desmarcadas]) if (grupos.has(k)) desmarcadas.delete(k);  // a mesma IE marcada em outro cadastro vale
   for (const m of (meses ?? []) as MesAtf[]) grupo(m.org_id, m.ie, m.nome).meses.push({ ...m, saidas: num(m.saidas), entradas: num(m.entradas), cartao: num(m.cartao) });
-  for (const a of (ajustes ?? []) as Ajuste[]) grupo(a.org_id, a.ie, "").ajustes.push({ ...a, valor: Number(a.valor) });
+  for (const a of (ajustes ?? []) as Ajuste[]) if (a.ie.length === 9) grupo(a.org_id, a.ie, "").ajustes.push({ ...a, valor: Number(a.valor) });
   // o robô viu no dossiê que a empresa não é MEI (Optante SIMEI: NÃO, ou regime normal, sem essa linha):
   // vale a consulta mais recente, porque a empresa pode ter sido MEI e deixado de ser
   const naoMei = new Map<string, boolean>();
@@ -79,15 +91,16 @@ export async function carregarMeis(supabase: SupabaseClient, ano: number, ie?: s
 
   // fora do monitoramento quem não é MEI: nunca apareceu como optante no ano e o dossiê disse que não é
   for (const [k, g] of grupos) {
+    const cnpj = (empresas ?? []).find((e) => e.org_id === g.org && e.ie === g.ie)?.cnpj;
+    const explicito = (rCadastros.data ?? []).some((c) => c.org_id === g.org && c.cnpj === cnpj && c.ativo);
     const foiMei = g.meses.some((m) => m.simei === true);
-    if (desmarcadas.has(k) || (!foiMei && (naoMei.get(k) || g.meses.some((m) => m.simei === false)))) grupos.delete(k);
+    if (!explicito && (desmarcadas.has(k) || (!foiMei && (naoMei.get(k) || g.meses.some((m) => m.simei === false))))) grupos.delete(k);
   }
 
   // maior faturamento primeiro
-  const meis = [...grupos.values()]
-    .map((g) => ({ ...g, ano: analisarAno(ano, g.meses, g.ajustes) }))
-    .sort((a, b) => b.ano.faturamento.total - a.ano.faturamento.total || b.ano.compras.total - a.ano.compras.total
-      || a.nome.localeCompare(b.nome));
+  const meis = consolidarCarteira(ano, [...grupos.values()], empresas ?? [],
+    (rCadastros.data ?? []) as CadastroMei[], (rNfse.data ?? []) as MesNfse[], (ajustes ?? []) as Ajuste[])
+    .filter((m) => !ie || m.aliases.includes(ie));
   return { meis, erros };
 }
 

@@ -114,6 +114,7 @@ export default function GraficoMei(p: Props) {
                 <dt><i className="s-fat" /> Faturamento</dt><dd>{reais(vista === "mes" ? m.faturamento : m.faturamentoAcum)}</dd>
                 {vista === "mes" && <>
                   <dt className="sub">notas</dt><dd className="sub">{reais(m.notas)}</dd>
+                  <dt className="sub">NFS-e emitidas</dt><dd className="sub">{reais(m.nfse)}</dd>
                   <dt className="sub">cartão</dt><dd className="sub">{reais(m.cartao)}</dd>
                   {!!m.receitaManual && <><dt className="sub">manual</dt><dd className="sub">{reais(m.receitaManual)}</dd></>}
                 </>}

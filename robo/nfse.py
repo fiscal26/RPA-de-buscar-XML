@@ -510,6 +510,20 @@ def eh_mei(cnpj: str, cache_raiz: Path | None = None) -> bool:
     return False
 
 
+def resumo_mei(cnpj: str, competencia: str, cache_raiz: Path | None = None) -> dict:
+    """Receita de serviços por competência, somente emitidas válidas, em centavos e sem duplicar chaves.
+
+    Usa a separação do importador (inclui eventos de cancelamento). Não usa recebidas, valor líquido
+    nem o enquadramento histórico da nota como autorização para cadastrar a empresa no monitoramento.
+    """
+    from decimal import Decimal, ROUND_HALF_UP
+    emitidas, _, _ = separar(Cache(cnpj, cache_raiz or CACHE), cnpj, competencia)
+    por_chave = {n.chave: n for n, _ in emitidas}
+    total = sum((Decimal(str(n.valor_servico)) for n in por_chave.values()), Decimal('0'))
+    return {"competencia": competencia + "-01", "valor": float(total.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)),
+            "quantidade": len(por_chave)}
+
+
 def meses_sem_busca(destino: str | Path, nome: str, cnpj: str, codigo: str, competencia: str) -> list[str]:
     """Meses do ano ANTES da competência (de janeiro em diante) sem pasta da empresa: o MEI que chega sem
     acompanhamento já sai com o ano todo, como no Dossiê MEI. Devolve ["AAAA-MM", ...]."""

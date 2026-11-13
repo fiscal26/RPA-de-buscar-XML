@@ -3,14 +3,14 @@ import { clienteAdmin } from "@/lib/supabase/admin";
 import { carregarMeis, type MeiCarteira } from "@/lib/mei-dados";
 import { type Medida, type Nivel, pct, reais } from "@/lib/mei";
 import { enderecoSite, enviarEmail, emailConfigurado } from "@/lib/email";
-import { formatarIe } from "@/lib/documentos";
+import { formatarIe, formatarDocumento } from "@/lib/documentos";
 
 // do mais leve ao mais grave: chegar a um nível conta os anteriores como avisados (não manda "80%" depois de "passou")
 const ORDEM: Nivel[] = ["ritmo", "atencao", "excedeu", "excedeu20"];
 const MEDIDAS = [{ id: "faturamento", nome: "faturamento" }, { id: "compras", nome: "compras" }] as const;
 
 function textos(m: MeiCarteira, medida: (typeof MEDIDAS)[number], d: Medida) {
-  const quem = `${m.nome || "MEI"} (IE ${formatarIe(m.ie)})`;
+  const quem = `${m.nome || "MEI"} (${m.cnpj ? `CNPJ ${formatarDocumento(m.cnpj)}` : `IE ${formatarIe(m.ie)}`})`;
   const base = `${reais(d.total)} de ${reais(d.limite, 0)} no ano (${pct(d.pct)} do limite de ${medida.nome}).`;
   const proj = `Mantida a média mensal, chega a ${reais(d.projecao, 0)} em dezembro (${pct(d.projecao / d.limite)}).`;
   switch (d.nivel) {
@@ -48,13 +48,20 @@ export async function verificarAlertasMei(filtro?: { org?: string; ie: string })
   for (const ano of anos) {
     const { meis, erros } = await carregarMeis(db, ano, filtro?.ie);
     resumo.erros.push(...erros);
+    if (erros.length) continue; // não avisar limites a partir de uma carteira lida parcialmente
     for (const m of meis) {
       if (filtro?.org && m.org !== filtro.org) continue;
+      if (m.ano.conferirFontes) continue;
       resumo.verificados++;
       for (const medida of MEDIDAS) {
         const d = m.ano[medida.id];
         const i = ORDEM.indexOf(d.nivel);
         if (i < 0) continue;
+        // A carteira agora usa CNPJ; avisos já enviados sob a IE continuam valendo.
+        const { data: anteriores, error: erroAnteriores } = await db.from("xml_mei_alertas").select("nivel")
+          .eq("org_id", m.org).in("ie", m.aliases).eq("ano", ano).eq("medida", medida.id).eq("nivel", d.nivel);
+        if (erroAnteriores) { resumo.erros.push(erroAnteriores.message); continue; }
+        if (anteriores?.length) continue;
         // reserva os níveis até o atual; só quem conseguiu reservar o nível atual envia (nada sai em dobro)
         const { data: novos, error } = await db.from("xml_mei_alertas").upsert(
           ORDEM.slice(0, i + 1).map((nivel) => ({ org_id: m.org, ie: m.ie, ano, medida: medida.id, nivel,

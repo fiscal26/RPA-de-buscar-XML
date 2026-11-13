@@ -2,7 +2,7 @@ import Icone from "@/components/Icones";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { contexto } from "@/lib/sessao";
-import { dataBR, dataHoraBR, formatarIe } from "@/lib/documentos";
+import { dataBR, dataHoraBR, formatarIe, formatarDocumento, competenciaBR } from "@/lib/documentos";
 import { carregarMeis } from "@/lib/mei-dados";
 import { MESES, MESES_LONGOS, NIVEIS, explicacao, pct, reais } from "@/lib/mei";
 import BarraLimite from "@/components/mei/BarraLimite";
@@ -11,13 +11,14 @@ import SeletorAno from "../SeletorAno";
 import FormAjuste from "./FormAjuste";
 import { naoEhMei, removerAjuste } from "../actions";
 import BotaoNaoMei from "./BotaoNaoMei";
+import FormReprocessar from "../FormReprocessar";
 
 export default async function PainelMei({ params, searchParams }: {
   params: Promise<{ ie: string }>; searchParams: Promise<{ ano?: string; org?: string }>;
 }) {
   const { ie } = await params;
   const sp = await searchParams;
-  if (!/^\d{9}$/.test(ie)) notFound();
+  if (!/^(\d{9}|\d{14})$/.test(ie)) notFound();
   const { supabase, perfil, admin } = await contexto();
   const gerencia = admin || perfil.papel === "gestor";
   const atual = new Date().getFullYear();
@@ -27,7 +28,7 @@ export default async function PainelMei({ params, searchParams }: {
   if (!mei) notFound();
   const a = mei.ano;
   const nivel = NIVEIS[a.nivel];
-  const classeFaixa = nivel.classe === "st-erro" ? "erro" : nivel.classe === "st-alerta" ? "alerta" : "ok";
+  const classeFaixa = a.conferirFontes ? "alerta" : nivel.classe === "st-erro" ? "erro" : nivel.classe === "st-alerta" ? "alerta" : "ok";
   const consultado = mei.meses.map((m) => m.consultado_em).filter(Boolean).sort().at(-1);
   const docs = new Map<string, { entradas: number; saidas: number; qtdE: number; qtdS: number }>();
   for (const m of mei.meses) for (const i of m.itens ?? []) {
@@ -45,10 +46,11 @@ export default async function PainelMei({ params, searchParams }: {
         <div>
           <h1>{mei.nome || "MEI"}</h1>
           <p className="suave">
-            IE {formatarIe(mei.ie)}
+            {mei.cnpj ? `CNPJ ${formatarDocumento(mei.cnpj)}` : `IE ${formatarIe(mei.ie)}`}
             {a.inicio && ` · início da atividade em ${dataBR(a.inicio)}`}
             {a.simei && " · optante pelo SIMEI"}
-            {consultado && ` · ATF consultado em ${dataHoraBR(consultado)}`}
+            {consultado && ` · dados atualizados em ${dataHoraBR(consultado)}`}
+            {mei.cadastro && ` · MEI desde ${competenciaBR(mei.cadastro.inicio_mei)}${mei.cadastro.fim_mei ? ` até ${competenciaBR(mei.cadastro.fim_mei)}` : ""}`}
           </p>
         </div>
         <div className="acoes-cabeca">
@@ -63,18 +65,29 @@ export default async function PainelMei({ params, searchParams }: {
         </div>
       </div>
 
+      {a.conferirFontes && <p className="faixa alerta">Há resumo antigo do ATF sem os tipos de documento.
+        Até reprocessar o Dossiê MEI, usamos o maior valor entre esse resumo e as NFS-e, sem presumir que podem ser somados.
+        O total é provisório e os alertas automáticos ficam suspensos para evitar duplicidade.</p>}
+
+      {gerencia && <section className="cartao">
+        <h2 className="titulo-cartao">Atualizar faturamento</h2>
+        <FormReprocessar org={mei.org} documento={mei.ie} competencia={`${ano}-${String(Math.max(a.ultimo, a.primeiroMes) + 1).padStart(2, "0")}`} />
+        <Link href="/painel/empresas#cadastro-mei" className="link-discreto">Editar enquadramento MEI</Link>
+      </section>}
+
       <div className={`faixa ${classeFaixa} faixa-mei`}>
-        <span className={`status ${nivel.classe}`}><span aria-hidden="true">{nivel.sinal}</span> {nivel.nome}</span>
-        <span>{explicacao(a)}</span>
+        <span className={`status ${a.conferirFontes ? "st-alerta" : nivel.classe}`}><span aria-hidden="true">{nivel.sinal}</span> {a.conferirFontes ? "Conferir fontes" : nivel.nome}</span>
+        <span>{a.conferirFontes ? "Total provisório: reprocese o Dossiê MEI para conferir a composição do faturamento." : explicacao(a)}</span>
       </div>
 
       <div className="mei-topo">
         <section className="cartao mei-barras">
           <h2 className="titulo-cartao">Uso do limite no ano</h2>
+          {a.compras.nivel === "sem_dados" && <p className="suave">Compras: sem consulta ao ATF ou lançamento manual no período. NFS-e recebidas não são incluídas como compras.</p>}
           <BarraLimite titulo="Faturamento" medida={a.faturamento} serie="fat"
             detalhe={a.decorridos ? `Projeção para dezembro: ${reais(a.faturamento.projecao, 0)} (${pct(a.faturamento.projecao / a.faturamento.limite)} do limite).` : undefined} />
           <BarraLimite titulo="Compras" medida={a.compras} serie="comp"
-            detalhe={a.decorridos ? `Projeção para dezembro: ${reais(a.compras.projecao, 0)} (${pct(a.compras.projecao / a.compras.limite)} do limite).` : undefined} />
+            detalhe={a.decorridos && a.compras.nivel !== "sem_dados" ? `Projeção para dezembro: ${reais(a.compras.projecao, 0)} (${pct(a.compras.projecao / a.compras.limite)} do limite).` : undefined} />
           <p className="suave legenda-barra"><i className="esperado" /> média esperada até o último mês consultado
             {mei.meses.some((m) => m.origem === "execucao") && " · alguns meses vieram só do resumo da execução (sem detalhe por documento)"}</p>
         </section>
@@ -82,6 +95,7 @@ export default async function PainelMei({ params, searchParams }: {
           <h2 className="titulo-cartao">No ano</h2>
           <dl>
             <dt>Notas de saída</dt><dd>{reais(a.notas)}</dd>
+            <dt>NFS-e emitidas</dt><dd>{reais(a.nfse)}</dd>
             <dt>Vendas no cartão</dt><dd>{reais(a.cartao)}</dd>
             <dt>Receitas manuais</dt><dd>{reais(a.receitaManual)}</dd>
             <dt>Notas de entrada</dt><dd>{reais(a.entradas)}</dd>
@@ -106,15 +120,16 @@ export default async function PainelMei({ params, searchParams }: {
             <div className="tabela-rolagem">
               <table className="tabela-mei">
                 <thead>
-                  <tr><th>Mês</th><th>Notas de saída</th><th>Cartão</th><th>Receita manual</th><th>Faturamento</th><th>Acumulado</th>
+                  <tr><th>Mês / fontes</th><th>Notas de saída ATF</th><th>NFS-e emitidas</th><th>Cartão</th><th>Receita manual</th><th>Faturamento</th><th>Acumulado</th>
                     <th>Notas de entrada</th><th>Compra manual</th><th>Compras</th><th>Acumulado</th></tr>
                 </thead>
                 <tbody>
                   {mesesVisiveis.map((m) => (
                     <tr key={m.mes}>
                       <td>{MESES[m.mes]}{m.semMovimento && <span className="status st-neutro" style={{ marginLeft: 6 }}>sem movimento</span>}
-                        {!m.consultado && <span className="status st-neutro" style={{ marginLeft: 6 }}>não consultado</span>}</td>
-                      <td>{reais(m.notas)}</td><td>{reais(m.cartao)}</td><td>{m.receitaManual ? reais(m.receitaManual) : "—"}</td>
+                        {!m.consultado && <span className="status st-neutro" style={{ marginLeft: 6 }}>não consultado</span>}
+                        <small className="suave">{m.consultadoAtf ? " · ATF consultado" : " · ATF sem consulta"}{m.consultadoNfse ? " · NFS-e consultada" : " · NFS-e sem consulta"}</small></td>
+                      <td>{m.consultadoAtf ? reais(m.notas) : "—"}</td><td>{m.consultadoNfse ? reais(m.nfse) : "—"}</td><td>{reais(m.cartao)}</td><td>{m.receitaManual ? reais(m.receitaManual) : "—"}</td>
                       <td className={m.acimaFaturamento ? "valor-acima" : ""}><b>{reais(m.faturamento)}</b></td><td>{reais(m.faturamentoAcum)}</td>
                       <td>{reais(m.entradas)}</td><td>{m.compraManual ? reais(m.compraManual) : "—"}</td>
                       <td className={m.acimaCompras ? "valor-acima" : ""}><b>{reais(m.compras)}</b></td><td>{reais(m.comprasAcum)}</td>
@@ -145,7 +160,7 @@ export default async function PainelMei({ params, searchParams }: {
       <section className="cartao">
         <h2 className="titulo-cartao">Lançamentos manuais</h2>
         <p className="suave">
-          Para o que o ATF não mostra: vendas sem nota para pessoa física, serviços sem NFS-e, compras em outro estado.
+          Para receitas e compras que não aparecem nas consultas: vendas sem nota para pessoa física, serviços sem NFS-e, compras em outro estado.
           Use valor negativo para corrigir para menos. Entram no faturamento ou nas compras do mês.
         </p>
         <FormAjuste org={mei.org} ie={mei.ie} ano={ano} mesPadrao={Math.max(a.ultimo, a.primeiroMes)} />

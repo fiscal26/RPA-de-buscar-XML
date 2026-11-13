@@ -29,7 +29,7 @@ export async function carregarNotificacoes(supabase: SupabaseClient, admin: bool
       .select("id, agendamento_id, ie, nome, status, mensagem, tipos, detalhes, concluido_em, xml_empresas(xml_acessos(login))")
       .order("criado_em", { ascending: false }).limit(5000),
     supabase.from("xml_nfse_certificados").select("id, nome, cnpj, validade"),
-    carregarMeis(supabase, ano).then((r) => r.meis).catch(() => []),
+    carregarMeis(supabase, ano).then((r) => r.erros.length ? [] : r.meis).catch(() => []),
     admin ? supabase.from("xml_robos").select("id, ultimo_sinal").order("ultimo_sinal", { ascending: false }).limit(1).then((r) => r.data ?? [])
           : Promise.resolve([] as { id: string; ultimo_sinal: string }[]),
     supabase.from("xml_nfe_monitor").select("id, org_id, cnpj, nome, status, mensagem, ultima_consulta").eq("ativo", true),
@@ -45,6 +45,12 @@ export async function carregarNotificacoes(supabase: SupabaseClient, admin: bool
   }
 
   for (const m of meis) {
+    if (m.ano.conferirFontes) {
+      lista.push({ id: `mei-fontes:${m.org}:${m.ie}:${ano}`, tipo: "mei", gravidade: "alerta", titulo: `Conferir fontes de ${m.nome}`,
+        texto: "O resumo antigo do ATF precisa ser reprocessado antes de somar as NFS-e. O total mostrado é provisório.",
+        link: `/painel/mei/${m.ie}?ano=${ano}&org=${m.org}`, quando: null });
+      continue;
+    }
     for (const medida of ["faturamento", "compras"] as const) {
       const d = m.ano[medida];
       if (!["excedeu20", "excedeu", "atencao", "ritmo"].includes(d.nivel)) continue;
