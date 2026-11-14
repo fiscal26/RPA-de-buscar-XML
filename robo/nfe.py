@@ -188,6 +188,15 @@ def ler_evento(xml: bytes) -> tuple[str, str]:
 
 
 # ====================================================================== assinatura (XMLDSig do evento)
+def _c14n(elemento) -> bytes:
+    """C14N inclusivo de um elemento como o verificador da SEFAZ calcula. O elemento é copiado para um documento
+    próprio (com os namespaces que ele usa) antes de canonicalizar: a libxml2 errava o C14N de um trecho dentro de
+    outro documento quando o namespace padrão muda no meio (o evento é da NF-e e a assinatura do XMLDSig) e
+    punha xmlns="" em <Transforms>; a SEFAZ calculava outro texto e recusava com 297 (Assinatura difere do calculado)."""
+    from lxml import etree
+    return etree.tostring(etree.fromstring(etree.tostring(elemento)), method="c14n")
+
+
 def assinar(evento_xml: bytes, chave_privada, certificado) -> bytes:
     """Assina o infEvento como o manual da NF-e pede: enveloped, C14N, RSA-SHA1, com o certificado em KeyInfo."""
     from cryptography.hazmat.primitives import hashes
@@ -199,7 +208,7 @@ def assinar(evento_xml: bytes, chave_privada, certificado) -> bytes:
     inf = raiz.find(f"{{{NS}}}infEvento")
     if inf is None:
         raise ErroSefaz("evento sem infEvento")
-    digest = base64.b64encode(hashlib.sha1(etree.tostring(inf, method="c14n")).digest()).decode()
+    digest = base64.b64encode(hashlib.sha1(_c14n(inf)).digest()).decode()
     c14n = "http://www.w3.org/TR/2001/REC-xml-c14n-20010315"
     assinatura = etree.SubElement(raiz, f"{{{_DSIG}}}Signature", nsmap={None: _DSIG})
     info = etree.SubElement(assinatura, f"{{{_DSIG}}}SignedInfo")
@@ -211,7 +220,7 @@ def assinar(evento_xml: bytes, chave_privada, certificado) -> bytes:
     etree.SubElement(trans, f"{{{_DSIG}}}Transform", Algorithm=c14n)
     etree.SubElement(ref, f"{{{_DSIG}}}DigestMethod", Algorithm=f"{_DSIG}sha1")
     etree.SubElement(ref, f"{{{_DSIG}}}DigestValue").text = digest
-    valor = chave_privada.sign(etree.tostring(info, method="c14n"), padding.PKCS1v15(), hashes.SHA1())
+    valor = chave_privada.sign(_c14n(info), padding.PKCS1v15(), hashes.SHA1())
     etree.SubElement(assinatura, f"{{{_DSIG}}}SignatureValue").text = base64.b64encode(valor).decode()
     x509 = etree.SubElement(etree.SubElement(etree.SubElement(assinatura, f"{{{_DSIG}}}KeyInfo"), f"{{{_DSIG}}}X509Data"),
                             f"{{{_DSIG}}}X509Certificate")
