@@ -1,3 +1,4 @@
+import Tabela from "@/components/ui/Tabela";
 import Link from "next/link";
 import Icone from "@/components/Icones";
 import { contexto } from "@/lib/sessao";
@@ -138,10 +139,11 @@ export default async function Inicio() {
         {ags.length === 0 ? (
           <p className="suave">Quando o primeiro agendamento rodar, o resultado de cada execução aparecerá aqui.</p>
         ) : (
-          <div className="tabela-rolagem">
+          <Tabela rotulo="Agendamentos recentes">
             <table>
+              <caption className="sr">Agendamentos recentes</caption>
               <thead>
-                <tr><th>Competência</th><th>Origem</th><th>Agendado em</th><th>Empresas</th><th>Tarefas realizadas</th><th>Empresas em dia</th><th>Taxa</th><th>Sua ação</th></tr>
+                <tr><th scope="col">Competência</th><th scope="col">Origem</th><th scope="col">Agendado em</th><th scope="col">Empresas</th><th scope="col">Tarefas realizadas</th><th scope="col">Empresas em dia</th><th scope="col">Taxa</th><th scope="col">Sua ação</th></tr>
               </thead>
               <tbody>
                 {r.execucoes.slice(0, 10).map((e) => (
@@ -158,7 +160,7 @@ export default async function Inicio() {
                 ))}
               </tbody>
             </table>
-          </div>
+          </Tabela>
         )}
       </section>
     </>

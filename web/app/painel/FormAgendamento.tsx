@@ -1,5 +1,7 @@
 "use client";
 
+import Tabela from "@/components/ui/Tabela";
+
 import Escolha from "@/components/ui/Escolha";
 import Segmentado from "@/components/ui/Segmentado";
 import SeletorArquivo from "@/components/ui/SeletorArquivo";
@@ -96,9 +98,10 @@ export default function FormAgendamento({ organizacoes, competencia }: { organiz
           )}
           <details>
             <summary>Ver empresas</summary>
-            <div className="tabela-rolagem">
+            <Tabela rotulo="Prévia das empresas SEFAZ">
               <table>
-                <thead><tr><th>Linha</th><th>ID</th><th>Nome fantasia</th><th>Inscrição estadual</th><th>Login</th><th>Serviços</th></tr></thead>
+                <caption className="sr">Prévia das empresas SEFAZ</caption>
+                <thead><tr><th scope="col">Linha</th><th scope="col">ID</th><th scope="col">Nome fantasia</th><th scope="col">Inscrição estadual</th><th scope="col">Login</th><th scope="col">Serviços</th></tr></thead>
                 <tbody>
                   {previa.itens.map((i) => (
                     <tr key={i.ie}>
@@ -108,7 +111,7 @@ export default function FormAgendamento({ organizacoes, competencia }: { organiz
                   ))}
                 </tbody>
               </table>
-            </div>
+            </Tabela>
           </details>
           {resultado?.erro && <div className="faixa erro" style={{ marginTop: "1rem" }}>{resultado.erro}</div>}
           <p><button onClick={confirmar} disabled={enviando}>{enviando ? "Agendando…" : "Confirmar agendamento"}</button></p>

@@ -1,3 +1,4 @@
+import Tabela from "@/components/ui/Tabela";
 import Link from "next/link";
 import { contexto } from "@/lib/sessao";
 import { dataBR, formatarDocumento } from "@/lib/documentos";
@@ -46,10 +47,11 @@ export default async function Certificados() {
         {!certificados.length ? (
           <p className="suave">Nenhum certificado enviado ainda. Envie o primeiro no formulário acima.</p>
         ) : (
-          <div className="tabela-rolagem">
+          <Tabela rotulo="Certificados guardados">
             <table>
+              <caption className="sr">Certificados guardados</caption>
               <thead>
-                <tr>{admin && <th>Organização</th>}<th>Titular</th><th>CNPJ/CPF</th><th>Uso</th><th>Validade</th><th>Situação</th><th>Enviado em</th><th></th></tr>
+                <tr>{admin && <th scope="col">Organização</th>}<th scope="col">Titular</th><th scope="col">CNPJ/CPF</th><th scope="col">Uso</th><th scope="col">Validade</th><th scope="col">Situação</th><th scope="col">Enviado em</th><th scope="col"><span className="sr">Ações</span></th></tr>
               </thead>
               <tbody>
                 {certificados.map((x) => {
@@ -74,7 +76,7 @@ export default async function Certificados() {
                 })}
               </tbody>
             </table>
-          </div>
+          </Tabela>
         )}
       </section>
     </>

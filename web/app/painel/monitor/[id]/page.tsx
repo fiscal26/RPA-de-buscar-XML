@@ -1,3 +1,4 @@
+import Tabela from "@/components/ui/Tabela";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { contexto } from "@/lib/sessao";
@@ -73,10 +74,11 @@ export default async function HistoricoMonitor({ params, searchParams }: {
         {!notas.length ? (
           <p className="suave">Nenhuma nota encontrada{mes ? " neste mês" : " ainda"}.</p>
         ) : (
-          <div className="tabela-rolagem">
+          <Tabela rotulo="Notas fiscais encontradas">
             <table>
+              <caption className="sr">Notas fiscais encontradas</caption>
               <thead>
-                <tr><th>Emissão</th><th>Número</th><th>Emitente</th><th>UF</th><th>Valor</th><th>Situação</th><th>Arquivos</th><th>Pasta</th><th>Chave de acesso</th></tr>
+                <tr><th scope="col">Emissão</th><th scope="col">Número</th><th scope="col">Emitente</th><th scope="col">UF</th><th scope="col">Valor</th><th scope="col">Situação</th><th scope="col">Arquivos</th><th scope="col">Pasta</th><th scope="col">Chave de acesso</th></tr>
               </thead>
               <tbody>
                 {notas.map((x) => {
@@ -104,7 +106,7 @@ export default async function HistoricoMonitor({ params, searchParams }: {
                 })}
               </tbody>
             </table>
-          </div>
+          </Tabela>
         )}
       </section>
     </>

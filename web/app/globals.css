@@ -392,6 +392,52 @@ tbody tr { transition: background-color 0.12s; }
 tbody tr:hover { background: var(--papel); }
 .tabela-rolagem { overflow-x: auto; }
 
+/* Listagens do painel: o mesmo acabamento em todas as tabelas operacionais. */
+.tabela-painel {
+  max-width: 100%;
+  border: 1px solid var(--linha);
+  border-radius: 12px;
+  background: var(--superficie);
+  isolation: isolate;
+  scrollbar-color: var(--linha) var(--superficie);
+}
+.tabela-painel:focus-visible {
+  outline: 3px solid var(--marca-texto);
+  outline-offset: 3px;
+}
+.tabela-painel table { border-collapse: separate; border-spacing: 0; }
+.tabela-painel caption { text-align: left; }
+.tabela-painel th {
+  padding: 0.8rem 1rem;
+  background: var(--carbono);
+  color: var(--suave);
+  font-size: 0.78rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.tabela-painel td {
+  padding: 1rem;
+  vertical-align: middle;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.tabela-painel.grade-tarefas th:first-child { background: var(--carbono); }
+.tabela-painel tbody tr:last-child > * { border-bottom: 0; }
+.tabela-painel tbody tr:focus-within { background: var(--papel); }
+.tabela-painel .status { border-radius: 5px; font-size: 0.76rem; }
+.tabela-painel td:last-child .acoes-icone { flex-wrap: nowrap; }
+.tabela-painel :is(a, button, summary):focus-visible {
+  outline: 3px solid var(--marca-texto);
+  outline-offset: 2px;
+}
+@media (max-width: 700px) {
+  .tabela-painel th, .tabela-painel td { padding: 0.75rem; }
+  .tabela-painel td { min-width: 7rem; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tabela-painel tbody tr { transition: none; }
+}
+
 /* Empresas: filtros compactos e uma lista que cabe na área disponível. */
 .empresas-cabecalho { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1.5rem; }
 .empresas-cabecalho h1 { margin: 0 0 0.35rem; text-wrap: balance; }
@@ -698,11 +744,12 @@ input[type="file"]::file-selector-button:hover { background: var(--carbono); }
 .legenda-barra i.esperado { display: inline-block; width: 2px; height: 12px; background: var(--forte); }
 
 /* ranking da carteira: todas as linhas na mesma escala */
-.ranking { display: flex; flex-direction: column; }
+.ranking { display: flex; flex-direction: column; border: 1px solid var(--linha); border-radius: 12px; background: var(--superficie); }
 .ranking-linha { display: grid; grid-template-columns: 28px minmax(150px, 1.1fr) minmax(200px, 2.4fr) 120px 120px 170px; gap: 0 1rem;
-  align-items: center; padding: 0.7rem 0.5rem; margin: 0 -0.5rem; border-top: 1px solid var(--linha); color: inherit; text-decoration: none; border-radius: var(--raio); }
+  align-items: center; padding: 1rem; margin: 0; border-top: 1px solid var(--linha); color: inherit; text-decoration: none; border-radius: 0; }
+a.ranking-linha:focus-visible { outline: 3px solid var(--marca-texto); outline-offset: -3px; }
 a.ranking-linha:hover { background: var(--carbono); }
-.ranking-cabeca { border-top: 0; font-size: 0.78rem; font-weight: 600; color: var(--suave); padding-bottom: 0.4rem; }
+.ranking-cabeca { border-top: 0; font-size: 0.78rem; font-weight: 600; color: var(--suave); padding: 0.8rem 1rem; background: var(--carbono); border-radius: 11px 11px 0 0; }
 .ranking-pos { font-family: var(--fonte-mono, monospace); font-size: 0.85rem; color: var(--suave); text-align: right; }
 .ranking-nome { display: flex; flex-direction: column; min-width: 0; }
 .ranking-nome b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -721,7 +768,7 @@ a.ranking-linha:hover { background: var(--carbono); }
 .ranking .num { display: flex; flex-direction: column; text-align: right; font-variant-numeric: tabular-nums; }
 .ranking .num .suave { font-size: 0.76rem; }
 .ranking .num b { color: var(--forte); }
-.ranking-legenda { display: flex; flex-wrap: wrap; gap: 0.3rem 1.2rem; font-size: 0.78rem; padding-top: 0.8rem; border-top: 1px solid var(--linha); }
+.ranking-legenda { display: flex; flex-wrap: wrap; gap: 0.3rem 1.2rem; font-size: 0.78rem; padding: 0.8rem 1rem; border-top: 1px solid var(--linha); }
 .ranking-ref-leg { display: inline-block; width: 0; height: 12px; vertical-align: -2px; margin-right: 0.2rem; }
 @container painel (max-width: 980px) {
   .ranking-linha { grid-template-columns: 24px minmax(0, 1fr) 110px 110px; grid-template-areas: "pos nome fat comp" ". barras barras barras" ". sit sit sit"; row-gap: 0.4rem; }
