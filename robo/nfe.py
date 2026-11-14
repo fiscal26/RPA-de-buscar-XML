@@ -284,9 +284,11 @@ class ClienteNfe:
                  f'<envEvento xmlns="{NS}" versao="1.00"><idLote>{int(time.time())}</idLote>{eventos}</envEvento></nfeDadosMsg>')
         raiz = ET.fromstring(self._post(EVENTO[self.ambiente], _ACAO_EVENTO, corpo))
         saida = {}
+        self.motivos_ciencia = {}
         for ret in raiz.iter():
             if _local(ret.tag) == "retEvento":
                 saida[_txt(ret, "chNFe")] = _txt(ret, "cStat")
+                self.motivos_ciencia[_txt(ret, "chNFe")] = _txt(ret, "xMotivo")
         if not saida:
             lote = _achar(raiz, "retEnvEvento")
             raise ErroSefaz("manifestação não aceita: " + (f"{_txt(lote, 'cStat')} {_txt(lote, 'xMotivo')}" if lote is not None
@@ -388,6 +390,11 @@ def salvar_evento(destino, nome: str, cnpj: str, codigo: str, chave: str, tipo: 
 
 
 # ====================================================================== monitoramento de uma empresa
+# retornos da Ciência da Operação que deixam o XML completo liberado: 135/136 registrado, 573 já registrado antes,
+# 655 a empresa já tinha feito a manifestação final (confirmação) por outro sistema
+CIENCIA_ACEITA = ("135", "136", "573", "655")
+
+
 @dataclass
 class ResultadoMonitor:
     notas: dict[str, Nota] = field(default_factory=dict)
@@ -432,6 +439,10 @@ def monitorar(cliente: ClienteNfe, ult_nsu: int, destino, nome: str, codigo: str
     a_manifestar = [c for c, n in resumos.items() if n.situacao == "autorizada"]
     a_manifestar += [p["chave"] for p in pendentes if not p.get("manifestada") and p["chave"] not in resumos]
     ja_manifestadas = [p["chave"] for p in pendentes if p.get("manifestada")]
+    recusadas: dict[str, str] = {}
+    if not ciencia and a_manifestar:
+        res.aviso = (f"ciência automática desligada: {len(a_manifestar)} nota(s) ficam só no resumo "
+                     "(ligue a ciência no histórico da empresa para baixar o XML)")
     if ciencia and a_manifestar:
         for i in range(0, len(a_manifestar), 20):
             lote = a_manifestar[i:i + 20]
@@ -440,11 +451,17 @@ def monitorar(cliente: ClienteNfe, ult_nsu: int, destino, nome: str, codigo: str
             except ErroSefaz as e:
                 res.aviso = f"ciência da operação não registrada: {e}"
                 break
+            motivos = getattr(cliente, "motivos_ciencia", {}) or {}
             for chave, cstat in retorno.items():
-                if cstat in ("135", "136", "573"):
+                if cstat in CIENCIA_ACEITA:
                     res.nota(chave).manifestada = True
                     res.manifestadas += 1
                     ja_manifestadas.append(chave)
+                else:  # a SEFAZ recusou: o motivo vai para a mensagem do Monitor (antes ficava em silêncio)
+                    recusadas[chave] = f"{cstat} {motivos.get(chave, '')}".strip()
+        if recusadas:
+            exemplo = next(iter(recusadas.values()))
+            res.aviso = res.aviso or f"ciência recusada pela SEFAZ em {len(recusadas)} nota(s): {exemplo}"
         if res.manifestadas:
             cliente.dormir(3)  # o XML completo fica disponível logo depois da ciência
     for chave in ja_manifestadas[:max_por_chave]:
@@ -460,7 +477,9 @@ def monitorar(cliente: ClienteNfe, ult_nsu: int, destino, nome: str, codigo: str
             break
         for doc in r.documentos:
             _guardar_documento(doc, res, resumos, destino, nome, cnpj, codigo, pdf)
-    res.resumos = sum(1 for n in res.notas.values() if not n.completa and n.situacao == "autorizada")
+    sem_xml = {c for c, n in res.notas.items() if not n.completa and n.situacao == "autorizada"}
+    sem_xml |= {p["chave"] for p in pendentes if not (res.notas.get(p["chave"]) and res.notas[p["chave"]].completa)}
+    res.resumos = len(sem_xml)
     # ciência registrada agora e o XML ainda não liberado: a SEFAZ costuma soltar em minutos; tenta de novo em 1 hora
     # (só depois de uma ciência nova, para não ficar consultando de hora em hora uma nota que não sai)
     if res.manifestadas and any(not n.completa for n in res.notas.values() if n.manifestada) and not res.espera_minutos:

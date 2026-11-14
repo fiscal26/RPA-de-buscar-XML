@@ -31,7 +31,8 @@ class AmbienteFalso:
         self.pedidos.append((url, corpo))
         if "RecepcaoEvento" in url:
             self.eventos.append(data)
-            rets = "".join(f"<retEvento versao=\"1.00\"><infEvento><cStat>{self.ciencia_cstat}</cStat><chNFe>{c}</chNFe>"
+            rets = "".join(f"<retEvento versao=\"1.00\"><infEvento><cStat>{self.ciencia_cstat}</cStat>"
+                           f"<xMotivo>Motivo {self.ciencia_cstat}</xMotivo><chNFe>{c}</chNFe>"
                            "</infEvento></retEvento>" for c in re.findall(r"<chNFe>(\d{44})</chNFe>", corpo))
             return Resposta(f'<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"><s:Body><retEnvEvento '
                             f'xmlns="{nfe.NS}"><cStat>128</cStat>{rets}</retEnvEvento></s:Body></s:Envelope>'.encode())
@@ -269,3 +270,29 @@ def test_xml_que_nao_saiu_logo_depois_da_ciencia_volta_em_uma_hora(tmp_path, cer
     amb2 = AmbienteFalso({})
     r2 = nfe.monitorar(_cliente(amb2, pfx), 1, tmp_path, "Padaria", "15", pendentes=[{"chave": chave(2), "manifestada": True}])
     assert r2.espera_minutos == 0 and not amb2.eventos
+
+
+def test_ciencia_recusada_aparece_na_mensagem(tmp_path, certificado):
+    """Resumos antigos com a ciência recusada pela SEFAZ: o motivo aparece, e as notas contam como sem XML."""
+    pfx, _, _ = certificado
+    amb = AmbienteFalso({}, ciencia_cstat="999")
+    r = nfe.monitorar(_cliente(amb, pfx), 40, tmp_path, "Padaria", pendentes=[
+        {"chave": chave(5), "manifestada": False}, {"chave": chave(6), "manifestada": False}])
+    assert len(amb.eventos) == 1 and r.manifestadas == 0
+    assert "recusada" in r.aviso and "2 nota(s)" in r.aviso and "999 Motivo 999" in r.aviso
+    assert r.resumos == 2
+
+
+def test_manifestacao_final_anterior_libera_o_xml(tmp_path, certificado):
+    """655: a empresa já confirmou a operação por outro sistema; o robô busca o XML pela chave mesmo assim."""
+    pfx, _, _ = certificado
+    amb = AmbienteFalso({}, por_chave={chave(5): proc_nfe(5)}, ciencia_cstat="655")
+    r = nfe.monitorar(_cliente(amb, pfx), 40, tmp_path, "Padaria", pendentes=[{"chave": chave(5), "manifestada": False}])
+    assert r.notas[chave(5)].completa and not r.aviso and r.resumos == 0
+
+
+def test_ciencia_desligada_avisa_os_resumos_antigos(tmp_path):
+    amb = AmbienteFalso({})
+    r = nfe.monitorar(_cliente(amb), 40, tmp_path, "Padaria", ciencia=False,
+                      pendentes=[{"chave": chave(5), "manifestada": False}])
+    assert not amb.eventos and "desligada" in r.aviso and r.resumos == 1
