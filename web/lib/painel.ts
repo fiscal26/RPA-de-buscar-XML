@@ -2,6 +2,7 @@ import { SITUACOES_ABERTAS, expandirTipos, nomeTipo, situacaoTarefa } from "@/li
 
 /** Uma empresa num agendamento (linha de xml_tarefas), com o login do ATF dela. */
 export type TarefaPainel = {
+  empresaChave?: string; origem?: string;
   id: string; agendamento_id: string; ie: string; nome: string; status: string; mensagem: string; tipos: string[];
   detalhes: Record<string, { situacao?: string; mensagem?: string }>; concluido_em: string | null;
   xml_empresas?: { xml_acessos?: { login: string } | null } | null;
@@ -69,25 +70,31 @@ export function resumoPainel(tarefas: TarefaPainel[], agendamentos: AgendamentoP
     }
     if (t.status === "senha_invalida" || t.status === "fora_do_ar" || t.status === "certificado") erroDaEmpresa = true;
     if (g && t.status !== "cancelado") {
-      g.empresas.add(t.ie);
-      if (!erroDaEmpresa && !abertaDaEmpresa) g.ok.add(t.ie);
+      g.empresas.add(t.empresaChave ?? t.ie);
+      if (!erroDaEmpresa && !abertaDaEmpresa) g.ok.add(t.empresaChave ?? t.ie);
       if (acaoDe(t)) g.acoes++;
     }
-    const atual = ultima.get(t.ie);
-    if (t.status !== "cancelado" && (!atual || (ordem.get(t.agendamento_id) ?? 99) < (ordem.get(atual.agendamento_id) ?? 99))) ultima.set(t.ie, t);
+    const identidade = JSON.stringify([t.empresaChave ?? t.ie, t.origem ?? agendamentos.find((a) => a.id === t.agendamento_id)?.origem ?? "sefaz"]);
+    const atual = ultima.get(identidade);
+    if (t.status !== "cancelado" && (!atual || (ordem.get(t.agendamento_id) ?? 99) < (ordem.get(atual.agendamento_id) ?? 99))) ultima.set(identidade, t);
   }
   const acoes: Acao[] = [];
-  let empresasOk = 0, processadas = 0;
+  const processadas = new Set<string>();
+  const comPendencia = new Set<string>();
   for (const t of ultima.values()) {
-    if (t.status === "pendente" || t.status === "processando") continue;
-    processadas++;
+    const chave = t.empresaChave ?? t.ie;
+    if (t.status === "pendente" || t.status === "processando") { comPendencia.add(chave); continue; }
+    processadas.add(chave);
     const a = acaoDe(t);
-    if (a) acoes.push({ ie: t.ie, nome: t.nome, quando: t.concluido_em, ...a });
-    else empresasOk++;
+    if (a) {
+      comPendencia.add(chave);
+      acoes.push({ ie: t.ie, nome: t.nome, quando: t.concluido_em, ...a });
+    }
   }
+  const empresasOk = [...processadas].filter((chave) => !comPendencia.has(chave)).length;
   const finalizadas = realizadas + erros;
   return {
-    empresasProcessadas: processadas, empresasOk, acoes,
+    empresasProcessadas: processadas.size, empresasOk, acoes,
     agendamentos: agendamentos.length, realizadas, erros, abertas,
     taxa: finalizadas ? Math.round((realizadas / finalizadas) * 100) : null,
     execucoes: agendamentos.map((a) => {

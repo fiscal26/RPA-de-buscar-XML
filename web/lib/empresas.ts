@@ -8,12 +8,17 @@ export type LinhaEmpresa = {
 
 export type EmpresaAgrupada = LinhaEmpresa & { chave: string; cadastros: LinhaEmpresa[] };
 
+export function chaveEmpresa(linha: { org_id: string; cnpj: string; id: string; origem: string }) {
+  const documento = linha.cnpj.replace(/\D/g, "");
+  return JSON.stringify([linha.org_id, documento || `${linha.origem}:${linha.id}`]);
+}
+
 export function agruparEmpresas(linhas: LinhaEmpresa[]): EmpresaAgrupada[] {
   const grupos = new Map<string, EmpresaAgrupada>();
   for (const linha of linhas) {
     const documento = linha.cnpj.replace(/\D/g, "");
     // Cadastros sem documento continuam independentes.
-    const chave = JSON.stringify([linha.org_id, documento || `${linha.origem}:${linha.id}`]);
+    const chave = chaveEmpresa(linha);
     const grupo = grupos.get(chave);
     if (grupo) {
       grupo.cadastros.push(linha);
