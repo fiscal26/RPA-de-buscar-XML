@@ -248,3 +248,32 @@ def test_pasta_por_escritorio_e_historico_mei_dentro_dela(tmp_path):
             {"empresa": {"ie": "16" + str(len(str(raiz))).zfill(7), "nome": "Joao"}, "meses": {"2026-01": {"saidas": 1}}}),
             encoding="utf-8")
     assert len(arquivos.historicos_mei(tmp_path)) == 2
+
+
+def test_pdf_de_cada_nota_do_atf(tmp_path):
+    """NF-e, NFC-e e CT-e baixados do ATF ganham o PDF (DANFE, DANFC-e, DACTE) em <tipo>/PDF/<chave>.pdf;
+    nota cancelada fica sem PDF; rodar de novo não refaz."""
+    import xml_completo as xc
+    cancelada = xc.chave("55", 2)
+    pacote = _zip({"1.xml": xc.nfe("55", 1), "2.xml": xc.nfe("55", 2),
+                   "c.xml": evento(EMPRESA, cancelada), "3.xml": xc.nfe("65", 3), "4.xml": xc.cte(4)})
+    r = arquivos.salvar_originais([("Dados.zip", pacote)], tmp_path, "joao", IE_EMPRESA, "nfe_saida", "2026-11", "5")
+    pdfs = Path(r["pasta"]) / arquivos.PASTA_PDF
+    assert r["pdfs"] == 3
+    assert {p.name for p in pdfs.iterdir()} == {f"{xc.chave('55', 1)}.pdf", f"{xc.chave('65', 3)}.pdf", f"{xc.chave('57', 4)}.pdf"}
+    assert all(p.read_bytes().startswith(b"%PDF") for p in pdfs.iterdir())
+    assert [p.name for p in Path(r["pasta"]).iterdir() if p.is_file()] == ["NF-e Saida 2026-11.zip"]  # o ZIP continua intacto
+    assert arquivos.salvar_originais([("Dados.zip", pacote)], tmp_path, "joao", IE_EMPRESA, "nfe_saida", "2026-11", "5")["pdfs"] == 0
+
+
+def test_sem_pdf_quando_desligado(tmp_path, monkeypatch):
+    import xml_completo as xc
+    monkeypatch.setattr(arquivos, "GERAR_PDF", False)
+    r = arquivos.salvar_originais([("a.xml", xc.nfe("55", 1))], tmp_path, "joao", IE_EMPRESA, "nfe_saida", "2026-11", "5")
+    assert r["pdfs"] == 0 and not (Path(r["pasta"]) / arquivos.PASTA_PDF).exists()
+
+
+def test_cte_com_nfe_transportada_continua_sendo_cte():
+    import xml_completo as xc
+    info = arquivos.ler_xml(xc.cte(4))
+    assert info and info.modelo == "57" and info.chave == xc.chave("57", 4) and info.valor == 80.0

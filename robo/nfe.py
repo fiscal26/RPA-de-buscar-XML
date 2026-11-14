@@ -350,16 +350,8 @@ def cadeia_icp_brasil(pasta: Path, dias: int = 30, baixar=None) -> Path | None:
 # ====================================================================== arquivos
 def danfe(xml: bytes) -> bytes | None:
     """DANFE em PDF a partir do XML (a SEFAZ não entrega o PDF). None se a biblioteca não estiver instalada."""
-    try:
-        from brazilfiscalreport.danfe import Danfe
-    except ImportError:
-        return None
-    try:
-        pdf = Danfe(xml=xml.decode("utf-8", errors="replace")).output()  # sem nome: devolve os bytes
-    except Exception as e:  # nota com algum campo que a biblioteca não conhece: fica só o XML
-        log.warning("   DANFE não gerado: %s", e)
-        return None
-    return bytes(pdf) if pdf else None
+    import pdf_fiscal
+    return pdf_fiscal.gerar(xml, "55")
 
 
 def _pasta_da_nota(destino, nome: str, cnpj: str, codigo: str, nota: Nota) -> Path:

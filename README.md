@@ -15,6 +15,7 @@ Chrome próprio (tela virtual :11, porta 9223), religa sozinho e manda os arquiv
     5-joao/                        (ID-NOME FANTASIA da planilha; sem ID, só o nome)
       2026-09/
         NF-e Saida - R$ 12.345,67/     NF-e Saida 2026-09.zip     (o ZIP do ATF, como veio)
+          PDF/                         <chave>.pdf de cada nota (DANFE, DANFC-e ou DACTE gerado do XML; também nos outros tipos)
         NF-e Entrada - R$ 8.900,00/    NF-e Entrada 2026-09.zip
         NFC-e - R$ 1.230,50/           NFC-e 2026-09.zip
         CT-e Remetente - R$ 400,00/    CT-e Remetente 2026-09.zip        (valor da prestação, sem os cancelados)

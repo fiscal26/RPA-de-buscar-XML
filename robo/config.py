@@ -94,6 +94,8 @@ PADRAO = {
         "por_escritorio": False,
         # Nome da pasta do mês: "MMAAAA" (102026, o caminho da importação automática da Domínio) ou "AAAA-MM"
         "formato_competencia": "MMAAAA",
+        # PDF de cada NF-e, NFC-e e CT-e baixado do ATF (DANFE/DANFC-e/DACTE gerado do XML), em <tipo>/PDF/
+        "pdf_das_notas": True,
     },
     "chaves": {
         # Chave privada que abre as senhas do ATF cifradas pelo portal (gerada com --gerar-chaves)
