@@ -1,3 +1,5 @@
+import AutoRefresh from "@/components/AutoRefresh";
+import { chaveEmpresa } from "@/lib/empresas";
 import Tabela from "@/components/ui/Tabela";
 import Link from "next/link";
 import Icone from "@/components/Icones";
@@ -11,21 +13,31 @@ const numero = (n: number) => n.toLocaleString("pt-BR");
 export default async function Inicio() {
   const { supabase, perfil, admin } = await contexto();
   const gerencia = admin || perfil.papel === "gestor";
-  const [{ data: agendamentos }, { data: tarefas }, { count: empresasSefaz }, { count: empresasNfse }, { data: robos }, { count: pessoas }] = await Promise.all([
+  const [{ data: agendamentos }, { data: tarefas }, { data: empresasSefaz }, { data: empresasNfse }, { data: robos }, { count: pessoas }] = await Promise.all([
     supabase.from("xml_agendamentos").select("id, competencia, criado_em, origem").order("criado_em", { ascending: false }).limit(50),
     supabase.from("xml_tarefas")
-      .select("id, agendamento_id, ie, nome, status, mensagem, tipos, detalhes, concluido_em, xml_empresas(xml_acessos(login))")
+      .select("id, org_id, agendamento_id, ie, nome, status, mensagem, tipos, detalhes, concluido_em, xml_empresas(xml_acessos(login))")
       .order("criado_em", { ascending: false }).limit(5000),
-    supabase.from("xml_empresas").select("id", { count: "exact", head: true }),
-    supabase.from("xml_nfse_empresas").select("id", { count: "exact", head: true }),
+    supabase.from("xml_empresas").select("id, org_id, cnpj, ie"),
+    supabase.from("xml_nfse_empresas").select("id, org_id, cnpj"),
     // o robô é da operação: só o administrador consulta e vê
     admin ? supabase.from("xml_robos").select("id, ultimo_sinal").order("ultimo_sinal", { ascending: false }).limit(1)
           : Promise.resolve({ data: [] as { id: string; ultimo_sinal: string }[] }),
     supabase.from("perfis").select("id", { count: "exact", head: true }),
   ]);
   const ags = (agendamentos ?? []) as AgendamentoPainel[];
-  const r = resumoPainel((tarefas ?? []) as unknown as TarefaPainel[], ags);
-  const empresas = (empresasSefaz ?? 0) + (empresasNfse ?? 0);
+  const cadastros = [
+    ...(empresasSefaz ?? []).map((x) => ({ ...x, origem: "sefaz" })),
+    ...(empresasNfse ?? []).map((x) => ({ ...x, ie: x.cnpj, origem: "nfse" })),
+  ];
+  const identidades = new Map(cadastros.map((x) => [JSON.stringify([x.org_id, x.origem, x.ie]), chaveEmpresa(x)]));
+  const origens = new Map(ags.map((a) => [a.id, a.origem ?? "sefaz"]));
+  const r = resumoPainel(((tarefas ?? []) as unknown as (TarefaPainel & { org_id: string })[]).map((t) => {
+    const origem = origens.get(t.agendamento_id) ?? (t.tipos.some((tipo) => tipo.startsWith("nfse")) ? "nfse" : "sefaz");
+    return { ...t, origem, empresaChave: identidades.get(JSON.stringify([t.org_id, origem, t.ie]))
+      ?? chaveEmpresa({ org_id: t.org_id, cnpj: origem === "nfse" ? t.ie : "", origem, id: t.ie }) };
+  }), ags);
+  const empresas = new Set(cadastros.map(chaveEmpresa)).size;
   const robo = robos?.[0];
 
   const passos = [
@@ -44,6 +56,7 @@ export default async function Inicio() {
 
   return (
     <>
+      <AutoRefresh ativo={r.abertas > 0} segundos={10} />
       <div className="cabeca-pagina">
         <div>
           <h1>Olá, {(perfil.nome || perfil.email).split(" ")[0]}</h1>
@@ -114,8 +127,8 @@ export default async function Inicio() {
         <AcoesRecolhidas total={acoes}>
           <p className="suave">Empresas cujos documentos só voltam a sair depois de um ajuste seu. Estes avisos também ficam no sino, no alto da tela.</p>
           <ul className="acoes-lista">
-            {r.acoes.map((a) => (
-              <li key={a.ie}>
+            {r.acoes.map((a, i) => (
+              <li key={`${a.ie}-${i}`}>
                 <span className="acao-sinal" aria-hidden="true">!</span>
                 <span className="acao-texto">
                   <b>{a.nome || "Empresa"}</b>
