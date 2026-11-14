@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { contexto } from "@/lib/sessao";
 import { dataBR, dataHoraBR, formatarDocumento } from "@/lib/documentos";
 import { SITUACAO_MONITOR, SITUACAO_NOTA, reaisMonitor } from "@/lib/monitor";
+import { alternarCiencia } from "../actions";
 
 type Nota = {
   chave: string; numero: string; serie: string; emitente_cnpj: string; emitente_nome: string; emitente_uf: string;
@@ -17,7 +18,8 @@ export default async function HistoricoMonitor({ params, searchParams }: {
 }) {
   const { id } = await params;
   const { mes } = await searchParams;
-  const { supabase } = await contexto();
+  const { supabase, perfil, admin } = await contexto();
+  const podeMudar = admin || perfil.papel === "gestor";
   const { data: m } = await supabase.from("xml_nfe_monitor")
     .select("id, org_id, cnpj, nome, codigo, status, mensagem, ultima_consulta, proxima_consulta, ciencia").eq("id", id).maybeSingle();
   if (!m) notFound();
@@ -44,6 +46,13 @@ export default async function HistoricoMonitor({ params, searchParams }: {
             {m.ultima_consulta && <> · última consulta {dataHoraBR(m.ultima_consulta)}</>} · próxima {dataHoraBR(m.proxima_consulta)}
           </p>
           {m.mensagem && <p className="suave">{m.mensagem}</p>}
+          <form action={alternarCiencia} className="suave">
+            <input type="hidden" name="id" value={m.id} />
+            <input type="hidden" name="ligar" value={m.ciencia ? "0" : "1"} />
+            Ciência da Operação automática: <strong>{m.ciencia ? "ligada" : "desligada"}</strong>
+            {!m.ciencia && <> · sem ela, o Ambiente Nacional entrega só o resumo das notas, sem o XML</>}
+            {podeMudar && <> · <button type="submit" className={m.ciencia ? "fantasma pequeno" : "secundario pequeno"}>{m.ciencia ? "Desligar" : "Ligar a ciência"}</button></>}
+          </form>
         </div>
       </div>
 
@@ -83,7 +92,8 @@ export default async function HistoricoMonitor({ params, searchParams }: {
                       <td>
                         {x.completa
                           ? <span className="status st-ok">XML{x.pdf ? " e PDF" : ""}</span>
-                          : <span className="status st-alerta" title={x.manifestada_em ? "Ciência registrada; o XML chega na próxima consulta" : "Só o resumo"}>
+                          : <span className="status st-alerta" title={x.manifestada_em ? "Ciência registrada; o XML chega na próxima consulta"
+                              : m.ciencia ? "A ciência ainda não foi aceita: veja a mensagem da última consulta" : "Ciência automática desligada"}>
                               {x.manifestada_em ? "Aguardando XML" : "Só resumo"}
                             </span>}
                       </td>

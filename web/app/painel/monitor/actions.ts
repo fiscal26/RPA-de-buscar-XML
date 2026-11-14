@@ -40,6 +40,20 @@ export async function removerMonitor(form: FormData) {
   revalidatePath("/painel/monitor");
 }
 
+/** Liga ou desliga a Ciência da Operação automática de uma empresa (só gestor ou administrador). Ao ligar, a
+ * consulta é antecipada para o robô registrar a ciência das notas que ficaram só no resumo. */
+export async function alternarCiencia(form: FormData) {
+  const { supabase, perfil, admin } = await contexto();
+  if (!admin && perfil.papel !== "gestor") return;
+  const id = String(form.get("id") ?? "");
+  const ligar = form.get("ligar") === "1";
+  const consulta = clienteAdmin().from("xml_nfe_monitor").update({ ciencia: ligar }).eq("id", id);
+  const { error } = await (admin ? consulta : consulta.eq("org_id", perfil.org_id ?? ""));
+  if (!error && ligar) await supabase.rpc("xml_nfe_consultar_agora", { p_id: id });
+  revalidatePath("/painel/monitor");
+  revalidatePath(`/painel/monitor/${id}`);
+}
+
 /** Antecipa a consulta (o banco respeita 1 hora desde a última, regra do Ambiente Nacional). */
 export async function consultarAgora(form: FormData) {
   const { supabase } = await contexto();

@@ -31,7 +31,8 @@ class AmbienteFalso:
         self.pedidos.append((url, corpo))
         if "RecepcaoEvento" in url:
             self.eventos.append(data)
-            rets = "".join(f"<retEvento versao=\"1.00\"><infEvento><cStat>{self.ciencia_cstat}</cStat><chNFe>{c}</chNFe>"
+            rets = "".join(f"<retEvento versao=\"1.00\"><infEvento><cStat>{self.ciencia_cstat}</cStat>"
+                           f"<xMotivo>Motivo {self.ciencia_cstat}</xMotivo><chNFe>{c}</chNFe>"
                            "</infEvento></retEvento>" for c in re.findall(r"<chNFe>(\d{44})</chNFe>", corpo))
             return Resposta(f'<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"><s:Body><retEnvEvento '
                             f'xmlns="{nfe.NS}"><cStat>128</cStat>{rets}</retEnvEvento></s:Body></s:Envelope>'.encode())
@@ -125,11 +126,12 @@ def test_assinatura_do_evento_confere(certificado):
     inf = raiz.find("n:infEvento", d)
     assert inf.get("Id") == f"ID210210{chave(2)}01" and inf.findtext("n:cOrgao", namespaces=d) == "91"
     assina = raiz.find("ds:Signature", d)
-    digest = base64.b64encode(hashlib.sha1(etree.tostring(inf, method="c14n")).digest()).decode()
+    digest = base64.b64encode(hashlib.sha1(nfe._c14n(inf)).digest()).decode()
+    assert b'xmlns=""' not in nfe._c14n(inf)
     assert assina.findtext(".//ds:DigestValue", namespaces=d) == digest
     assert assina.find(".//ds:Reference", d).get("URI") == "#" + inf.get("Id")
     cert.public_key().verify(base64.b64decode(assina.findtext("ds:SignatureValue", namespaces=d)),
-                             etree.tostring(assina.find("ds:SignedInfo", d), method="c14n"), padding.PKCS1v15(), hashes.SHA1())
+                             nfe._c14n(assina.find("ds:SignedInfo", d)), padding.PKCS1v15(), hashes.SHA1())
 
 
 def test_pedido_de_distribuicao_no_formato_do_manual():
@@ -257,3 +259,61 @@ def test_filas_de_api_rodam_varias_empresas_ao_mesmo_tempo():
     assert sorted(feitos) == sorted(f"t{i}" for i in range(9)) and not em_curso
     assert pico[0] == 4                      # 4 ao mesmo tempo
     assert time.time() - inicio < 1.5        # 9 tarefas de 0,2 s: em série levariam 1,8 s
+
+
+def test_xml_que_nao_saiu_logo_depois_da_ciencia_volta_em_uma_hora(tmp_path, certificado):
+    """A SEFAZ registrou a ciência, mas ainda não liberou o XML: a próxima consulta sai em 1 hora, não no dia seguinte."""
+    pfx, _, _ = certificado
+    amb = AmbienteFalso({0: ret_dist("138", 1, 1, [doczip(1, "resNFe_v1.01.xsd", res_nfe(2))])})  # por chave: nada ainda
+    r = nfe.monitorar(_cliente(amb, pfx), 0, tmp_path, "Padaria", "15")
+    assert r.manifestadas == 1 and not r.notas[chave(2)].completa and r.espera_minutos == 61
+    # na volta, sem ciência nova (já registrada), a nota que ainda não saiu não prende o robô de hora em hora
+    amb2 = AmbienteFalso({})
+    r2 = nfe.monitorar(_cliente(amb2, pfx), 1, tmp_path, "Padaria", "15", pendentes=[{"chave": chave(2), "manifestada": True}])
+    assert r2.espera_minutos == 0 and not amb2.eventos
+
+
+def test_ciencia_recusada_aparece_na_mensagem(tmp_path, certificado):
+    """Resumos antigos com a ciência recusada pela SEFAZ: o motivo aparece, e as notas contam como sem XML."""
+    pfx, _, _ = certificado
+    amb = AmbienteFalso({}, ciencia_cstat="999")
+    r = nfe.monitorar(_cliente(amb, pfx), 40, tmp_path, "Padaria", pendentes=[
+        {"chave": chave(5), "manifestada": False}, {"chave": chave(6), "manifestada": False}])
+    assert len(amb.eventos) == 1 and r.manifestadas == 0
+    assert "recusada" in r.aviso and "2 nota(s)" in r.aviso and "999 Motivo 999" in r.aviso
+    assert r.resumos == 2
+
+
+def test_manifestacao_final_anterior_libera_o_xml(tmp_path, certificado):
+    """655: a empresa já confirmou a operação por outro sistema; o robô busca o XML pela chave mesmo assim."""
+    pfx, _, _ = certificado
+    amb = AmbienteFalso({}, por_chave={chave(5): proc_nfe(5)}, ciencia_cstat="655")
+    r = nfe.monitorar(_cliente(amb, pfx), 40, tmp_path, "Padaria", pendentes=[{"chave": chave(5), "manifestada": False}])
+    assert r.notas[chave(5)].completa and not r.aviso and r.resumos == 0
+
+
+def test_ciencia_desligada_avisa_os_resumos_antigos(tmp_path):
+    amb = AmbienteFalso({})
+    r = nfe.monitorar(_cliente(amb), 40, tmp_path, "Padaria", ciencia=False,
+                      pendentes=[{"chave": chave(5), "manifestada": False}])
+    assert not amb.eventos and "desligada" in r.aviso and r.resumos == 1
+
+
+def test_assinatura_confere_num_verificador_xmldsig_independente(certificado):
+    """O XMLDSig do evento é aceito por um verificador que canonicaliza o documento inteiro (como a SEFAZ).
+    Antes, o C14N do SignedInfo saía com xmlns="" em <Transforms> e a SEFAZ recusava com 297."""
+    from lxml import etree
+    _, chave_priv, cert = certificado
+    xml = nfe.assinar(nfe.evento_ciencia(DEST, chave(2)), chave_priv, cert)
+    assert b'xmlns=""' not in xml
+    raiz = etree.fromstring(xml)
+    d = {"ds": "http://www.w3.org/2000/09/xmldsig#"}
+    si = raiz.find(".//ds:SignedInfo", d)
+    esperado = (b'<SignedInfo xmlns="http://www.w3.org/2000/09/xmldsig#"><CanonicalizationMethod Algorithm='
+                b'"http://www.w3.org/TR/2001/REC-xml-c14n-20010315"></CanonicalizationMethod>')
+    assert nfe._c14n(si).startswith(esperado) and b'<Transforms><Transform Algorithm' in nfe._c14n(si)
+    signxml = pytest.importorskip("signxml")
+    from cryptography.hazmat.primitives.serialization import Encoding
+    cfg = signxml.SignatureConfiguration(signature_methods=frozenset({signxml.SignatureMethod.RSA_SHA1}),
+                                         digest_algorithms=frozenset({signxml.DigestAlgorithm.SHA1}))
+    signxml.XMLVerifier().verify(xml, x509_cert=cert.public_bytes(Encoding.PEM).decode(), expect_config=cfg)

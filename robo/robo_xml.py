@@ -1366,6 +1366,7 @@ def main():
     for aviso in cfg.get("_avisos", []):
         log.warning("ATENÇÃO: %s", aviso)
     arquivos.FORMATO_COMPETENCIA = cfg["pastas"]["formato_competencia"]  # pasta do mês: 102026 ou 2026-10
+    arquivos.GERAR_PDF = bool(cfg["pastas"].get("pdf_das_notas", True))
     if not (args.gerar_chaves or args.mostrar_chave_publica or args.modelo or args.gravar is not None):
         log.info("Os arquivos baixados ficam em: %s", Path(cfg["pastas"]["destino"]) / arquivos.PASTA_BAIXADOS)
 
