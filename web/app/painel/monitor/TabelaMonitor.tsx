@@ -1,5 +1,7 @@
 "use client";
 
+import Tabela from "@/components/ui/Tabela";
+
 import Link from "next/link";
 import { useState } from "react";
 import Icone from "@/components/Icones";
@@ -27,13 +29,14 @@ export default function TabelaMonitor({ linhas, gerencia, admin }: { linhas: Lin
           onChange={(e) => setFiltro(e.target.value)} aria-label="Filtrar empresas monitoradas" />
         <span className="suave">{visiveis.length} de {linhas.length}</span>
       </div>
-      <div className="tabela-rolagem">
+      <Tabela rotulo="Empresas do Monitor Fiscal">
         <table className="tabela-monitor">
+          <caption className="sr">Empresas do Monitor Fiscal</caption>
           <thead>
             <tr>
-              {admin && <th>Organização</th>}
-              <th>Compras no mês</th><th>CNPJ</th><th>Razão social</th><th>Certificado</th><th>Última nota</th>
-              <th>Situação</th><th>Próxima consulta</th><th><span className="sr">Ações</span></th>
+              {admin && <th scope="col">Organização</th>}
+              <th scope="col">Compras no mês</th><th scope="col">CNPJ</th><th scope="col">Razão social</th><th scope="col">Certificado</th><th scope="col">Última nota</th>
+              <th scope="col">Situação</th><th scope="col">Próxima consulta</th><th scope="col"><span className="sr">Ações</span></th>
             </tr>
           </thead>
           <tbody>
@@ -88,7 +91,7 @@ export default function TabelaMonitor({ linhas, gerencia, admin }: { linhas: Lin
             })}
           </tbody>
         </table>
-      </div>
+      </Tabela>
     </>
   );
 }

@@ -1,5 +1,7 @@
 "use client";
 
+import Tabela from "@/components/ui/Tabela";
+
 import Escolha from "@/components/ui/Escolha";
 import Segmentado from "@/components/ui/Segmentado";
 import SeletorArquivo from "@/components/ui/SeletorArquivo";
@@ -169,9 +171,10 @@ export default function FormAgendamentoNfse({ organizacoes, competencia, empresa
           )}
           <details>
             <summary>Ver empresas</summary>
-            <div className="tabela-rolagem">
+            <Tabela rotulo="Prévia das empresas NFS-e">
               <table>
-                <thead><tr><th>Linha</th><th>ID</th><th>Empresa</th><th>CNPJ</th><th>Certificado</th><th>Serviços</th></tr></thead>
+                <caption className="sr">Prévia das empresas NFS-e</caption>
+                <thead><tr><th scope="col">Linha</th><th scope="col">ID</th><th scope="col">Empresa</th><th scope="col">CNPJ</th><th scope="col">Certificado</th><th scope="col">Serviços</th></tr></thead>
                 <tbody>
                   {previa.itens.map((i) => (
                     <tr key={i.cnpj}>
@@ -182,7 +185,7 @@ export default function FormAgendamentoNfse({ organizacoes, competencia, empresa
                   ))}
                 </tbody>
               </table>
-            </div>
+            </Tabela>
           </details>
           {resultado?.erro && <div className="faixa erro" style={{ marginTop: "1rem" }}>{resultado.erro}</div>}
           <p><button onClick={confirmar} disabled={enviando}>{enviando ? "Agendando…" : "Confirmar agendamento"}</button></p>

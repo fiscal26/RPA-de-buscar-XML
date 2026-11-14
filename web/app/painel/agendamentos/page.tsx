@@ -1,3 +1,4 @@
+import Tabela from "@/components/ui/Tabela";
 import Icone from "@/components/Icones";
 import Link from "next/link";
 import AutoRefresh from "@/components/AutoRefresh";
@@ -55,19 +56,20 @@ export default async function Agendamentos() {
         {!agendamentos.length ? (
           <p className="suave">Nenhum agendamento ainda. <Link href="/painel/agendar">Agendar agora</Link>.</p>
         ) : (
-          <div className="tabela-rolagem">
+          <Tabela rotulo="Lista de agendamentos">
             <table>
+              <caption className="sr">Lista de agendamentos</caption>
               <thead>
                 <tr>
-                  <th>Criado em</th>
-                  {admin && <th>Organização</th>}
-                  <th>Competência</th>
-                  <th>Origem</th>
-                  <th>Arquivo</th>
-                  <th>Início</th>
-                  <th>Andamento</th>
-                  <th>Arquivos</th>
-                  <th></th>
+                  <th scope="col">Criado em</th>
+                  {admin && <th scope="col">Organização</th>}
+                  <th scope="col">Competência</th>
+                  <th scope="col">Origem</th>
+                  <th scope="col">Arquivo</th>
+                  <th scope="col">Início</th>
+                  <th scope="col">Andamento</th>
+                  <th scope="col">Arquivos</th>
+                  <th scope="col"><span className="sr">Ações</span></th>
                 </tr>
               </thead>
               <tbody>
@@ -98,7 +100,7 @@ export default async function Agendamentos() {
                 })}
               </tbody>
             </table>
-          </div>
+          </Tabela>
         )}
       </div>
     </>

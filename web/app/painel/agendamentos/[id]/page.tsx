@@ -1,3 +1,4 @@
+import Tabela from "@/components/ui/Tabela";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import AutoRefresh from "@/components/AutoRefresh";
@@ -109,10 +110,11 @@ export default async function DetalheAgendamento({ params, searchParams }: {
             </span>
           )}
         </div>
-        <div className="tabela-rolagem grade-tarefas">
+        <Tabela rotulo="Tarefas por empresa e serviço" className="grade-tarefas">
           <table>
+            <caption className="sr">Tarefas por empresa e serviço</caption>
             <thead>
-              <tr><th>Empresa</th>{colunas.map((c) => <th key={c}>{nomeTipo(c)}</th>)}</tr>
+              <tr><th scope="col">Empresa</th>{colunas.map((c) => <th scope="col" key={c}>{nomeTipo(c)}</th>)}</tr>
             </thead>
             <tbody>
               {linhas.map(({ e, celulas }) => (
@@ -136,7 +138,7 @@ export default async function DetalheAgendamento({ params, searchParams }: {
               ))}
             </tbody>
           </table>
-        </div>
+        </Tabela>
         <p className="suave">Passe o mouse sobre uma tarefa para ver o detalhe.</p>
       </section>
     </>

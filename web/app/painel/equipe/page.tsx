@@ -1,3 +1,4 @@
+import Tabela from "@/components/ui/Tabela";
 import { redirect } from "next/navigation";
 import { contexto } from "@/lib/sessao";
 import { dataHoraBR, formatarDocumento } from "@/lib/documentos";
@@ -77,9 +78,10 @@ export default async function Equipe() {
           {!lista.length ? (
             <p className="suave">Ninguém cadastrado ainda.</p>
           ) : (
-            <div className="tabela-rolagem">
+            <Tabela rotulo="Integrantes da equipe">
               <table>
-                <thead><tr><th>Nome</th><th>E-mail</th><th>Papel</th><th>Situação</th><th>Desde</th><th></th></tr></thead>
+                <caption className="sr">Integrantes da equipe</caption>
+                <thead><tr><th scope="col">Nome</th><th scope="col">E-mail</th><th scope="col">Papel</th><th scope="col">Situação</th><th scope="col">Desde</th><th scope="col"><span className="sr">Ações</span></th></tr></thead>
                 <tbody>
                   {lista.map((x) => {
                     const podeMexer = x.id !== perfil.id && (admin || x.papel === "usuario");
@@ -112,7 +114,7 @@ export default async function Equipe() {
                   })}
                 </tbody>
               </table>
-            </div>
+            </Tabela>
           )}
         </section>
       ))}

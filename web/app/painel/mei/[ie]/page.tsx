@@ -1,3 +1,4 @@
+import Tabela from "@/components/ui/Tabela";
 import Icone from "@/components/Icones";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -117,11 +118,12 @@ export default async function PainelMei({ params, searchParams }: {
         {mesesVisiveis.length > 0 && (
           <details className="detalhe-tabela">
             <summary>Ver a tabela do ano</summary>
-            <div className="tabela-rolagem">
+            <Tabela rotulo="Faturamento e compras por mês">
               <table className="tabela-mei">
+                <caption className="sr">Faturamento e compras por mês</caption>
                 <thead>
-                  <tr><th>Mês / fontes</th><th>Notas de saída ATF</th><th>NFS-e emitidas</th><th>Cartão</th><th>Receita manual</th><th>Faturamento</th><th>Acumulado</th>
-                    <th>Notas de entrada</th><th>Compra manual</th><th>Compras</th><th>Acumulado</th></tr>
+                  <tr><th scope="col">Mês / fontes</th><th scope="col">Notas de saída ATF</th><th scope="col">NFS-e emitidas</th><th scope="col">Cartão</th><th scope="col">Receita manual</th><th scope="col">Faturamento</th><th scope="col">Acumulado</th>
+                    <th scope="col">Notas de entrada</th><th scope="col">Compra manual</th><th scope="col">Compras</th><th scope="col">Acumulado</th></tr>
                 </thead>
                 <tbody>
                   {mesesVisiveis.map((m) => (
@@ -137,20 +139,21 @@ export default async function PainelMei({ params, searchParams }: {
                   ))}
                 </tbody>
               </table>
-            </div>
+            </Tabela>
             {docs.size > 0 && (
               <>
                 <h3 className="mei-sub">Por tipo de documento (Docs fiscais do ATF)</h3>
-                <div className="tabela-rolagem">
+                <Tabela rotulo="Totais por tipo de documento">
                   <table>
-                    <thead><tr><th>Documento</th><th>Qtd. entradas</th><th>Entradas</th><th>Qtd. saídas</th><th>Saídas</th></tr></thead>
+                    <caption className="sr">Totais por tipo de documento</caption>
+                    <thead><tr><th scope="col">Documento</th><th scope="col">Qtd. entradas</th><th scope="col">Entradas</th><th scope="col">Qtd. saídas</th><th scope="col">Saídas</th></tr></thead>
                     <tbody>
                       {[...docs].map(([tipo, d]) => (
                         <tr key={tipo}><td>{tipo}</td><td>{d.qtdE}</td><td>{reais(d.entradas)}</td><td>{d.qtdS}</td><td>{reais(d.saidas)}</td></tr>
                       ))}
                     </tbody>
                   </table>
-                </div>
+                </Tabela>
               </>
             )}
           </details>
