@@ -351,7 +351,7 @@ def cadeia_icp_brasil(pasta: Path, dias: int = 30, baixar=None) -> Path | None:
 def danfe(xml: bytes) -> bytes | None:
     """DANFE em PDF a partir do XML (a SEFAZ não entrega o PDF). None se a biblioteca não estiver instalada."""
     import pdf_fiscal
-    return pdf_fiscal.gerar(xml, "55")
+    return pdf_fiscal.gerar(xml, "55", rodape=pdf_fiscal.RODAPE_MONITOR)
 
 
 def _pasta_da_nota(destino, nome: str, cnpj: str, codigo: str, nota: Nota) -> Path:

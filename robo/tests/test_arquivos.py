@@ -277,3 +277,12 @@ def test_cte_com_nfe_transportada_continua_sendo_cte():
     import xml_completo as xc
     info = arquivos.ler_xml(xc.cte(4))
     assert info and info.modelo == "57" and info.chave == xc.chave("57", 4) and info.valor == 80.0
+
+
+def test_danfe_com_rodape_da_lotivisse():
+    import pdf_fiscal
+    import xml_completo as xc
+    pdf = pdf_fiscal.gerar(xc.nfe("55", 1), rodape=pdf_fiscal.RODAPE_MONITOR)
+    sem = pdf_fiscal.gerar(xc.nfe("55", 1), rodape="")
+    assert pdf.startswith(b"%PDF") and len(pdf) > len(sem)  # o rodapé (texto e símbolo) entra no PDF
+    assert pdf_fiscal.simbolo_png().startswith(b"\x89PNG")
