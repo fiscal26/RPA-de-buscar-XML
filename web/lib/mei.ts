@@ -14,7 +14,8 @@ export type MesAtf = {
   cartao: number | null; qtd_cartao: number | null; sem_movimento: boolean | null; simei: boolean | null;
   inicio_atividade: string | null; itens?: { tipo: string; entradas?: number | null; saidas?: number | null;
     qtd_entradas?: number | null; qtd_saidas?: number | null }[]; consultado_em?: string | null;
-  origem?: "atf" | "execucao";  // execucao = só o resumo do mês guardado na tarefa (sem detalhe por documento)
+  origem?: "atf" | "execucao" | "nfse";
+  nfse?: number; consultadoAtf?: boolean; consultadoNfse?: boolean; sobreposicaoIncerta?: boolean;
 };
 /** Linha de xml_mei_ajustes (lançamento manual do escritório). */
 export type Ajuste = { id: string; org_id: string; ie: string; competencia: string; tipo: "receita" | "compra";
@@ -34,7 +35,8 @@ export type Mes = {
   mes: number;                 // 0 = janeiro
   ativo: boolean;              // depois do início da atividade
   consultado: boolean;         // o ATF já foi consultado para esse mês
-  notas: number; cartao: number; receitaManual: number; faturamento: number;
+  notas: number; nfse: number; cartao: number; receitaManual: number; faturamento: number;
+  consultadoAtf: boolean; consultadoNfse: boolean; sobreposicaoIncerta: boolean;
   entradas: number; compraManual: number; compras: number;
   semMovimento: boolean; acimaFaturamento: boolean; acimaCompras: boolean;
   faturamentoAcum: number; comprasAcum: number;
@@ -54,27 +56,36 @@ function nivelDe(total: number, limite: number, projecao: number, temDados: bool
  * Ano de um MEI. Faturamento do mês = o MAIOR entre notas de saída e cartão (o cartão pode estar ou não dentro
  * das notas) + receitas lançadas à mão. Compras do mês = notas de entrada + compras lançadas à mão.
  */
-export function analisarAno(ano: number, meses: MesAtf[], ajustes: Ajuste[]) {
-  const inicio = meses.map((m) => m.inicio_atividade).find(Boolean) ?? null;
+export function analisarAno(ano: number, meses: MesAtf[], ajustes: Ajuste[], cadastro?: {
+  inicio_atividade: string; inicio_mei: string; fim_mei: string | null;
+}) {
+  const inicio = cadastro?.inicio_atividade || meses.map((m) => m.inicio_atividade).filter(Boolean).sort()[0] || null;
   const primeiroMes = inicio && Number(inicio.slice(0, 4)) === ano ? Number(inicio.slice(5, 7)) - 1 : 0;
   const ativos = 12 - primeiroMes;
   const limiteFat = Math.round(LIMITE_MES * ativos * 100) / 100;
   const limiteCompras = Math.round(limiteFat * FRACAO_COMPRAS * 100) / 100;
-  const porMes = new Map(meses.filter((m) => m.competencia.startsWith(`${ano}-`)).map((m) => [Number(m.competencia.slice(5, 7)) - 1, m]));
+  const noPeriodo = (mes: string) => !cadastro || (mes >= cadastro.inicio_mei.slice(0, 7) && (!cadastro.fim_mei || mes <= cadastro.fim_mei.slice(0, 7)));
+  const porMes = new Map(meses.filter((m) => m.competencia.startsWith(`${ano}-`) && noPeriodo(m.competencia.slice(0, 7))).map((m) => [Number(m.competencia.slice(5, 7)) - 1, m]));
 
   let fatAcum = 0, compAcum = 0, ultimo = -1;
   const lista: Mes[] = MESES.map((_, i) => {
     const m = porMes.get(i);
-    const doMes = ajustes.filter((a) => a.competencia.startsWith(`${ano}-${String(i + 1).padStart(2, "0")}`));
+    const ref = `${ano}-${String(i + 1).padStart(2, "0")}`;
+    const doMes = ajustes.filter((a) => a.competencia.startsWith(ref) && noPeriodo(ref));
     const receitaManual = doMes.filter((a) => a.tipo === "receita").reduce((s, a) => s + n(a.valor), 0);
     const compraManual = doMes.filter((a) => a.tipo === "compra").reduce((s, a) => s + n(a.valor), 0);
     const notas = n(m?.saidas), cartao = n(m?.cartao), entradas = n(m?.entradas);
-    const faturamento = Math.max(notas, cartao) + receitaManual;
+    const nfse = n(m?.nfse);
+    // Resumo antigo sem tipos de documento: não presumir que as fontes são disjuntas.
+    const notasTotais = m?.sobreposicaoIncerta ? Math.max(notas, nfse) : notas + nfse;
+    const faturamento = Math.max(notasTotais, cartao) + receitaManual;
     const compras = entradas + compraManual;
     if (m || doMes.length) ultimo = i;
     fatAcum += faturamento; compAcum += compras;
     return {
-      mes: i, ativo: i >= primeiroMes, consultado: !!m, notas, cartao, receitaManual, faturamento,
+      mes: i, ativo: i >= primeiroMes && noPeriodo(ref), consultado: !!m, notas, nfse, cartao, receitaManual, faturamento,
+      consultadoAtf: m?.consultadoAtf ?? (!!m && m.origem !== "nfse"), consultadoNfse: m?.consultadoNfse ?? m?.origem === "nfse",
+      sobreposicaoIncerta: !!m?.sobreposicaoIncerta,
       entradas, compraManual, compras, semMovimento: !!m?.sem_movimento && !receitaManual && !compraManual,
       acimaFaturamento: faturamento > LIMITE_MES, acimaCompras: compras > LIMITE_MES * FRACAO_COMPRAS,
       faturamentoAcum: fatAcum, comprasAcum: compAcum,
@@ -83,18 +94,19 @@ export function analisarAno(ano: number, meses: MesAtf[], ajustes: Ajuste[]) {
 
   const decorridos = Math.max(ultimo - primeiroMes + 1, 0);
   const temDados = ultimo >= 0;
-  const medida = (total: number, limite: number): Medida => {
+  const medida = (total: number, limite: number, dados = temDados): Medida => {
     const projecao = decorridos ? (total / decorridos) * ativos : 0;
     return { total, limite, pct: limite ? total / limite : 0, projecao, esperado: (limite / ativos) * decorridos,
-      nivel: nivelDe(total, limite, projecao, temDados) };
+      nivel: nivelDe(total, limite, projecao, dados) };
   };
   const faturamento = medida(fatAcum, limiteFat);
-  const compras = medida(compAcum, limiteCompras);
+  const compras = medida(compAcum, limiteCompras, lista.some((m) => m.consultadoAtf || m.compraManual !== 0));
   const nivel = NIVEIS[faturamento.nivel].peso >= NIVEIS[compras.nivel].peso ? faturamento.nivel : compras.nivel;
-  const somar = (k: "notas" | "cartao" | "receitaManual" | "entradas" | "compraManual") => lista.reduce((s, m) => s + m[k], 0);
+  const somar = (k: "notas" | "nfse" | "cartao" | "receitaManual" | "entradas" | "compraManual") => lista.reduce((s, m) => s + m[k], 0);
   return {
     ano, inicio, primeiroMes, ativos, ultimo, decorridos, meses: lista, faturamento, compras, nivel,
-    notas: somar("notas"), cartao: somar("cartao"), receitaManual: somar("receitaManual"),
+    notas: somar("notas"), nfse: somar("nfse"), cartao: somar("cartao"), receitaManual: somar("receitaManual"),
+    conferirFontes: lista.some((m) => m.sobreposicaoIncerta),
     entradas: somar("entradas"), compraManual: somar("compraManual"),
     mesesAcima: lista.filter((m) => m.acimaFaturamento).length,
     simei: [...porMes.values()].some((m) => m.simei === true),
@@ -111,7 +123,8 @@ export function explicacao(a: AnoMei): string {
   if (f.nivel === "atencao") return "O faturamento já usou 80% ou mais do limite do ano. Acompanhe os próximos meses de perto.";
   if (c.nivel === "atencao") return "As compras já usaram 80% ou mais do limite de compras.";
   if (f.nivel === "ritmo" || c.nivel === "ritmo") return "Mantida a média mensal, o limite será ultrapassado até dezembro.";
-  if (a.nivel === "sem_dados") return "Ainda não há consulta do Dossiê MEI neste ano.";
+  if (a.nivel === "sem_dados") return "Ainda não há consulta concluída para este MEI no período selecionado.";
+  if (c.nivel === "sem_dados") return "O faturamento consultado está dentro do limite. As compras ainda não têm consulta ou lançamento no período.";
   return "Faturamento e compras estão dentro do limite, num ritmo compatível com o ano.";
 }
 

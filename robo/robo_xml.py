@@ -964,6 +964,12 @@ class Robo:
         log.info("   NFS-e %s -> %s: %s", t["nome"], r.status, r.mensagem)
         self._finalizar(t, r)
 
+        if r.detalhes.get("mei_nfse"):
+            try:
+                self.portal.avisar_mei(t["cnpj"])
+            except Exception as e:
+                log.warning("   alerta MEI/NFS-e não pedido ao portal: %s", e)
+
     def _um_monitor(self, m: dict):
         try:
             r = executar_monitor(self.cfg, m, self.privada)
@@ -1089,6 +1095,7 @@ def executar_nfse(cfg: dict, t: dict, privada, sessao_falsa=None) -> Resultado:
     consulta = cnpj
     procuracao = bool(t.get("procurador"))
     meses_extra: list[tuple[str, int]] = []
+    meses_mei = []
     try:
         with nfse.contexto_tls(pfx, senha) as ctx:
             cliente = nfse.ClienteADN(sessao_falsa or nfse.sessao_com_certificado(ctx), cnpj_consulta=consulta)
@@ -1097,6 +1104,8 @@ def executar_nfse(cfg: dict, t: dict, privada, sessao_falsa=None) -> Resultado:
                           com_recebidas="nfse_recebidas" in tipos, relatorio="nfse_retencoes" in tipos)
             anteriores = nfse.meses_sem_busca(destino, t["nome"], cnpj, codigo, competencia)
             r = nfse.baixar_competencia(cliente, cnpj, competencia, destino, t["nome"], codigo, **opcoes)
+            # O cache contém emitidas mesmo se o usuário escolheu só salvar as recebidas.
+            meses_mei.append(nfse.resumo_mei(cnpj, competencia))
             # MEI (cadastrado como MEI na SEFAZ ou que emite NFS-e como MEI) que ainda não tinha o ano: os meses de
             # janeiro até a competência saem junto, do cache já atualizado (como no Dossiê MEI)
             if anteriores and (t.get("mei") or nfse.eh_mei(cnpj)):
@@ -1104,6 +1113,7 @@ def executar_nfse(cfg: dict, t: dict, privada, sessao_falsa=None) -> Resultado:
                     extra = nfse.baixar_competencia(cliente, cnpj, mes, destino, t["nome"], codigo, atualizar=False,
                                                     **opcoes)
                     n = len(extra.emitidas) + len(extra.recebidas)
+                    meses_mei.append(nfse.resumo_mei(cnpj, mes))
                     if n:
                         meses_extra.append((mes, n))
                 log.info("   MEI %s: meses anteriores do ano conferidos (%s)", t["nome"],
@@ -1124,6 +1134,7 @@ def executar_nfse(cfg: dict, t: dict, privada, sessao_falsa=None) -> Resultado:
         del pfx, senha
 
     detalhes, partes = {}, []
+    detalhes["mei_nfse"] = {"meses": meses_mei, "detectado_no_xml": nfse.eh_mei(cnpj)}
     for tipo, notas, rotulo in (("nfse_emitidas", r.emitidas, "emitida"), ("nfse_recebidas", r.recebidas, "recebida")):
         if tipo in tipos:
             detalhes[tipo] = ({"situacao": "concluido", "mensagem": f"{len(notas)} nota(s)", "arquivos": len(notas)} if notas

@@ -6,6 +6,8 @@ import { after } from "next/server";
 import { verificarAlertasMei } from "@/lib/alertas-mei";
 import { contexto } from "@/lib/sessao";
 import { clienteAdmin } from "@/lib/supabase/admin";
+import { carregarMeis } from "@/lib/mei-dados";
+import { cnpjValido } from "@/lib/documentos";
 
 export type EstadoAjuste = { erro?: string; ok?: string } | undefined;
 
@@ -20,13 +22,53 @@ function valorBR(texto: string): number | null {
 }
 
 /** O usuário enxerga esse MEI? (as regras de leitura do banco decidem; a gravação vai com a chave secreta) */
-async function conferirAcesso(org: string, ie: string) {
+async function conferirAcesso(org: string, ie: string, competencia: string) {
   const { supabase } = await contexto();
-  const [{ data: emp }, { data: mes }] = await Promise.all([
-    supabase.from("xml_empresas").select("org_id").eq("org_id", org).eq("ie", ie).limit(1),
-    supabase.from("xml_mei_meses").select("org_id").eq("org_id", org).eq("ie", ie).limit(1),
+  const { meis, erros } = await carregarMeis(supabase, Number(competencia.slice(0, 4)), ie);
+  if (erros.length) return false;
+  const m = meis.find((m) => m.org === org);
+  return !!m && (!m.cadastro || (competencia >= m.cadastro.inicio_mei.slice(0, 7)
+    && (!m.cadastro.fim_mei || competencia <= m.cadastro.fim_mei.slice(0, 7))));
+}
+
+export async function salvarCadastroMei(_: EstadoAjuste, form: FormData): Promise<EstadoAjuste> {
+  const { supabase, perfil, admin, user } = await contexto();
+  if (!admin && perfil.papel !== "gestor") return { erro: "Somente gestor ou administrador pode alterar o cadastro MEI." };
+  const org = admin ? String(form.get("org") ?? "") : perfil.org_id ?? "";
+  const cnpj = String(form.get("cnpj") ?? "");
+  if (!org || !cnpjValido(cnpj)) return { erro: "Escolha uma empresa cadastrada com CNPJ válido." };
+  const [{ data: n }, { data: s }] = await Promise.all([
+    supabase.from("xml_nfse_empresas").select("nome").eq("org_id", org).eq("cnpj", cnpj).limit(1),
+    supabase.from("xml_empresas").select("nome").eq("org_id", org).eq("cnpj", cnpj).limit(1),
   ]);
-  return !!(emp?.length || mes?.length);
+  const nome = n?.[0]?.nome || s?.[0]?.nome;
+  if (!nome) return { erro: "Empresa não encontrada neste escritório." };
+  const abertura = String(form.get("abertura") ?? "");
+  const inicio = String(form.get("inicio") ?? ""), fim = String(form.get("fim") ?? "");
+  const hoje = new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
+  const dataValida = /^\d{4}-\d{2}-\d{2}$/.test(abertura) && !Number.isNaN(Date.parse(abertura))
+    && new Date(abertura + "T12:00:00Z").toISOString().slice(0, 10) === abertura;
+  const mesValido = (m: string) => /^\d{4}-(0[1-9]|1[0-2])$/.test(m);
+  if (!dataValida || abertura > hoje || !mesValido(inicio) || inicio < abertura.slice(0, 7) || inicio > hoje.slice(0, 7)
+    || (fim && (!mesValido(fim) || fim < inicio))) return { erro: "Confira a data de abertura e o período de enquadramento MEI." };
+  const { error } = await clienteAdmin().from("xml_mei_cadastros").upsert({ org_id: org, cnpj, nome,
+    ativo: form.get("ativo") === "on", inicio_atividade: abertura, inicio_mei: inicio + "-01", fim_mei: fim ? fim + "-01" : null,
+    atualizado_por: user.id, atualizado_em: new Date().toISOString() }, { onConflict: "org_id,cnpj" });
+  if (error) return { erro: "Não foi possível salvar o cadastro MEI. Confira se a atualização do banco foi aplicada." };
+  revalidatePath("/painel/empresas"); revalidatePath("/painel/mei", "layout");
+  return { ok: "Cadastro MEI salvo. O monitoramento já considera este período; os valores serão atualizados na próxima consulta." };
+}
+
+export type EstadoReprocessar = { erro?: string; ok?: string; agendamentos?: string[] } | undefined;
+export async function reprocessarMei(_: EstadoReprocessar, form: FormData): Promise<EstadoReprocessar> {
+  const { supabase } = await contexto();
+  const { data, error } = await supabase.rpc("xml_mei_reprocessar", { p_org: String(form.get("org") ?? ""),
+    p_documento: String(form.get("documento") ?? ""), p_competencia: `${form.get("competencia")}-01` });
+  if (error) return { erro: error.message.includes("xml_mei_reprocessar")
+    ? "A atualização MEI/NFS-e precisa ser aplicada no banco antes de reprocessar." : error.message };
+  revalidatePath("/painel/agendamentos");
+  return { ok: data.existente ? "Já existe uma consulta na fila para esta empresa e competência. Acompanhe abaixo."
+    : "Reprocessamento enviado à fila do robô. Os últimos valores válidos serão mantidos até a conclusão.", agendamentos: data.agendamentos };
 }
 
 export async function adicionarAjuste(_: EstadoAjuste, form: FormData): Promise<EstadoAjuste> {
@@ -40,7 +82,7 @@ export async function adicionarAjuste(_: EstadoAjuste, form: FormData): Promise<
   if (tipo !== "receita" && tipo !== "compra") return { erro: "Escolha se é receita ou compra." };
   if (!descricao || descricao.length > 120) return { erro: "Descreva o lançamento (até 120 caracteres)." };
   if (valor === null || Math.abs(valor) > 10_000_000) return { erro: "Informe o valor, por exemplo 1.250,00 (negativo para corrigir para menos)." };
-  if (!(await conferirAcesso(org, ie))) return { erro: "MEI não encontrado." };
+  if (!(await conferirAcesso(org, ie, competencia))) return { erro: "MEI não encontrado, dados incompletos ou competência fora do período cadastrado." };
   const { error } = await clienteAdmin().from("xml_mei_ajustes").insert({
     org_id: org, ie, competencia: `${competencia}-01`, tipo, descricao, valor, criado_por: user.id,
   });
@@ -61,24 +103,24 @@ export async function removerAjuste(form: FormData) {
   revalidatePath("/painel/mei", "layout");
 }
 
-/** "Não é MEI": tira a empresa do Monitoramento MEI do escritório. Apaga o faturamento lido do ATF, os lançamentos
- *  e os alertas dela e desmarca o serviço MEI no cadastro (o robô não consulta mais o dossiê dela). Gestor ou admin. */
+/** Pausa o acompanhamento, sem apagar faturamento, ajustes ou alertas anteriores. */
 export async function naoEhMei(form: FormData) {
   const { perfil, admin } = await contexto();
   if (!admin && perfil.papel !== "gestor") return;
   const ie = String(form.get("ie") ?? "");
   const org = admin ? String(form.get("org") ?? "") : perfil.org_id ?? "";
-  if (!/^\d{9}$/.test(ie) || !org) return;
+  if (!/^(\d{9}|\d{14})$/.test(ie) || !org) return;
   const db = clienteAdmin();
-  await Promise.all([
-    db.from("xml_mei_meses").delete().eq("org_id", org).eq("ie", ie),
-    db.from("xml_mei_ajustes").delete().eq("org_id", org).eq("ie", ie),
-    db.from("xml_mei_alertas").delete().eq("org_id", org).eq("ie", ie),
-  ]);
-  const { data: empresas } = await db.from("xml_empresas").select("id, tipos").eq("org_id", org).eq("ie", ie);
+  if (ie.length === 14) {
+    const { error } = await db.from("xml_mei_cadastros").update({ ativo: false, atualizado_em: new Date().toISOString() })
+      .eq("org_id", org).eq("cnpj", ie);
+    if (error) throw new Error("Não foi possível pausar o acompanhamento MEI.");
+  }
+  const { data: empresas } = await db.from("xml_empresas").select("id, tipos").eq("org_id", org).eq(ie.length === 14 ? "cnpj" : "ie", ie);
   for (const e of empresas ?? []) {
     await db.from("xml_empresas").update({ tipos: (e.tipos as string[]).filter((t) => t !== "mei") }).eq("id", e.id);
   }
   revalidatePath("/painel/mei", "layout");
+  revalidatePath("/painel/empresas");
   redirect("/painel/mei");
 }

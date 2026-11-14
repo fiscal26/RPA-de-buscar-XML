@@ -311,7 +311,8 @@ button.perigo:hover { background: var(--erro-fundo); }
 .lateral a[aria-current="page"] .icone { color: var(--forte); }
 .lateral hr { border: 0; border-top: 1px solid var(--carbono); margin: 0.6rem 0.4rem; }
 
-main.painel { max-width: 1080px; width: 100%; margin: 0 auto; padding: 2.25rem 2rem 4rem; }
+/* A área de dados usa a largura disponível; o ranking responde ao espaço real do painel. */
+main.painel { min-width: 0; width: 100%; margin: 0 auto; padding: 2.25rem 2rem 4rem; container: painel / inline-size; }
 .cabeca-pagina { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem 2rem; flex-wrap: wrap; margin-bottom: 1.75rem; }
 .cabeca-pagina h1 { margin-bottom: 0.25rem; font-size: 1.85rem; }
 .cabeca-pagina p { margin: 0; }
@@ -390,6 +391,74 @@ th { color: var(--suave); font-weight: 600; font-size: 0.84rem; border-bottom-co
 tbody tr { transition: background-color 0.12s; }
 tbody tr:hover { background: var(--papel); }
 .tabela-rolagem { overflow-x: auto; }
+
+/* Empresas: filtros compactos e uma lista que cabe na área disponível. */
+.empresas-cabecalho { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1.5rem; }
+.empresas-cabecalho h1 { margin: 0 0 0.35rem; text-wrap: balance; }
+.empresas-cabecalho p { margin: 0; }
+.empresas-filtros { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1.25rem; }
+button.empresa-filtro { padding: 0.55rem 0.8rem; gap: 0.55rem; font-size: 0.85rem; font-weight: 500; background: var(--superficie); }
+.empresa-filtro strong { font-size: 1.15rem; color: var(--forte); }
+button.empresa-filtro[aria-pressed="true"] { border-color: var(--forte); box-shadow: inset 0 0 0 1px var(--forte); color: var(--forte); }
+.empresas-ferramentas { display: flex; justify-content: space-between; align-items: center; gap: 1rem; margin-bottom: 1rem; }
+.empresas-busca { position: relative; width: min(100%, 390px); }
+.empresas-busca > svg { position: absolute; left: 0.8rem; top: 50%; transform: translateY(-50%); color: var(--suave); pointer-events: none; }
+.empresas-busca input { margin: 0; padding-left: 2.4rem; font-size: 0.9rem; }
+.empresas-ordem { width: 210px; flex: none; }
+.empresas-tabela { border: 1px solid var(--linha); border-radius: 12px; background: var(--superficie); }
+.empresas-tabela table { table-layout: fixed; }
+.empresas-tabela th { background: var(--carbono); padding: 0.7rem 0.85rem; font-size: 0.78rem; font-weight: 500; }
+.empresas-tabela th:first-child { width: 34%; border-top-left-radius: 11px; }
+.empresas-tabela th:nth-child(2) { width: 18%; }
+.empresas-tabela th:nth-child(3) { width: 24%; }
+.empresas-tabela th:nth-child(4) { width: 17%; }
+.empresas-tabela th:last-child { width: 7%; border-top-right-radius: 11px; text-align: right; }
+.empresas-tabela td { padding: 0.85rem; vertical-align: middle; overflow-wrap: anywhere; }
+.empresas-tabela tbody tr:last-child td { border-bottom: 0; }
+.empresas-tabela .status { white-space: normal; border-radius: 5px; padding: 0.15rem 0.45rem; font-size: 0.76rem; }
+.empresa-identidade strong { display: block; font-size: 0.92rem; font-weight: 600; color: var(--forte); }
+.empresa-identidade > span { display: block; color: var(--suave); font-size: 0.86rem; }
+.empresa-identidade small { display: block; font-size: 0.75rem; color: var(--suave); margin-top: 0.2rem; }
+.empresa-origem { font-size: 0.84rem; font-weight: 600; }
+.empresa-apoio { display: block; font-size: 0.8rem; color: var(--suave); margin-top: 0.2rem; line-height: 1.45; }
+.empresa-acoes { text-align: right; }
+button.empresa-mais { padding: 0; width: 34px; height: 34px; font-size: 0.85rem; }
+.empresas-rodape { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 0.75rem; color: var(--suave); font-size: 0.8rem; padding: 0.8rem 0; margin-bottom: 1rem; }
+.empresas-rodape nav { display: flex; align-items: center; gap: 0.7rem; flex-wrap: wrap; }
+.empresas-vazio { padding: 3rem 1rem; text-align: center; }
+.empresas-vazio h2 { margin: 0 0 0.5rem; text-wrap: balance; }
+.empresas-vazio p, .empresas-painel p { text-wrap: pretty; }
+.empresas-painel { border: 1px solid var(--linha); border-radius: var(--raio); background: var(--superficie); margin-bottom: 0.75rem; }
+.empresas-painel summary { padding: 0.9rem 1rem; cursor: pointer; color: var(--forte); font-size: 0.9rem; font-weight: 600; }
+.empresas-painel summary span { font-size: 0.8rem; font-weight: 400; margin-left: 0.65rem; }
+.empresas-painel-corpo { padding: 0.25rem 1rem 1rem; }
+.empresas-painel-corpo > :last-child { margin-bottom: 0; }
+dialog.empresa-dialogo[open] { animation: none; max-height: calc(100dvh - 2rem); overflow-y: auto; }
+.empresa-edicao { padding: 1rem 0; }
+.empresa-dados { display: grid; gap: 0.7rem; margin: 0 0 1rem; }
+.empresa-dados dt { font-size: 0.78rem; color: var(--suave); }
+.empresa-dados dd { margin: 0; font-size: 0.9rem; overflow-wrap: anywhere; }
+.empresa-dialogo-rodape { justify-content: space-between; }
+@container painel (max-width: 700px) {
+  .empresas-tabela table, .empresas-tabela tbody { display: block; }
+  .empresas-tabela thead { position: absolute; width: 1px; height: 1px; clip-path: inset(50%); overflow: hidden; }
+  .empresas-tabela tr { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 38px; gap: 0.9rem 0.75rem; padding: 1rem; border-bottom: 1px solid var(--linha); }
+  .empresas-tabela tr:last-child { border-bottom: 0; }
+  .empresas-tabela td { display: block; border: 0; padding: 0; }
+  .empresas-tabela td::before { content: attr(data-label); display: block; font-size: 0.72rem; color: var(--suave); margin-bottom: 0.25rem; }
+  .empresas-tabela .empresa-identidade { grid-column: 1 / 3; }
+  .empresas-tabela .empresa-identidade::before, .empresas-tabela .empresa-acoes::before { display: none; }
+  .empresas-tabela td:nth-child(2) { grid-column: 1; }
+  .empresas-tabela td:nth-child(3) { grid-column: 2 / 4; }
+  .empresas-tabela td:nth-child(4) { grid-column: 1 / -1; }
+  .empresas-tabela .empresa-acoes { grid-column: 3; grid-row: 1; }
+}
+@container painel (max-width: 480px) {
+  .empresas-cabecalho { align-items: flex-start; flex-direction: column; }
+  .empresas-ferramentas { align-items: stretch; flex-direction: column; gap: 0.65rem; }
+  .empresas-busca, .empresas-ordem { width: 100%; }
+  .empresas-painel summary span { display: block; margin-left: 1rem; }
+}
 
 .status { display: inline-block; padding: 0.15rem 0.6rem; border-radius: 999px; font-size: 0.8rem; font-weight: 600; white-space: nowrap; }
 .st-ok { background: var(--carimbo-fundo); color: var(--carimbo); }
@@ -654,14 +723,14 @@ a.ranking-linha:hover { background: var(--carbono); }
 .ranking .num b { color: var(--forte); }
 .ranking-legenda { display: flex; flex-wrap: wrap; gap: 0.3rem 1.2rem; font-size: 0.78rem; padding-top: 0.8rem; border-top: 1px solid var(--linha); }
 .ranking-ref-leg { display: inline-block; width: 0; height: 12px; vertical-align: -2px; margin-right: 0.2rem; }
-@media (max-width: 980px) {
+@container painel (max-width: 980px) {
   .ranking-linha { grid-template-columns: 24px minmax(0, 1fr) 110px 110px; grid-template-areas: "pos nome fat comp" ". barras barras barras" ". sit sit sit"; row-gap: 0.4rem; }
   .ranking-linha > :nth-child(1) { grid-area: pos; } .ranking-linha > :nth-child(2) { grid-area: nome; }
   .ranking-linha > :nth-child(3) { grid-area: barras; } .ranking-linha > :nth-child(4) { grid-area: fat; }
   .ranking-linha > :nth-child(5) { grid-area: comp; } .ranking-linha > :nth-child(6) { grid-area: sit; }
   .ranking-cabeca > :nth-child(6) { display: none; }
 }
-@media (max-width: 560px) {
+@container painel (max-width: 560px) {
   .ranking-linha { grid-template-columns: 22px minmax(0, 1fr) minmax(0, 1fr); grid-template-areas: "pos nome nome" ". fat comp" ". barras barras" ". sit sit"; }
   .ranking .num { text-align: left; }
   .ranking-cabeca { display: none; }
@@ -845,7 +914,7 @@ td.nome-empresa { min-width: 10rem; }
 .filtro-mes { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin: 0; }
 .filtro-mes input { margin: 0; max-width: 180px; }
 .filtro-mes label { margin: 0; font-weight: 400; }
-.chave-nfe { font-size: 0.72rem; word-break: break-all; min-width: 180px; }
+td.chave-nfe { font-size: 0.72rem; white-space: normal; word-break: break-all; min-width: 180px; }
 .config-monitor { padding-top: 1rem; padding-bottom: 1rem; }
 .config-monitor .titulo-cartao { margin-bottom: 0.5rem; }
 .horario-monitor { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.75rem; margin: 0; }
