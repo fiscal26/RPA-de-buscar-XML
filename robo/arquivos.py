@@ -49,6 +49,9 @@ SERVICOS_DOCUMENTO = ("faturas", "extrato", "omissao", "certidao", "cartao")
 PASTA_BAIXADOS = "Arquivos baixados"
 # Nome da pasta da competência: "MMAAAA" (102026, o caminho que a importação automática da Domínio lê) ou "AAAA-MM"
 FORMATO_COMPETENCIA = "MMAAAA"
+# PDF de cada nota (DANFE, DANFC-e, DACTE) gerado do XML, em <tipo>/PDF/<chave>.pdf ("pastas" > "pdf_das_notas")
+GERAR_PDF = True
+PASTA_PDF = "PDF"
 
 
 def pasta_competencia(competencia: str) -> str:
@@ -142,24 +145,8 @@ def ler_xml(dados: bytes) -> InfoXml | None:
     nomes = {_local(e.tag): e for e in raiz.iter()}  # primeira ocorrência basta para estes campos
     raiz_nome = _local(raiz.tag)
 
-    if "infNFe" in nomes:
-        inf = nomes["infNFe"]
-        info.chave = re.sub(r"\D", "", inf.get("Id", ""))
-        ide = _filho(inf, "ide")
-        info.modelo = _texto(ide, "mod")
-        info.emissao = (_texto(ide, "dhEmi") or _texto(ide, "dEmi"))[:10]
-        emit, dest = _filho(inf, "emit"), _filho(inf, "dest")
-        info.cnpj_emit = _texto(emit, "CNPJ") or _texto(emit, "CPF")
-        info.cnpj_dest = _texto(dest, "CNPJ") or _texto(dest, "CPF")
-        info.ie_emit = re.sub(r"\D", "", _texto(emit, "IE"))
-        info.ie_dest = re.sub(r"\D", "", _texto(dest, "IE"))
-        try:
-            info.valor = float(_texto(_filho(_filho(inf, "total"), "ICMSTot"), "vNF") or 0)
-        except ValueError:
-            info.valor = 0.0
-        prot = nomes.get("infProt")
-        info.situacao = _texto(prot, "cStat") if prot is not None else ""
-    elif "infCte" in nomes:  # CT-e (cteProc): o valor é o vTPrest
+    if "infCte" in nomes:  # CT-e (cteProc): o valor é o vTPrest. Vem antes da NF-e porque o CT-e
+        # lista as NF-e transportadas em <infDoc><infNFe>, e isso não pode fazer ele ser lido como NF-e
         inf = nomes["infCte"]
         info.chave = re.sub(r"\D", "", inf.get("Id", ""))
         ide = _filho(inf, "ide")
@@ -182,6 +169,23 @@ def ler_xml(dados: bytes) -> InfoXml | None:
             info.partes.append((_texto(toma4, "CNPJ") or _texto(toma4, "CPF"), re.sub(r"\D", "", _texto(toma4, "IE"))))
         try:
             info.valor = float(_texto(_filho(inf, "vPrest"), "vTPrest") or 0)
+        except ValueError:
+            info.valor = 0.0
+        prot = nomes.get("infProt")
+        info.situacao = _texto(prot, "cStat") if prot is not None else ""
+    elif "infNFe" in nomes:
+        inf = nomes["infNFe"]
+        info.chave = re.sub(r"\D", "", inf.get("Id", ""))
+        ide = _filho(inf, "ide")
+        info.modelo = _texto(ide, "mod")
+        info.emissao = (_texto(ide, "dhEmi") or _texto(ide, "dEmi"))[:10]
+        emit, dest = _filho(inf, "emit"), _filho(inf, "dest")
+        info.cnpj_emit = _texto(emit, "CNPJ") or _texto(emit, "CPF")
+        info.cnpj_dest = _texto(dest, "CNPJ") or _texto(dest, "CPF")
+        info.ie_emit = re.sub(r"\D", "", _texto(emit, "IE"))
+        info.ie_dest = re.sub(r"\D", "", _texto(dest, "IE"))
+        try:
+            info.valor = float(_texto(_filho(_filho(inf, "total"), "ICMSTot"), "vNF") or 0)
         except ValueError:
             info.valor = 0.0
         prot = nomes.get("infProt")
@@ -506,7 +510,36 @@ def salvar_originais(brutos: list[tuple[str, bytes]], destino: str | Path, nome:
     novo_nome = f"{nome_tipo} - {reais(valor)}" if notas else nome_tipo
     if pasta.name != novo_nome and not (pasta_mes / novo_nome).exists():
         pasta = pasta.rename(pasta_mes / novo_nome)
-    return {"novos": novos, "repetidos": repetidos, "notas": notas, "valor": valor, "pasta": str(pasta)}
+    pdfs = gerar_pdfs(todos, pasta / PASTA_PDF) if GERAR_PDF else 0
+    return {"novos": novos, "repetidos": repetidos, "notas": notas, "valor": valor, "pasta": str(pasta), "pdfs": pdfs}
+
+
+def gerar_pdfs(xmls: list[tuple[str, bytes]], pasta: Path) -> int:
+    """Um PDF por nota (só as autorizadas e não canceladas), com a chave no nome. O que já existe não é refeito,
+    então rodar de novo só completa o que falta. Devolve quantos PDFs novos."""
+    import pdf_fiscal
+
+    canceladas, notas = set(), {}
+    for _, dados in xmls:
+        info = ler_xml(dados)
+        if not info:
+            continue
+        if info.evento:
+            if info.tipo_evento in ("110111", "110112"):
+                canceladas.add(info.chave)
+        elif info.situacao in ("100", "150") and info.modelo in ("55", "65", "57"):
+            notas.setdefault(info.chave, (info.modelo, dados))
+    novos = 0
+    for chave, (modelo, dados) in notas.items():
+        arquivo = pasta / f"{chave}.pdf"
+        if chave in canceladas or arquivo.exists():
+            continue
+        pdf = pdf_fiscal.gerar(dados, modelo)
+        if pdf:
+            pasta.mkdir(parents=True, exist_ok=True)
+            arquivo.write_bytes(pdf)
+            novos += 1
+    return novos
 
 
 def extensao(dados: bytes) -> str:
