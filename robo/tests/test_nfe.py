@@ -126,11 +126,12 @@ def test_assinatura_do_evento_confere(certificado):
     inf = raiz.find("n:infEvento", d)
     assert inf.get("Id") == f"ID210210{chave(2)}01" and inf.findtext("n:cOrgao", namespaces=d) == "91"
     assina = raiz.find("ds:Signature", d)
-    digest = base64.b64encode(hashlib.sha1(etree.tostring(inf, method="c14n")).digest()).decode()
+    digest = base64.b64encode(hashlib.sha1(nfe._c14n(inf)).digest()).decode()
+    assert b'xmlns=""' not in nfe._c14n(inf)
     assert assina.findtext(".//ds:DigestValue", namespaces=d) == digest
     assert assina.find(".//ds:Reference", d).get("URI") == "#" + inf.get("Id")
     cert.public_key().verify(base64.b64decode(assina.findtext("ds:SignatureValue", namespaces=d)),
-                             etree.tostring(assina.find("ds:SignedInfo", d), method="c14n"), padding.PKCS1v15(), hashes.SHA1())
+                             nfe._c14n(assina.find("ds:SignedInfo", d)), padding.PKCS1v15(), hashes.SHA1())
 
 
 def test_pedido_de_distribuicao_no_formato_do_manual():
@@ -296,3 +297,23 @@ def test_ciencia_desligada_avisa_os_resumos_antigos(tmp_path):
     r = nfe.monitorar(_cliente(amb), 40, tmp_path, "Padaria", ciencia=False,
                       pendentes=[{"chave": chave(5), "manifestada": False}])
     assert not amb.eventos and "desligada" in r.aviso and r.resumos == 1
+
+
+def test_assinatura_confere_num_verificador_xmldsig_independente(certificado):
+    """O XMLDSig do evento é aceito por um verificador que canonicaliza o documento inteiro (como a SEFAZ).
+    Antes, o C14N do SignedInfo saía com xmlns="" em <Transforms> e a SEFAZ recusava com 297."""
+    from lxml import etree
+    _, chave_priv, cert = certificado
+    xml = nfe.assinar(nfe.evento_ciencia(DEST, chave(2)), chave_priv, cert)
+    assert b'xmlns=""' not in xml
+    raiz = etree.fromstring(xml)
+    d = {"ds": "http://www.w3.org/2000/09/xmldsig#"}
+    si = raiz.find(".//ds:SignedInfo", d)
+    esperado = (b'<SignedInfo xmlns="http://www.w3.org/2000/09/xmldsig#"><CanonicalizationMethod Algorithm='
+                b'"http://www.w3.org/TR/2001/REC-xml-c14n-20010315"></CanonicalizationMethod>')
+    assert nfe._c14n(si).startswith(esperado) and b'<Transforms><Transform Algorithm' in nfe._c14n(si)
+    signxml = pytest.importorskip("signxml")
+    from cryptography.hazmat.primitives.serialization import Encoding
+    cfg = signxml.SignatureConfiguration(signature_methods=frozenset({signxml.SignatureMethod.RSA_SHA1}),
+                                         digest_algorithms=frozenset({signxml.DigestAlgorithm.SHA1}))
+    signxml.XMLVerifier().verify(xml, x509_cert=cert.public_bytes(Encoding.PEM).decode(), expect_config=cfg)
