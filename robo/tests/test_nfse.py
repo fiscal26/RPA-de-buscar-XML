@@ -392,9 +392,9 @@ def test_mei_sem_busca_anterior_baixa_desde_janeiro(chaves, cfg_nfse, tmp_path):
     assert (base / "022026" / nfse.PASTA_EMITIDAS).is_dir() and (base / "072026" / nfse.PASTA_EMITIDAS).is_dir()
     assert (base / "072026" / f"{nfse.PASTA_EMITIDAS} 072026.xml").exists()
     assert r.qtd_xml == 1 and "meses anteriores" in r.mensagem, r
-    # na próxima competência, os meses que já têm pasta não são refeitos
+    # na próxima competência, os meses presentes no banco não são refeitos
     (base / "022026" / nfse.PASTA_EMITIDAS / "marca.txt").write_text("x")
-    assert nfse.meses_sem_busca(tmp_path / "destino", "Lotivisse", DONO, "7", "2026-10") == [
+    assert nfse.meses_sem_busca("2026-10", ["2026-02-01", "2026-07-01", "2026-09-01"]) == [
         "2026-01", "2026-03", "2026-04", "2026-05", "2026-06", "2026-08"]
 
 
@@ -431,3 +431,55 @@ def test_portal_sem_pdf_o_robo_gera_o_danfse_do_xml(tmp_path):
     assert len(pdfs) == 6 and all(p.read_bytes().startswith(b"%PDF") for p in pdfs)
     assert r.pdfs == 6 and r.pdfs_gerados == 6 and r.pdfs_faltando == 0
     assert sum("/danfse/" in p[0] for p in portal.pedidos) <= 4  # depois de 3 sem PDF, não pede mais ao portal
+
+
+def test_historico_do_banco_pula_meses_consultados_inclusive_zero(chaves, cfg_nfse, tmp_path):
+    import robo_xml
+    t = {**tarefa(chaves, ["nfse_emitidas"]), "mei": True,
+         "meses_consultados": ["2026-01", "2026-02", "2026-07"]}
+    # Sem pastas locais, o banco continua sendo a referência: janeiro (zero) não é refeito.
+    r = robo_xml.executar_nfse(cfg_nfse, t, chaves[0], sessao_falsa=PortalFalso(_docs_mei()))
+    meses = {m["competencia"][:7]: m for m in r.detalhes["mei_nfse"]["meses"]}
+    assert set(meses) == {"2026-03", "2026-04", "2026-05", "2026-06", "2026-08", "2026-09"}
+    assert meses["2026-03"]["valor"] == 0 and meses["2026-03"]["quantidade"] == 0
+
+
+def test_pasta_antiga_nao_comprova_consulta_no_banco(chaves, cfg_nfse, tmp_path):
+    import robo_xml
+    base = tmp_path / "destino" / "Arquivos baixados" / "7-Lotivisse"
+    (base / "022026" / nfse.PASTA_EMITIDAS).mkdir(parents=True)
+    t = {**tarefa(chaves, ["nfse_emitidas"]), "mei": True, "meses_consultados": []}
+    r = robo_xml.executar_nfse(cfg_nfse, t, chaves[0], sessao_falsa=PortalFalso(_docs_mei()))
+    meses = {m["competencia"][:7]: m for m in r.detalhes["mei_nfse"]["meses"]}
+    assert len(meses) == 9 and meses["2026-02"]["valor"] == 300
+
+
+def test_portal_busca_historico_no_escritorio_da_tarefa(monkeypatch):
+    import robo_xml
+    chamadas = []
+    class RespostaJson:
+        def __init__(self, dados): self.dados = dados
+        def json(self): return self.dados
+    def requisicao(metodo, caminho, **kw):
+        chamadas.append((caminho, kw["params"]))
+        return RespostaJson([{"org_id": "org-a"}] if caminho.endswith("xml_tarefas") else [{"competencia": "2026-01-01"}])
+    portal = robo_xml.Portal("https://example.test", "sb_secret_teste")
+    monkeypatch.setattr(portal, "_r", requisicao)
+    assert portal.meses_nfse_consultados("tarefa-a", DONO, "2026-09-01") == ["2026-01"]
+    assert chamadas[0][1]["id"] == "eq.tarefa-a"
+    assert chamadas[1][1]["org_id"] == "eq.org-a"
+    assert chamadas[1][1]["cnpj"] == f"eq.{DONO}"
+
+
+def test_falha_ao_ler_historico_nao_consulta_api_nem_grava_zero(monkeypatch):
+    import robo_xml
+    from types import SimpleNamespace
+    finalizados = []
+    def falhar(*args): raise RuntimeError("Banco indisponível")
+    def nao_consultar(*args): raise AssertionError("Não deve consultar sem ler o histórico")
+    monkeypatch.setattr(robo_xml, "executar_nfse", nao_consultar)
+    portal = SimpleNamespace(atualizar_tarefa=lambda *a: None, meses_nfse_consultados=falhar)
+    robo = SimpleNamespace(portal=portal, cfg={}, privada=None, _finalizar=lambda t, r: finalizados.append(r))
+    robo_xml.Robo._uma_nfse(robo, {"id":"t", "cnpj":DONO, "nome":"MEI", "data_inicio":"2026-09-01", "tipos":["nfse_emitidas"]})
+    assert finalizados[0].status == "erro"
+    assert "mei_nfse" not in finalizados[0].detalhes

@@ -691,6 +691,18 @@ class Portal:
         """Tarefas liberadas da NFS-e (Portal Nacional), cada uma com o certificado A1 cifrado."""
         return self._r("POST", "/rest/v1/rpc/xml_nfse_pegar_lote", json={"p_robo": robo, "p_max": maximo}).json() or []
 
+    def meses_nfse_consultados(self, tarefa: str, cnpj: str, competencia: str) -> list[str]:
+        """O banco, e não as pastas do PC, comprova os meses consultados (inclusive zero)."""
+        tarefas = self._r("GET", "/rest/v1/xml_tarefas", params={
+            "select": "org_id", "id": f"eq.{tarefa}"}).json()
+        if len(tarefas) != 1:
+            raise RuntimeError("Tarefa NFS-e não encontrada para consultar o histórico")
+        ano = competencia[:4]
+        meses = self._r("GET", "/rest/v1/xml_mei_nfse_meses", params={
+            "select": "competencia", "org_id": f"eq.{tarefas[0]['org_id']}", "cnpj": f"eq.{cnpj}",
+            "and": f"(competencia.gte.{ano}-01-01,competencia.lte.{competencia[:7]}-01)"}).json()
+        return [m["competencia"][:7] for m in meses]
+
     def atualizar_tarefa(self, tid: str, campos: dict):
         self._r("PATCH", f"/rest/v1/xml_tarefas?id=eq.{tid}", json=campos, headers={"Prefer": "return=minimal"})
 
@@ -957,6 +969,7 @@ class Robo:
         self.portal.atualizar_tarefa(t["id"], {"detalhes": {tipo: {"situacao": "andamento", "mensagem": ""}
                                                             for tipo in t.get("tipos") or []}})
         try:
+            t = {**t, "meses_consultados": self.portal.meses_nfse_consultados(t["id"], t["cnpj"], str(t["data_inicio"]))}
             r = executar_nfse(self.cfg, t, self.privada)
         except Exception:
             log.exception("Erro inesperado na NFS-e de %s", t["nome"])
@@ -1102,12 +1115,12 @@ def executar_nfse(cfg: dict, t: dict, privada, sessao_falsa=None) -> Resultado:
             destino, codigo = destino_da_tarefa(cfg, t), t.get("codigo") or ""
             opcoes = dict(pdf="nfse_pdf" in tipos, com_emitidas="nfse_emitidas" in tipos,
                           com_recebidas="nfse_recebidas" in tipos, relatorio="nfse_retencoes" in tipos)
-            anteriores = nfse.meses_sem_busca(destino, t["nome"], cnpj, codigo, competencia)
+            anteriores = nfse.meses_sem_busca(competencia, t.get("meses_consultados") or [])
             r = nfse.baixar_competencia(cliente, cnpj, competencia, destino, t["nome"], codigo, **opcoes)
             # O cache contém emitidas mesmo se o usuário escolheu só salvar as recebidas.
             meses_mei.append(nfse.resumo_mei(cnpj, competencia))
             # MEI (cadastrado como MEI na SEFAZ ou que emite NFS-e como MEI) que ainda não tinha o ano: os meses de
-            # janeiro até a competência saem junto, do cache já atualizado (como no Dossiê MEI)
+            # janeiro até a competência saem junto, somente onde ainda não há registro no banco
             if anteriores and (t.get("mei") or nfse.eh_mei(cnpj)):
                 for mes in anteriores:
                     extra = nfse.baixar_competencia(cliente, cnpj, mes, destino, t["nome"], codigo, atualizar=False,

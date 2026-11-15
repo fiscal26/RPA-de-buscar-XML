@@ -524,12 +524,11 @@ def resumo_mei(cnpj: str, competencia: str, cache_raiz: Path | None = None) -> d
             "quantidade": len(por_chave)}
 
 
-def meses_sem_busca(destino: str | Path, nome: str, cnpj: str, codigo: str, competencia: str) -> list[str]:
-    """Meses do ano ANTES da competência (de janeiro em diante) sem pasta da empresa: o MEI que chega sem
-    acompanhamento já sai com o ano todo, como no Dossiê MEI. Devolve ["AAAA-MM", ...]."""
+def meses_sem_busca(competencia: str, consultados=()) -> list[str]:
+    """Meses anteriores sem registro no banco. Zero consultado é dado, pasta local não é."""
     ano, mes = int(competencia[:4]), int(competencia[5:7])
-    base = pasta_empresa(destino, nome, cnpj, codigo)
-    return [f"{ano}-{m:02d}" for m in range(1, mes) if not (base / pasta_competencia(f"{ano}-{m:02d}")).exists()]
+    feitos = {str(m)[:7] for m in consultados}
+    return [f"{ano}-{m:02d}" for m in range(1, mes) if f"{ano}-{m:02d}" not in feitos]
 
 
 def danfse_do_xml(xml: bytes) -> bytes | None:
