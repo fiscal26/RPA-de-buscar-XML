@@ -1,5 +1,7 @@
 "use server";
 
+import { erroPeriodo } from "@/lib/periodo";
+
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { after } from "next/server";
@@ -59,16 +61,19 @@ export async function salvarCadastroMei(_: EstadoAjuste, form: FormData): Promis
   return { ok: "Cadastro MEI salvo. O monitoramento já considera este período; os valores serão atualizados na próxima consulta." };
 }
 
-export type EstadoReprocessar = { erro?: string; ok?: string; agendamentos?: string[] } | undefined;
+export type EstadoReprocessar = { erro?: string; ok?: string; agendamentos?: string[]; consultas?: { id: string; competencia: string; origem: string }[] } | undefined;
 export async function reprocessarMei(_: EstadoReprocessar, form: FormData): Promise<EstadoReprocessar> {
   const { supabase } = await contexto();
-  const { data, error } = await supabase.rpc("xml_mei_reprocessar", { p_org: String(form.get("org") ?? ""),
-    p_documento: String(form.get("documento") ?? ""), p_competencia: `${form.get("competencia")}-01` });
+  const inicio = String(form.get("competencia") ?? ""), fim = String(form.get("competencia_final") || inicio);
+  const erro = erroPeriodo(inicio, fim, "2018-01");
+  if (erro) return { erro };
+  const { data, error } = await supabase.rpc("xml_mei_reprocessar_periodo", { p_org: String(form.get("org") ?? ""),
+    p_documento: String(form.get("documento") ?? ""), p_inicio: `${inicio}-01`, p_fim: `${fim}-01` });
   if (error) return { erro: error.message.includes("xml_mei_reprocessar")
     ? "A atualização MEI/NFS-e precisa ser aplicada no banco antes de reprocessar." : error.message };
   revalidatePath("/painel/agendamentos");
-  return { ok: data.existente ? "Já existe uma consulta na fila para esta empresa e competência. Acompanhe abaixo."
-    : "Reprocessamento enviado à fila do robô. Os últimos valores válidos serão mantidos até a conclusão.", agendamentos: data.agendamentos };
+  return { ok: data.existente ? "Já existem consultas na fila para este período. Acompanhe abaixo."
+    : "Reprocessamento do período enviado à fila do robô. Os últimos valores válidos serão mantidos até a conclusão.", agendamentos: data.agendamentos, consultas: data.consultas };
 }
 
 export async function adicionarAjuste(_: EstadoAjuste, form: FormData): Promise<EstadoAjuste> {

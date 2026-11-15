@@ -1,5 +1,6 @@
 "use client";
 
+import PeriodoCompetencias from "@/components/ui/PeriodoCompetencias";
 import Tabela from "@/components/ui/Tabela";
 
 import Escolha from "@/components/ui/Escolha";
@@ -28,7 +29,8 @@ export default function FormAgendamento({ organizacoes, competencia }: { organiz
     return (
       <div>
         <div className="faixa ok">{resultado.ok} O robô salva os arquivos na pasta configurada no computador dele.</div>
-        <Link className="botao" href={`/painel/agendamentos/${resultado.agendamentoId}`}>Acompanhar este agendamento</Link>{" "}
+        <div className="periodo-acompanhamento">{(resultado.agendamentoIds ?? [resultado.agendamentoId!]).map((id, i) =>
+          <Link className="botao secundario" key={id} href={`/painel/agendamentos/${id}`}>Acompanhar {resultado.competenciasAgendadas?.[i] ? competenciaBR(resultado.competenciasAgendadas[i]) : `competência ${i + 1}`}</Link>)}</div>{" "}
         <button className="secundario" onClick={() => location.reload()}>Novo agendamento</button>
       </div>
     );
@@ -54,9 +56,7 @@ export default function FormAgendamento({ organizacoes, competencia }: { organiz
         <label htmlFor="arquivo">Planilha das empresas</label>
         <SeletorArquivo id="arquivo" nome="arquivo" aceita=".xlsx,.xlsm,.csv" obrigatorio titulo="Escolher a planilha (.xlsx ou .csv)" />
 
-        <label htmlFor="competencia">Competência</label>
-        <input id="competencia" name="competencia" type="month" defaultValue={competencia} required style={{ maxWidth: 220 }} />
-        <p className="suave">O robô busca do 1º ao último dia do mês.</p>
+        <PeriodoCompetencias competencia={competencia} minimo="2006-01" />
 
         <label>Quando executar</label>
         <Segmentado nome="quando" rotulo="Quando executar" valor={quando} aoMudar={setQuando}
@@ -74,7 +74,7 @@ export default function FormAgendamento({ organizacoes, competencia }: { organiz
         <div style={{ marginTop: "1.5rem" }}>
           <h2>Confira a planilha {previa.nomeArquivo}</h2>
           <p>
-            <b>{previa.itens.length}</b> {previa.itens.length === 1 ? "empresa" : "empresas"} · competência <b>{competenciaBR(previa.competencia)}</b> ·{" "}
+            <b>{previa.itens.length}</b> {previa.itens.length === 1 ? "empresa" : "empresas"} · período <b>{competenciaBR(previa.competencia)}{previa.competenciaFinal && previa.competenciaFinal !== previa.competencia && ` a ${competenciaBR(previa.competenciaFinal)}`}</b> ·{" "}
             {previa.executarEm ? `começa em ${dataHoraBR(previa.executarEm)}` : "começa assim que possível"}.
           </p>
           <p className="suave">

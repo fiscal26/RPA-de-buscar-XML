@@ -1060,3 +1060,11 @@ button.perigo-cheio:hover { background: var(--erro); border-color: var(--erro); 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; }
 }
+
+.aviso-reprocessamento { margin: 0; padding: 0.75rem 1rem; max-width: 32rem; border: 1px solid var(--linha); border-radius: var(--raio); background: var(--carbono); font-size: 0.85rem; }
+
+.periodo-competencias { border: 0; padding: 0; margin: 1rem 0; min-width: 0; }
+.periodo-competencias legend { font-size: 0.93rem; font-weight: 600; color: var(--forte); }
+.periodo-competencias .linha { gap: 0.75rem; }
+.periodo-competencias .linha > div { min-width: min(100%, 180px); flex: 0 1 220px; }
+.periodo-acompanhamento { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-bottom: 1rem; }

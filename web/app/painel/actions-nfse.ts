@@ -1,5 +1,7 @@
 "use server";
 
+import { erroPeriodo, competenciasPeriodo } from "@/lib/periodo";
+
 import { revalidatePath } from "next/cache";
 import { contexto } from "@/lib/sessao";
 import { clienteAdmin } from "@/lib/supabase/admin";
@@ -21,9 +23,9 @@ export type ItemNfse = {
 };
 
 export type PreviaNfse = {
-  erro?: string; ok?: string; agendamentoId?: string;
+  erro?: string; ok?: string; agendamentoId?: string; agendamentoIds?: string[]; competenciasAgendadas?: string[];
   itens?: ItemNfse[]; erros?: string[]; avisos?: string[];
-  nomeArquivo?: string; orgId?: string; competencia?: string; executarEm?: string | null;
+  nomeArquivo?: string; orgId?: string; competenciaFinal?: string; competencia?: string; executarEm?: string | null;
   certificadoId?: string | null; certificadoNome?: string;
 };
 
@@ -38,12 +40,6 @@ function certificadoPara(cnpj: string, certificados: Certificado[]): SituacaoCer
   return usaProcuracao(cnpj, escolhido) ? "escritorio" : "matriz";
 }
 
-function conferirCompetencia(valor: string): string | null {
-  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(valor)) return "Escolha a competência (mês e ano).";
-  if (valor > new Date().toISOString().slice(0, 7)) return "A competência ainda não começou: não há notas para baixar.";
-  if (valor < "2023-01") return "O Portal Nacional da NFS-e só tem notas a partir de 2023.";
-  return null;
-}
 
 function horarioBrasilia(valor: string): string | null {
   if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(valor)) return null;
@@ -59,7 +55,8 @@ export async function prepararAgendamentoNfse(_: PreviaNfse | undefined, form: F
   const arquivo = form.get("arquivo");
   if (!doCadastro && (!(arquivo instanceof File) || arquivo.size === 0)) return { erro: "Escolha a planilha das empresas (.xlsx ou .csv)." };
   const competencia = String(form.get("competencia") ?? "");
-  const erroCompetencia = conferirCompetencia(competencia);
+  const competenciaFinal = String(form.get("competencia_final") || competencia);
+  const erroCompetencia = erroPeriodo(competencia, competenciaFinal, "2023-01");
   if (erroCompetencia) return { erro: erroCompetencia };
   let executarEm: string | null = null;
   if (form.get("quando") === "agendar") {
@@ -113,7 +110,7 @@ export async function prepararAgendamentoNfse(_: PreviaNfse | undefined, form: F
 
   const nomeArquivo = doCadastro ? "Empresas cadastradas" : (arquivo as File).name;
   const certificadoNome = escolhido ? `${escolhido.nome || formatarDocumento(escolhido.cnpj)} (${formatarDocumento(escolhido.cnpj)})` : undefined;
-  return { itens, erros: leitura.erros, avisos, nomeArquivo, orgId, competencia, executarEm, certificadoId, certificadoNome };
+  return { itens, erros: leitura.erros, avisos, nomeArquivo, orgId, competencia, competenciaFinal, executarEm, certificadoId, certificadoNome };
 }
 
 export async function confirmarAgendamentoNfse(previa: PreviaNfse): Promise<PreviaNfse> {
@@ -121,7 +118,8 @@ export async function confirmarAgendamentoNfse(previa: PreviaNfse): Promise<Prev
   const orgId = admin ? previa.orgId ?? "" : perfil.org_id ?? "";
   if (!orgId || !previa.itens?.length) return { erro: "Agendamento vazio." };
   const competencia = previa.competencia ?? "";
-  const erroCompetencia = conferirCompetencia(competencia);
+  const competenciaFinal = previa.competenciaFinal || competencia;
+  const erroCompetencia = erroPeriodo(competencia, competenciaFinal, "2023-01");
   if (erroCompetencia) return { erro: erroCompetencia };
   const executarEm = previa.executarEm && !Number.isNaN(Date.parse(previa.executarEm)) ? previa.executarEm : new Date().toISOString();
   const agora = new Date().toISOString();
@@ -152,21 +150,16 @@ export async function confirmarAgendamentoNfse(previa: PreviaNfse): Promise<Prev
   if (erroEmpresas) return { erro: `Não consegui salvar as empresas: ${erroEmpresas.message}` };
   const idPorCnpj = new Map((empresasDb ?? []).map((e) => [e.cnpj as string, e.id as string]));
 
-  const { data: ag, error } = await db.from("xml_agendamentos").insert({
-    org_id: orgId, criado_por: user.id, nome_arquivo: (previa.nomeArquivo ?? "").slice(0, 200), origem: "nfse",
-    competencia: `${competencia}-01`, executar_em: executarEm, total: empresas.length,
-    ...(previa.certificadoId ? { certificado_id: previa.certificadoId } : {}),
-  }).select("id").single();
-  if (error) return { erro: error.message };
-  const { error: erroTarefas } = await db.from("xml_tarefas").insert(empresas.map((e) => ({
-    org_id: orgId, agendamento_id: ag.id, nfse_empresa_id: idPorCnpj.get(e.cnpj), ie: e.cnpj, nome: e.nome, codigo: e.codigo, tipos: e.tipos,
-  })));
-  if (erroTarefas) {
-    await db.from("xml_agendamentos").delete().eq("id", ag.id);
-    return { erro: erroTarefas.message };
-  }
+  const { data: ids, error } = await db.rpc("xml_agendar_periodo", {
+    p_org: orgId, p_criado_por: user.id, p_inicio: `${competencia}-01`, p_fim: `${competenciaFinal}-01`,
+    p_executar: executarEm, p_origem: "nfse", p_nome: previa.nomeArquivo ?? "",
+    p_empresas: empresas.map((e) => ({ id: idPorCnpj.get(e.cnpj), tipos: e.tipos })),
+    p_certificado: previa.certificadoId ?? null,
+  });
+  if (error) return { erro: `Não consegui agendar o período: ${error.message}` };
+  const agendamentoIds = (ids ?? []) as string[];
   revalidatePath("/painel/agendamentos");
-  return { ok: `Agendamento criado: ${empresas.length} ${empresas.length === 1 ? "empresa" : "empresas"} na fila.`, agendamentoId: ag.id };
+  return { ok: `${agendamentoIds.length} ${agendamentoIds.length === 1 ? "competência agendada" : "competências agendadas"} para ${empresas.length} ${empresas.length === 1 ? "empresa" : "empresas"}.`, agendamentoId: agendamentoIds[0], agendamentoIds, competenciasAgendadas: competenciasPeriodo(competencia, competenciaFinal) };
 }
 
 // ------------------------------------------------------------------ certificados A1

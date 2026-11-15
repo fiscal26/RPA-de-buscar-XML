@@ -1,5 +1,6 @@
 "use client";
 
+import PeriodoCompetencias from "@/components/ui/PeriodoCompetencias";
 import Tabela from "@/components/ui/Tabela";
 
 import Escolha from "@/components/ui/Escolha";
@@ -56,7 +57,8 @@ export default function FormAgendamentoNfse({ organizacoes, competencia, empresa
     return (
       <div>
         <div className="faixa ok">{resultado.ok} O robô salva as notas e o relatório na pasta configurada no computador dele.</div>
-        <Link className="botao" href={`/painel/agendamentos/${resultado.agendamentoId}`}>Acompanhar este agendamento</Link>{" "}
+        <div className="periodo-acompanhamento">{(resultado.agendamentoIds ?? [resultado.agendamentoId!]).map((id, i) =>
+          <Link className="botao secundario" key={id} href={`/painel/agendamentos/${id}`}>Acompanhar {resultado.competenciasAgendadas?.[i] ? competenciaBR(resultado.competenciasAgendadas[i]) : `competência ${i + 1}`}</Link>)}</div>{" "}
         <button className="secundario" onClick={() => location.reload()}>Novo agendamento</button>
       </div>
     );
@@ -132,9 +134,7 @@ export default function FormAgendamentoNfse({ organizacoes, competencia, empresa
           </>
         )}
 
-        <label htmlFor="nfse-competencia">Competência</label>
-        <input id="nfse-competencia" name="competencia" type="month" defaultValue={competencia} required style={{ maxWidth: 220 }} />
-        <p className="suave">Vêm as notas com essa competência (o mês do serviço), emitidas e recebidas.</p>
+        <PeriodoCompetencias competencia={competencia} minimo="2023-01" />
 
         <label>Quando executar</label>
         <Segmentado nome="quando" rotulo="Quando executar" valor={quando} aoMudar={setQuando}
@@ -152,7 +152,7 @@ export default function FormAgendamentoNfse({ organizacoes, competencia, empresa
         <div style={{ marginTop: "1.5rem" }}>
           <h2>{previa.nomeArquivo === "Empresas cadastradas" ? "Confira as empresas escolhidas" : `Confira a planilha ${previa.nomeArquivo}`}</h2>
           <p>
-            <b>{previa.itens.length}</b> {previa.itens.length === 1 ? "empresa" : "empresas"} · competência <b>{competenciaBR(previa.competencia)}</b> ·{" "}
+            <b>{previa.itens.length}</b> {previa.itens.length === 1 ? "empresa" : "empresas"} · período <b>{competenciaBR(previa.competencia)}{previa.competenciaFinal && previa.competenciaFinal !== previa.competencia && ` a ${competenciaBR(previa.competenciaFinal)}`}</b> ·{" "}
             {previa.executarEm ? `começa em ${dataHoraBR(previa.executarEm)}` : "começa assim que possível"}.
             {previa.certificadoNome && <> Certificado: <b>{previa.certificadoNome}</b>.</>}
           </p>
