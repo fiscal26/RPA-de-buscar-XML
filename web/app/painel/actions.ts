@@ -1,5 +1,7 @@
 "use server";
 
+import { erroPeriodo, competenciasPeriodo } from "@/lib/periodo";
+
 import { revalidatePath } from "next/cache";
 import { contexto } from "@/lib/sessao";
 import { clienteAdmin } from "@/lib/supabase/admin";
@@ -21,24 +23,17 @@ export type AcessoAgendamento = { login: string; senhaCifrada: string | null; ca
 export type Previa = {
   erro?: string;
   ok?: string;
-  agendamentoId?: string;
+  agendamentoId?: string; agendamentoIds?: string[]; competenciasAgendadas?: string[];
   itens?: ItemAgendamento[];
   acessos?: AcessoAgendamento[];
   erros?: string[];
   avisos?: string[];
   nomeArquivo?: string;
   orgId?: string;
-  competencia?: string;       // aaaa-mm
+  competenciaFinal?: string; competencia?: string;       // aaaa-mm
   executarEm?: string | null; // ISO; null = agora
 };
 
-function conferirCompetencia(valor: string): string | null {
-  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(valor)) return "Escolha a competência (mês e ano).";
-  const hoje = new Date().toISOString().slice(0, 7);
-  if (valor > hoje) return "A competência ainda não começou: não há notas para baixar.";
-  if (valor < "2006-01") return "Competência anterior à NF-e.";
-  return null;
-}
 
 /** "2026-10-20T08:00" digitado no horário de Brasília -> ISO em UTC. */
 function horarioBrasilia(valor: string): string | null {
@@ -55,7 +50,8 @@ export async function prepararAgendamento(_: Previa | undefined, form: FormData)
   const arquivo = form.get("arquivo");
   if (!(arquivo instanceof File) || arquivo.size === 0) return { erro: "Escolha a planilha das empresas (.xlsx ou .csv)." };
   const competencia = String(form.get("competencia") ?? "");
-  const erroCompetencia = conferirCompetencia(competencia);
+  const competenciaFinal = String(form.get("competencia_final") || competencia);
+  const erroCompetencia = erroPeriodo(competencia, competenciaFinal, "2006-01");
   if (erroCompetencia) return { erro: erroCompetencia };
   let executarEm: string | null = null;
   if (form.get("quando") === "agendar") {
@@ -107,7 +103,7 @@ export async function prepararAgendamento(_: Previa | undefined, form: FormData)
   } catch (e) {
     return { erro: (e as Error).message };
   }
-  return { itens, acessos, erros, avisos, nomeArquivo: arquivo.name, orgId, competencia, executarEm };
+  return { itens, acessos, erros, avisos, nomeArquivo: arquivo.name, orgId, competencia, competenciaFinal, executarEm };
 }
 
 const SENHA_CIFRADA = /^v1:[A-Za-z0-9+/=]{100,2000}$/;
@@ -118,7 +114,8 @@ export async function confirmarAgendamento(previa: Previa): Promise<Previa> {
   if (!orgId || !previa.itens?.length) return { erro: "Agendamento vazio." };
   // confere de novo no servidor (os dados vieram do navegador)
   const competencia = previa.competencia ?? "";
-  const erroCompetencia = conferirCompetencia(competencia);
+  const competenciaFinal = previa.competenciaFinal || competencia;
+  const erroCompetencia = erroPeriodo(competencia, competenciaFinal, "2006-01");
   if (erroCompetencia) return { erro: erroCompetencia };
   const executarEm = previa.executarEm && !Number.isNaN(Date.parse(previa.executarEm)) ? previa.executarEm : new Date().toISOString();
   const agora = new Date().toISOString();
@@ -164,21 +161,17 @@ export async function confirmarAgendamento(previa: Previa): Promise<Previa> {
   const idPorIe = new Map((empresasDb ?? []).map((e) => [e.ie as string, e.id as string]));
 
   // 3) agendamento e uma tarefa por empresa
-  const { data: ag, error } = await db.from("xml_agendamentos").insert({
-    org_id: orgId, criado_por: user.id, nome_arquivo: (previa.nomeArquivo ?? "").slice(0, 200),
-    competencia: `${competencia}-01`, executar_em: executarEm, total: empresas.length,
-  }).select("id").single();
-  if (error) return { erro: error.message };
-  const { error: erroTarefas } = await db.from("xml_tarefas").insert(empresas.map((e) => ({
-    org_id: orgId, agendamento_id: ag.id, empresa_id: idPorIe.get(e.ie), ie: e.ie, nome: e.nome, codigo: e.codigo, tipos: e.tipos,
-  })));
-  if (erroTarefas) {
-    await db.from("xml_agendamentos").delete().eq("id", ag.id);
-    return { erro: erroTarefas.message };
-  }
+  const { data: ids, error } = await db.rpc("xml_agendar_periodo", {
+    p_org: orgId, p_criado_por: user.id, p_inicio: `${competencia}-01`, p_fim: `${competenciaFinal}-01`,
+    p_executar: executarEm, p_origem: "sefaz", p_nome: previa.nomeArquivo ?? "",
+    p_empresas: empresas.map((e) => ({ id: idPorIe.get(e.ie), tipos: e.tipos })),
+    p_certificado: null,
+  });
+  if (error) return { erro: `Não consegui agendar o período: ${error.message}` };
+  const agendamentoIds = (ids ?? []) as string[];
   revalidatePath("/painel/agendamentos");
   revalidatePath("/painel/empresas");
-  return { ok: `Agendamento criado: ${empresas.length} ${empresas.length === 1 ? "empresa" : "empresas"} na fila.`, agendamentoId: ag.id };
+  return { ok: `${agendamentoIds.length} ${agendamentoIds.length === 1 ? "competência agendada" : "competências agendadas"} para ${empresas.length} ${empresas.length === 1 ? "empresa" : "empresas"}.`, agendamentoId: agendamentoIds[0], agendamentoIds, competenciasAgendadas: competenciasPeriodo(competencia, competenciaFinal) };
 }
 
 export async function cancelarAgendamento(id: string) {
