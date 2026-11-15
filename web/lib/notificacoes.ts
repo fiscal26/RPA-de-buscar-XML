@@ -1,4 +1,5 @@
 import "server-only";
+import { carregarLembretesCadastroMei } from "@/lib/mei-sugestoes";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { formatarDocumento, formatarIe, dataHoraBR } from "@/lib/documentos";
 import { NIVEIS, pct } from "@/lib/mei";
@@ -20,10 +21,10 @@ const ROBO_ONLINE_SEGUNDOS = 120;
 
 /** Tudo o que pede atenção do escritório: empresas que dependem de um ajuste, MEIs perto ou acima do limite,
  *  certificados vencendo e (para o administrador) o robô desligado. Do mais grave ao mais leve. */
-export async function carregarNotificacoes(supabase: SupabaseClient, admin: boolean): Promise<Notificacao[]> {
+export async function carregarNotificacoes(supabase: SupabaseClient, admin: boolean, podeCadastrarMei = true): Promise<Notificacao[]> {
   const ano = new Date().getFullYear();
   const ontem = new Date(Date.now() - 86_400_000).toISOString();
-  const [{ data: agendamentos }, { data: tarefas }, { data: certificados }, meis, robos, { data: monitores }, { data: novasNfe }] = await Promise.all([
+  const [{ data: agendamentos }, { data: tarefas }, { data: certificados }, meis, robos, { data: monitores }, { data: novasNfe }, lembretesMei] = await Promise.all([
     supabase.from("xml_agendamentos").select("id, competencia, criado_em, origem").order("criado_em", { ascending: false }).limit(50),
     supabase.from("xml_tarefas")
       .select("id, agendamento_id, ie, nome, status, mensagem, tipos, detalhes, concluido_em, xml_empresas(xml_acessos(login))")
@@ -34,8 +35,9 @@ export async function carregarNotificacoes(supabase: SupabaseClient, admin: bool
           : Promise.resolve([] as { id: string; ultimo_sinal: string }[]),
     supabase.from("xml_nfe_monitor").select("id, org_id, cnpj, nome, status, mensagem, ultima_consulta").eq("ativo", true),
     supabase.from("xml_nfe_notas").select("org_id, cnpj, encontrada_em").gte("encontrada_em", ontem).limit(5000),
+    carregarLembretesCadastroMei(supabase, podeCadastrarMei).catch(() => []),
   ]);
-  const lista: Notificacao[] = [];
+  const lista: Notificacao[] = [...lembretesMei];
 
   const r = resumoPainel((tarefas ?? []) as unknown as TarefaPainel[], (agendamentos ?? []) as AgendamentoPainel[]);
   for (const a of r.acoes) {

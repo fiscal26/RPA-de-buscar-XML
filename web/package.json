@@ -8,6 +8,7 @@
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "test:mei": "node --test tests/mei.test.cjs",
+    "test:notificacoes": "node --test tests/mei-sugestoes.test.cjs",
     "test:periodo": "node --test tests/periodo.test.cjs tests/periodo-db.test.cjs",
     "test:sefaz:db": "node --test tests/sefaz-reprocessar-db.test.cjs",
     "test:mei:db": "node --test tests/mei-db.test.cjs tests/mei-historico-db.test.cjs",

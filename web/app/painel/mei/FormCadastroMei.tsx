@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useState, useTransition } from "react";
+import { useActionState, useEffect, useState, useTransition } from "react";
 import Escolha from "@/components/ui/Escolha";
 import { dataBR, dataHoraBR, formatarDocumento } from "@/lib/documentos";
 import type { CadastroMei } from "@/lib/mei-carteira";
@@ -9,8 +9,8 @@ import { consultarCnpj } from "./consulta-cnpj";
 import { salvarCadastroMei } from "./actions";
 
 type Empresa = { org: string; cnpj: string; nome: string; escritorio: string; sugestao: boolean };
-export default function FormCadastroMei({ empresas, cadastros }: { empresas: Empresa[]; cadastros: CadastroMei[] }) {
-  const [selecionada, selecionar] = useState("");
+export default function FormCadastroMei({ empresas, cadastros, empresaInicial }: { empresas: Empresa[]; cadastros: CadastroMei[]; empresaInicial?: string }) {
+  const [selecionada, selecionar] = useState(empresaInicial ?? "");
   const empresa = empresas.find((e) => `${e.org}|${e.cnpj}` === selecionada);
   const cadastro = cadastros.find((c) => c.org_id === empresa?.org && c.cnpj === empresa?.cnpj);
   return (
@@ -26,6 +26,9 @@ export default function FormCadastroMei({ empresas, cadastros }: { empresas: Emp
 
 function CamposMei({ empresa, cadastro }: { empresa: Empresa; cadastro?: CadastroMei }) {
   const [estado, acao, pendente] = useActionState(salvarCadastroMei, undefined);
+  useEffect(() => {
+    if (estado?.ok) window.dispatchEvent(new Event("notificacoes:atualizar"));
+  }, [estado]);
   const [abertura, setAbertura] = useState(cadastro?.inicio_atividade ?? "");
   const [inicio, setInicio] = useState(cadastro?.inicio_mei.slice(0, 7) ?? "");
   const [fim, setFim] = useState(cadastro?.fim_mei?.slice(0, 7) ?? "");

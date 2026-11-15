@@ -34,6 +34,10 @@ export default function Notificacoes() {
   useEffect(() => { setVistos(vistas()); }, []);
   useEffect(() => { carregar(); }, [carregar, caminho]);
   useEffect(() => {
+    window.addEventListener("notificacoes:atualizar", carregar);
+    return () => window.removeEventListener("notificacoes:atualizar", carregar);
+  }, [carregar]);
+  useEffect(() => {
     if (!aberto) return;
     const fora = (e: MouseEvent) => { if (!caixa.current?.contains(e.target as Node)) setAberto(false); };
     const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setAberto(false); };
@@ -47,6 +51,7 @@ export default function Notificacoes() {
   function abrir() {
     const abrindo = !aberto;
     setAberto(abrindo);
+    if (abrindo) carregar();
     if (abrindo && avisos?.length) {  // abrir marca como vistos (guarda só os que ainda existem)
       const ids = avisos.map((a) => a.id);
       try { localStorage.setItem(CHAVE, JSON.stringify(ids)); } catch {}
