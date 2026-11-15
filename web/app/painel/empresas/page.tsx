@@ -16,7 +16,8 @@ type EmpresaNfse = Omit<Empresa, "ie" | "xml_acessos">;
 type Acesso = { id: string; login: string; atualizado_em: string };
 type Certificado = { org_id: string; cnpj: string; validade: string | null; procurador: boolean };
 
-export default async function Empresas() {
+export default async function Empresas({ searchParams }: { searchParams: Promise<{ mei?: string }> }) {
+  const solicitada = (await searchParams).mei;
   const { supabase, admin, perfil } = await contexto();
   // Senhas e certificados cifrados não são lidos nesta tela.
   const [{ data: e }, { data: a }, { data: n }, { data: c }, rMei, rSugestoes] = await Promise.all([
@@ -61,20 +62,21 @@ export default async function Empresas() {
     }),
   ];
   const agrupadas = agruparEmpresas(linhas);
+  const empresaInicial = opcoesMei.some((e) => `${e.org}|${e.cnpj}` === solicitada) ? solicitada : undefined;
   return <>
     <header className="empresas-cabecalho">
       <div><h1>Empresas</h1><p className="suave">{agrupadas.length} empresas · SEFAZ e NFS-e</p></div>
       <Link className="botao" href="/painel/agendar">Importar empresas</Link>
     </header>
     <ListaEmpresas empresas={agrupadas} />
-    {(admin || perfil.papel === "gestor") && <details className="empresas-painel">
+    {(admin || perfil.papel === "gestor") && <details className="empresas-painel" open={!!empresaInicial}>
       <summary>Cadastro de MEI e consulta CNPJá <span className="suave">Enquadramento e data de abertura</span></summary>
       <div className="empresas-painel-corpo" id="cadastro-mei">
         <h2 className="titulo-cartao">Cadastro de MEI</h2>
         <p className="suave">Inclua prestadoras no Monitoramento MEI mesmo sem inscrição estadual ou notas emitidas.
           Consulte os dados do CNPJ e confirme o enquadramento antes de salvar.</p>
         {rMei.error ? <p className="faixa alerta">O cadastro MEI ficará disponível após a atualização do banco.</p>
-          : opcoesMei.length ? <FormCadastroMei empresas={opcoesMei} cadastros={cadastros} />
+          : opcoesMei.length ? <FormCadastroMei key={empresaInicial ?? "cadastro-mei"} empresas={opcoesMei} cadastros={cadastros} empresaInicial={empresaInicial} />
           : <p className="suave">Importe primeiro uma empresa com CNPJ por um agendamento da SEFAZ ou da NFS-e.</p>}
       </div>
     </details>}
