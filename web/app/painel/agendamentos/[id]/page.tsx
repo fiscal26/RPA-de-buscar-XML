@@ -1,3 +1,4 @@
+import ReprocessarErros from "./ReprocessarErros";
 import Tabela from "@/components/ui/Tabela";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -8,7 +9,7 @@ import { ORDEM_TAREFAS, SITUACAO, SITUACOES_ABERTAS, expandirTipos, nomeTipo, si
 import { cancelarAgendamento } from "../../actions";
 
 type Tarefa = {
-  id: string; ie: string; nome: string; codigo: string; tipos: string[]; status: string; mensagem: string;
+  id: string; empresa_id: string | null; ie: string; nome: string; codigo: string; tipos: string[]; status: string; mensagem: string;
   detalhes: Record<string, { situacao?: string; mensagem?: string }>; concluido_em: string | null;
 };
 
@@ -26,9 +27,14 @@ export default async function DetalheAgendamento({ params, searchParams }: {
     .from("xml_agendamentos").select("id, nome_arquivo, competencia, executar_em, criado_em, origem").eq("id", id).maybeSingle();
   if (!ag) notFound();
   const { data } = await supabase
-    .from("xml_tarefas").select("id, ie, nome, codigo, tipos, status, mensagem, detalhes, concluido_em")
+    .from("xml_tarefas").select("id, empresa_id, ie, nome, codigo, tipos, status, mensagem, detalhes, concluido_em")
     .eq("agendamento_id", id).order("nome");
   const empresas = (data ?? []) as Tarefa[];
+  const { data: repeticao, error: erroRepeticao } = ag.origem === "sefaz" ? await supabase.from("xml_agendamentos")
+    .select("id, executar_em, reprocessamento_automatico").eq("reprocessamento_de", id).maybeSingle()
+    : { data: null, error: null };
+  const terminou = empresas.length > 0 && empresas.every((t) => !["pendente", "processando"].includes(t.status));
+  const comErro = empresas.filter((t) => t.empresa_id && t.status !== "cancelado" && expandirTipos(t.tipos).some((tipo) => situacaoTarefa(t, tipo).chave === "erro")).length;
 
   // cada empresa x serviço é uma tarefa
   const colunas = ORDEM_TAREFAS.filter((tipo) => empresas.some((e) => expandirTipos(e.tipos).includes(tipo)));
@@ -58,6 +64,12 @@ export default async function DetalheAgendamento({ params, searchParams }: {
           </p>
         </div>
         <div className="acoes">
+        {repeticao ? <p className="aviso-reprocessamento" role="status">
+          {repeticao.reprocessamento_automatico ? "Reprocessamento automático" : "Reprocessamento"}
+          {` programado para ${dataHoraBR(repeticao.executar_em)} (Brasília). `}
+          <Link href={`/painel/agendamentos/${repeticao.id}`}>Acompanhar</Link>
+        </p> : !erroRepeticao && ag.origem === "sefaz" && terminou && comErro > 0
+          ? <ReprocessarErros id={id} empresas={comErro} /> : null}
         <a className="botao secundario" href={`/painel/agendamentos/${id}/planilha`} download
           title="As mesmas empresas e serviços, com a senha em branco (o portal já tem a senha guardada)">
           Baixar a planilha
