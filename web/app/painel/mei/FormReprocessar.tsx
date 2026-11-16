@@ -15,7 +15,7 @@ export default function FormReprocessar({ org, documento, competencia }: { org: 
       <input type="hidden" name="org" value={org} /><input type="hidden" name="documento" value={documento} />
       <div className="linha">
         <PeriodoCompetencias competencia={competencia} minimo="2018-01" />
-        <button disabled={pendente}>{pendente ? "Enviando…" : "Reprocessar período"}</button>
+        <button className="botao-reprocessar" disabled={pendente}>{pendente ? "Enviando…" : "Reprocessar período"}</button>
       </div>
       <p className="suave">Consulta novamente as fontes cadastradas para a empresa. Substitui os valores importados de cada mês,
         sem duplicar notas nem apagar lançamentos manuais. O robô precisa estar atualizado e ligado.</p>

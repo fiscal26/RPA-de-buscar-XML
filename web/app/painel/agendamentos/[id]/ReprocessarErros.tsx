@@ -11,7 +11,7 @@ export default function ReprocessarErros({ id, empresas }: { id: string; empresa
   if (estado?.id) return <p role="status">Reprocessamento criado. <Link href={`/painel/agendamentos/${estado.id}`}>Acompanhar</Link></p>;
   return <Formulario action={acao}>
     <input type="hidden" name="agendamento" value={id} />
-    <button type="submit" className="secundario" disabled={pendente}>
+    <button type="submit" className="botao-reprocessar" disabled={pendente}>
       {pendente ? "Agendando…" : `Reprocessar erros (${empresas})`}
     </button>
     {estado?.erro && <p className="faixa erro" role="alert">{estado.erro}</p>}

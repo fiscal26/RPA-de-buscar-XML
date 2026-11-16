@@ -105,6 +105,9 @@ button, .botao {
 }
 button:hover, .botao:hover { background: var(--acao-hover); border-color: var(--acao-hover); }
 button:disabled { opacity: 0.6; cursor: wait; }
+/* Reprocessamento usa o azul da marca também no tema escuro. */
+.botao-reprocessar { --acao: var(--tinta); --acao-texto: #fff; --acao-hover: var(--tinta-2); }
+:root[data-tema="escuro"] .botao-reprocessar { border-color: var(--suave); }
 .botao.grande, button.grande { padding: 0.85rem 1.4rem; font-size: 1rem; }
 .botao.pequeno, button.pequeno { padding: 0.3rem 0.7rem; font-size: 0.84rem; }
 .botao.secundario, button.secundario { background: transparent; color: var(--forte); border-color: var(--linha); }
