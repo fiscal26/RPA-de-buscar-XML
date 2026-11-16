@@ -14,9 +14,14 @@ export async function POST(request: NextRequest) {
   if (!segredo || recebido.length !== esperado.length || !timingSafeEqual(recebido, esperado)) {
     return NextResponse.json({ erro: "não autorizado" }, { status: 401 });
   }
-  const { ie } = (await request.json().catch(() => ({}))) as { ie?: string };
+  const { ie, org_id } = (await request.json().catch(() => ({}))) as { ie?: string; org_id?: unknown };
   const so = String(ie ?? "").replace(/\D/g, "");
   if (!so) return NextResponse.json({ erro: "informe a IE" }, { status: 400 });
-  const resumo = await verificarAlertasMei({ ie: so });
+  if (org_id !== undefined && (typeof org_id !== "string" ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(org_id))) {
+    return NextResponse.json({ erro: "escritório inválido" }, { status: 400 });
+  }
+  // Robôs atualizados limitam o alerta ao escritório; chamadas antigas continuam aceitas.
+  const resumo = await verificarAlertasMei({ ie: so, ...(org_id ? { org: org_id } : {}) });
   return NextResponse.json({ ...resumo, erros: resumo.erros.slice(0, 20) });
 }

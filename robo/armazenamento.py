@@ -1,5 +1,6 @@
 """Identidade e resolução de pastas do armazenamento v2."""
 import json
+import hashlib
 import os
 import re
 import stat
@@ -18,6 +19,7 @@ PASTA_CONTEXTOS = "Arquivos por empresa v2"
 # Limite conservador para programas Windows sem suporte a caminhos longos.
 LIMITE_CAMINHO = 259
 RESERVA_ARQUIVOS = 80  # separadores, competência/serviço e nome do arquivo
+RESERVA_ARQUIVOS_ATF = 104  # competência, pasta com total, PDF e chave de acesso completa
 # WinNT.h: IO_REPARSE_TAG_CLOUD e variantes _1 a _F nos bits da máscara.
 _TAG_CLOUD = 0x9000001A
 _MASCARA_VARIANTE_CLOUD = 0x0000F000
@@ -271,8 +273,9 @@ def abrir_empresa(destino: str | Path, contexto: ContextoArmazenamento, *, somen
     prefixo_contexto = "org" if contexto.tipo_contexto == "portal" else "contexto"
     id_contexto = f"{prefixo_contexto}_{contexto.contexto_id}"
     id_empresa = f"{contexto.tipo_documento}_{contexto.documento}"
-    # O rótulo do escritório deixa espaço para qualquer origem/documento suportado.
-    reserva_contexto = len("/nfse_nacional/cnpj_" + "0" * 14) + RESERVA_ARQUIVOS
+    reserva_empresa = RESERVA_ARQUIVOS_ATF if contexto.origem == "sefaz_pb" else RESERVA_ARQUIVOS
+    # Novas pastas reservam o espaço necessário ao fluxo; pastas existentes não são renomeadas.
+    reserva_contexto = len(f"/{contexto.origem}/{id_empresa}") + reserva_empresa
     nova_pasta_contexto = _nome_pasta(tipo, id_contexto, contexto.nome_contexto, 20, reserva_contexto)
     if somente_leitura:
         subpasta_existente_validada(destino, PASTA_CONTEXTOS, contexto.tipo_contexto)
@@ -297,7 +300,7 @@ def abrir_empresa(destino: str | Path, contexto: ContextoArmazenamento, *, somen
     with trava_exclusiva(trava_empresa):
         origem = pasta_contexto / contexto.origem
         rotulo = "-".join(filter(None, (contexto.codigo, contexto.nome)))
-        nova_pasta = _nome_pasta(origem, id_empresa, rotulo, 40, RESERVA_ARQUIVOS)
+        nova_pasta = _nome_pasta(origem, id_empresa, rotulo, 40, reserva_empresa)
         if somente_leitura:
             subpasta_existente_validada(pasta_contexto, contexto.origem)
         else:
@@ -314,9 +317,46 @@ def abrir_empresa(destino: str | Path, contexto: ContextoArmazenamento, *, somen
             }
             gravar_json_atomico(pasta / "empresa.json", dados)
         else:
+            # Preserva históricos válidos de pastas anteriores; cada publicação confere seu caminho completo.
             _verificar_tamanho(pasta, RESERVA_ARQUIVOS)
             dados = _ler_metadados(pasta / "empresa.json", contexto)
             if not somente_leitura and dados["rotulos_atuais"] != contexto.rotulos:
                 dados["rotulos_atuais"] = contexto.rotulos
                 gravar_json_atomico(pasta / "empresa.json", dados)
         yield pasta
+
+
+def renomear_subpasta_validada(pasta: Path, nome: str) -> Path:
+    nova = _componente(pasta.parent, nome)
+    pendentes = [(pasta, nova)]
+    while pendentes:
+        atual, futura = pendentes.pop()
+        for item in atual.iterdir():
+            caminho = _componente(futura, item.name)
+            # O novo total no nome também alonga os caminhos dos PDFs já existentes.
+            if stat.S_ISDIR(item.lstat().st_mode):
+                _validar_entrada(item, stat.S_ISDIR)
+                pendentes.append((item, caminho))
+            else:
+                _validar_entrada(item, stat.S_ISREG)
+    try:
+        _validar_entrada(nova, stat.S_ISDIR)
+    except FileNotFoundError:
+        return pasta.rename(nova)
+    return pasta
+
+
+def reservar_caixa_atf(destino: str | Path, login: str, execucao_id: str) -> Path:
+    """Mantém a caixa reservada após falha até a conferência do que ficou pendente."""
+    pasta = criar_subpasta_validada(Path(destino).resolve(), PASTA_CONTEXTOS, "_caixas_atf")
+    chave = hashlib.sha256(login.strip().casefold().encode("utf-8")).hexdigest()
+    marcador = arquivo_validado(pasta, f"{chave}.lock")
+    try:
+        with marcador.open("x", encoding="ascii") as arquivo:
+            arquivo.write(f"execucao={execucao_id}\n")
+    except FileExistsError as erro:
+        raise ArmazenamentoOcupado(
+            f"A caixa ATF deste login tem consulta pendente ou em conferência. "
+            f"Aguarde a leitura final ou confira o marcador {marcador} antes de agendar novamente."
+        ) from erro
+    return marcador

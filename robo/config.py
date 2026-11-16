@@ -69,14 +69,13 @@ PADRAO = {
     },
     "pastas": {
         # Onde os arquivos ficam. Vazio = pasta Documentos deste computador / RPA XML LotiVisse
-        # (a mesma onde o robô roda). Dentro dela: Arquivos baixados/<ID>-<Nome>/<MMAAAA>/...
+        # ATF e NFS-e usam Arquivos por empresa v2/<contexto>/<origem>/<documento>/...
         "destino": "",
-        # Pacotes de diagnóstico. Vazio = <destino>/_diagnostico
+        # Gravador/fluxos ainda não integrados. No ATF, diagnóstico é sempre por contexto e execução.
         "diagnostico": "",
-        # Robô que atende vários escritórios (VPS): uma pasta por escritório dentro do destino,
-        # <destino>/<Escritório>/Arquivos baixados/... (cada escritório recebe só a pasta dele no Drive).
+        # Compatibilidade do Monitor Fiscal nesta etapa. ATF e NFS-e usam sempre UUID do escritório.
         "por_escritorio": False,
-        # Formato mensal do ATF. A NFS-e reencontra meses existentes e cria os novos em MMAAAA.
+        # Compatibilidade do Monitor. ATF/NFS-e reencontram meses existentes; novos usam MMAAAA.
         "formato_competencia": "MMAAAA",
         # PDF de cada NF-e, NFC-e e CT-e baixado do ATF (DANFE/DANFC-e/DACTE gerado do XML), em <tipo>/PDF/
         "pdf_das_notas": True,

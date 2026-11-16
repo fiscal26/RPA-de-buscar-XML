@@ -40,14 +40,15 @@ import pytest
 
 import config
 import robo_xml
+from armazenamento import ContextoArmazenamento, PASTA_CONTEXTOS, abrir_empresa
 from util import IE_EMPRESA, IE_OUTRA, chave, cte, evento_cte, nfe
 
 EMPRESA = "11222333000181"
 FORNECEDOR = "45723174000110"
 IE_ESTRANHA = "161112226"  # empresa fora da rodada (consulta feita à mão no mesmo login)
 IE_INEXISTENTE = "160555558"  # o Pesquisar do ATF não traz nome
-IE_REGIME_NORMAL = "160888880"  # posto de combustível: regime normal, sem a linha "Optante SIMEI"
-IE_SEM_PERMISSAO = "160777775"  # o login do contador não tem acesso a esta empresa
+IE_REGIME_NORMAL = "160888883"  # posto de combustível: regime normal, sem a linha "Optante SIMEI"
+IE_SEM_PERMISSAO = "160777771"  # o login do contador não tem acesso a esta empresa
 _ALERTA_PERMISSAO = "<script>alert('Usuário sem permissão sobre um ou mais contribuinte(s) utilizado(s).')</script>"
 INTERVALO_CAIXA = 3  # segundos entre leituras da caixa de mensagens (no ATF real: 60)
 CHROME = os.environ.get("CHROME_TESTE") or next(
@@ -590,7 +591,7 @@ def _porta_livre() -> int:
 
 
 @pytest.fixture(scope="module")
-def ambiente(tmp_path_factory):
+def servidor_atf(tmp_path_factory):
     if not CHROME or not Path(CHROME).exists():
         pytest.skip("Chromium não encontrado")
     pasta = tmp_path_factory.mktemp("atf")
@@ -618,9 +619,38 @@ def ambiente(tmp_path_factory):
     servidor.shutdown()
 
 
+ORG = "7b245ed0-a8a0-4242-bcf0-24c8eb2895c6"
+ESTADO_INICIAL = copy.deepcopy(ESTADO)
+
+
+@pytest.fixture
+def ambiente(servidor_atf, tmp_path_factory, monkeypatch):
+    import atf_pb
+    # Retira somente as pausas humanas aleatórias; os prazos de resposta e da caixa são reais.
+    def pausa_do_ensaio(page, minimo, maximo):
+        # Esperas de caixa/repetição usam uma margem >= 1 s; seu prazo mínimo é preservado.
+        page.wait_for_timeout((minimo if maximo - minimo >= 1 else 0.02) * 1000)
+
+    monkeypatch.setattr(atf_pb, "pausa", pausa_do_ensaio)
+    ESTADO.clear()
+    ESTADO.update(copy.deepcopy(ESTADO_INICIAL))
+    configuracao, _ = servidor_atf
+    cfg = copy.deepcopy(configuracao)
+    destino = tmp_path_factory.mktemp("b")
+    cfg["pastas"]["destino"] = str(destino)
+    return cfg, destino
+
+
+def _empresa(cfg, ie):
+    ctx = ContextoArmazenamento("portal", ORG, "sefaz_pb", "ie", ie, "")
+    with abrir_empresa(cfg["pastas"]["destino"], ctx, somente_leitura=True) as pasta:
+        return pasta
+
+
 def _trabalho(ie, nome, tipos, senha="certa", codigo="", cnpj=""):
     return robo_xml.Trabalho(ie=ie, nome=nome, login="mar00134", senha=senha, tipos=tipos,
-                             inicio=date(2026, 9, 1), fim=date(2026, 9, 30), cnpj=cnpj, codigo=codigo)
+                             inicio=date(2026, 9, 1), fim=date(2026, 9, 30), cnpj=cnpj, codigo=codigo,
+                             contexto=ContextoArmazenamento("portal", ORG, "sefaz_pb", "ie", ie, nome, codigo))
 
 
 def test_rodada_um_login_xml_pelas_mensagens(ambiente):
@@ -653,12 +683,15 @@ def test_rodada_um_login_xml_pelas_mensagens(ambiente):
     assert r3.status == "erro" and "não encontrou a IE" in r3.mensagem, r3
     base = pasta / "xml"
     # o ZIP do ATF guardado como veio, na pasta com o total (2 notas de R$ 100,00); a antiga (nº 99) não entrou
-    (zip_saida,) = list(base.glob("Arquivos baixados/015-Padaria/092026/NF-e Saida - R$ 200,00/*.zip"))
-    assert zip_saida.read_bytes()[:2] == b"PK" and len(zipfile.ZipFile(zip_saida).namelist()) == 2
-    assert not list(base.glob("Arquivos baixados/015-Padaria/082026"))  # resposta de outra competência não entrou
-    assert len(list(base.glob("Arquivos baixados/016-Mercado/092026/NF-e Entrada - R$ 100,00/*.zip"))) == 1
-    assert len(list(base.glob("Arquivos baixados/016-Mercado/092026/NFC-e - R$ 100,00/*.zip"))) == 1
-    assert len(list(base.glob("Arquivos baixados/_sem_empresa/*"))) == 2  # a consulta manual e a de agosto
+    zips_saida = list(_empresa(cfg, IE_EMPRESA).glob("092026/NF-e Saida - R$ 200,00/*.zip"))
+    assert any(len(zipfile.ZipFile(arquivo).namelist()) == 2 for arquivo in zips_saida)
+    import arquivos
+    notas_saida = [xml for arquivo in zips_saida for _, xml in arquivos.extrair(arquivo.read_bytes(), arquivo.name)]
+    assert {arquivos.ler_xml(xml).chave for xml in notas_saida} == {chave(EMPRESA, numero=n) for n in (1, 2)}
+    assert not list(_empresa(cfg, IE_EMPRESA).glob("082026"))  # resposta de outra competência não entrou
+    assert len(list(_empresa(cfg, IE_OUTRA).glob("092026/NF-e Entrada - R$ 100,00/*.zip"))) == 1
+    assert len(list(_empresa(cfg, IE_OUTRA).glob("092026/NFC-e - R$ 100,00/*.zip"))) == 1
+    assert len(list((Path(cfg["pastas"]["destino"]) / PASTA_CONTEXTOS / "_sem_empresa").rglob("*.zip"))) == 2  # a consulta manual e a de agosto
     assert ESTADO["lista_cedo"] == 0  # respeitou o intervalo da caixa de mensagens
     # só abre o necessário: com anexo, só a filha do clipe; sem anexo, para no "Nenhum registro satisfaz"
     por_mae: dict = {}
@@ -698,7 +731,7 @@ def test_caixa_lenta_tenta_de_novo(ambiente):
         executor.fechar()
     assert ESTADO["caixa_fora"] == 0
     assert r.status == "concluido", r
-    assert list((pasta / "xml" / "Arquivos baixados" / "020-Lenta").glob("092026/NF-e Saida - R$ */*.zip"))
+    assert list(_empresa(cfg, IE_EMPRESA).glob("092026/NF-e Saida - R$ */*.zip"))
 
 
 def test_caixa_nao_abre_e_o_robo_para(ambiente):
@@ -744,17 +777,17 @@ def test_faturas_extrato_omissao_certidao(ambiente):
         assert r1.detalhes[s]["arquivos"] == 1, (s, r1)
     assert r1.detalhes["nfe_saida"]["notas"] == 2, r1
     base = pasta / "xml" / "Arquivos baixados"
-    pdfs = {s: list((base / "030-Padaria" / "092026" / arquivos_nome(s)).glob("*.pdf")) for s in servicos}
+    pdfs = {s: list((_empresa(cfg, IE_EMPRESA) / "092026" / arquivos_nome(s)).glob("*.pdf")) for s in servicos}
     for s, achados in pdfs.items():
         assert len(achados) == 1 and achados[0].read_bytes()[:5] == b"%PDF-", (s, achados)
         assert achados[0].name == f"{arquivos_nome(s)} 2026-09.pdf"
     assert b"omissos" in pdfs["omissao"][0].read_bytes()
-    assert list((base / "030-Padaria" / "092026").glob("NF-e Saida - R$ 200,00/*.zip"))
+    assert list((_empresa(cfg, IE_EMPRESA) / "092026").glob("NF-e Saida - R$ 200,00/*.zip"))
 
     assert r2.status == "concluido", r2
     assert r2.detalhes["faturas"]["sem_notas"] and r2.detalhes["faturas"]["arquivos"] == 0, r2
     assert "Faturas: não existem débitos em aberto" in r2.mensagem, r2
-    assert (base / "031-Mercado" / "092026" / "Certidão de Débitos" / "Certidão de Débitos 2026-09.pdf").exists()
+    assert (_empresa(cfg, IE_OUTRA) / "092026" / "Certidão de Débitos" / "Certidão de Débitos 2026-09.pdf").exists()
 
 
 def arquivos_nome(tipo: str) -> str:
@@ -774,8 +807,10 @@ def test_mensagem_atrasada_fica_para_o_final(ambiente):
         (r1,) = executor.executar_rodada([_trabalho(IE_EMPRESA, "Atrasada", ["nfe_saida"], codigo="040")])
         assert r1.pendente and "aguardando" in r1.mensagem, r1
         (r2,) = executor.executar_rodada([_trabalho(IE_OUTRA, "Seguinte", ["nfce"], codigo="041")])
-        assert r2.status == "concluido", r2  # a próxima tarefa não esperou a anterior
-        time.sleep(12)
+        assert r2.status == "erro" and "caixa ATF" in r2.mensagem, r2
+        # O servidor fictício termina a resposta depois de comprovar a pendência e o bloqueio de B.
+        for mensagem in ESTADO["mensagens"]:
+            mensagem["pronta"] = datetime.now().replace(microsecond=0)
         repescados, tudo = executor.repescar()
     finally:
         if executor.atf:
@@ -784,7 +819,7 @@ def test_mensagem_atrasada_fica_para_o_final(ambiente):
     assert tudo, repescados
     ((_, (r,)),) = repescados
     assert r.status == "concluido" and not r.pendente and r.detalhes["nfe_saida"]["notas"] == 2, r
-    assert list((pasta / "xml" / "Arquivos baixados" / "040-Atrasada").glob("092026/NF-e Saida - R$ 200,00/*.zip"))
+    assert list(_empresa(cfg, IE_EMPRESA).glob("092026/NF-e Saida - R$ 200,00/*.zip"))
 
 
 def test_mensagem_que_nunca_chega_para_de_vez(ambiente):
@@ -826,11 +861,11 @@ def test_cte_e_conferencia_de_cartao(ambiente):
     assert r1.status == "concluido", r1
     assert r1.detalhes["cte_dest"]["notas"] == 1 and r1.detalhes["cte_rem"]["notas"] == 1, r1
     assert r1.detalhes["cartao"]["arquivos"] == 1, r1
-    base = pasta / "xml" / "Arquivos baixados"
-    (zip_cte,) = list(base.glob("050-Transporte/092026/CT-e Destinatario - R$ 150,00/*.zip"))
+    base = _empresa(cfg, IE_EMPRESA)
+    (zip_cte,) = list(base.glob("092026/CT-e Destinatario - R$ 150,00/*.zip"))
     assert zip_cte.read_bytes()[:2] == b"PK"
-    assert list(base.glob("050-Transporte/092026/CT-e Remetente - R$ 70,00/*.zip"))
-    (pdf,) = list(base.glob("050-Transporte/092026/Conferência Cartão de Crédito/*.pdf"))
+    assert list(base.glob("092026/CT-e Remetente - R$ 70,00/*.zip"))
+    (pdf,) = list(base.glob("092026/Conferência Cartão de Crédito/*.pdf"))
     assert pdf.read_bytes()[:5] == b"%PDF-" and pdf.name == "Conferência Cartão de Crédito 2026-09.pdf"
     assert ESTADO["cartao"][-1]["refIni"] == "09/2026" and ESTADO["cartao"][-1]["ie"] == IE_EMPRESA
     assert all(c["ie"] == IE_EMPRESA for c in ESTADO["cartao"])  # "- Cartão: 0 / 0,00" não abre a janela
@@ -844,9 +879,9 @@ def test_cte_e_conferencia_de_cartao(ambiente):
     assert mei["meses"] == [f"2026-{m:02d}" for m in range(3, 10)] and mei["limite_ano"] == 67500.0  # março a dezembro: 10 x 6.750
     assert (mei["notas_acumulado"], mei["cartao_acumulado"]) == (4700.5, 13885.0), mei  # notas e cartão separados
     assert len([c for c in ESTADO["dossies"] if c == IE_EMPRESA]) == 1  # o dossiê foi consultado uma vez só
-    dados = json.loads((base / "050-Transporte/Dossiê MEI/Faturamento MEI 2026.json").read_text(encoding="utf-8"))
+    dados = json.loads((_empresa(cfg, IE_EMPRESA) / "Dossiê MEI/Faturamento MEI 2026.json").read_text(encoding="utf-8"))
     assert dados["meses"]["2026-09"]["saidas"] == 4200.5
-    assert (base / "050-Transporte/Dossiê MEI/Faturamento MEI 2026.xlsx").exists()
+    assert (_empresa(cfg, IE_EMPRESA) / "Dossiê MEI/Faturamento MEI 2026.xlsx").exists()
     assert r2.detalhes["mei"]["sem_notas"] and "não é MEI" in r2.mensagem, r2
     assert r2.detalhes["cte_dest"]["sem_notas"] and r2.detalhes["cte_rem"]["sem_notas"], r2
     # andamento um a um: cada serviço avisa quando começa e quando termina
@@ -864,6 +899,12 @@ def test_mei_segunda_vez_so_a_competencia(ambiente):
     """Com o ano já acompanhado, a próxima rodada consulta só a competência; com refazer_ano, o ano todo."""
     cfg, _ = ambiente
     cfg = copy.deepcopy(cfg)
+    executor = robo_xml.Executor(cfg)
+    try:
+        (preparo,) = executor.executar_rodada([_trabalho(IE_EMPRESA, "Transporte", ["mei"], codigo="050")])
+        assert preparo.status == "concluido", preparo
+    finally:
+        executor.fechar()
     for refazer, esperado in ((False, ["09"]), (True, ["09", "03", "04", "05", "06", "07", "08"])):
         cfg["mei"]["refazer_ano"] = refazer
         ESTADO["docs_periodos"].clear()
@@ -985,7 +1026,7 @@ def test_passo_a_passo_no_log_e_gravado(ambiente, caplog):
         r, exib = _rodada_mercado(cfg, "020", html_notas={IE_OUTRA: 0})
     assert any("exibição HTML" in m for m in caplog.messages), caplog.messages[-20:]
     assert any("Alerta do ATF" in m and "Nenhum registro" in m for m in caplog.messages), caplog.messages[-20:]
-    (sessao,) = list((pasta / "diag_passos" / "passos").iterdir())
+    (sessao,) = list((pasta / PASTA_CONTEXTOS / "_diagnostico").glob("portal/*/*/passos/*"))
     assert "exibição HTML" in (sessao / "passos.txt").read_text(encoding="utf-8")
     assert list(sessao.glob("*.png"))
 
@@ -1020,4 +1061,4 @@ def test_regime_normal_sem_linha_simei_nao_e_mei(ambiente):
         executor.fechar()
     assert r.detalhes["mei"]["sem_notas"] and "não é MEI" in r.detalhes["mei"]["mensagem"], r
     assert "NORMAL" in r.detalhes["mei"]["mensagem"], r
-    assert not list((pasta / "xml").rglob("070-Posto/Dossiê MEI/*.json"))
+    assert not list(_empresa(cfg, IE_REGIME_NORMAL).rglob("Faturamento MEI *.json"))

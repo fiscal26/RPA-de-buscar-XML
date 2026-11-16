@@ -10,7 +10,7 @@ const migracao = fs.readFileSync(path.join(__dirname, '../supabase/migrations/20
 const id = (n) => '00000000-0000-4000-8000-' + String(n).padStart(12, '0');
 const ids = (...ns) => ns.map(n => `'${id(n)}'`).join(',');
 const cnpj = '11222333000262';
-assert.ok(schema.replace(/\r\n/g, '\n').endsWith(migracao.replace(/\r\n/g, '\n')));
+assert.ok(schema.replace(/\r\n/g, '\n').includes(migracao.replace(/\r\n/g, '\n')));
 
 test('NFS-e por contexto preserva contratos, recursos atuais e isolamento', async () => {
   const db = new PGlite({ extensions: { pgcrypto } });

@@ -3,10 +3,9 @@
 Roda no seu PC (com o Chrome aberto pelo abrir_chrome.bat), pega os agendamentos feitos no
 portal, entra no ATF com o login do contador, pesquisa as notas de cada empresa pela inscrição
 estadual e salva os XML em pastas.destino:
-    <destino>/Arquivos baixados/<ID>-<Nome>/<MMAAAA>/<NF-e Saida | NF-e Entrada | NFC-e> - R$ <total>/
-(o ZIP baixado do ATF é guardado como veio, sem descompactar)
-Faturas, extrato de pagamentos, omissão e inadimplência e certidão de débitos saem na hora, em PDF:
-    <destino>/Arquivos baixados/<ID>-<Nome>/<MMAAAA>/<Serviço>/<Serviço> <AAAA-MM>.pdf
+    <destino>/Arquivos por empresa v2/<portal|local>/<contexto>/sefaz_pb/<ie>/
+Documentos e competências pertencem à identidade validada do escritório/empresa.
+Veja ATF.md para formatos mensais, histórico MEI, reserva da caixa e recuperação.
 
 O ATF não entrega o XML na hora: a consulta (Tipo de Exibição XML) gera uma mensagem com o anexo em
 "Minhas Mensagens". Por isso o robô trabalha em rodadas de um login: envia as consultas de todas as
@@ -38,22 +37,29 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
+from uuid import uuid4
 
 from armazenamento import (ArmazenamentoOcupado, ContextoArmazenamento,
-                           IdentidadeArmazenamentoInvalida, PASTA_CONTEXTOS)
+                           IdentidadeArmazenamentoInvalida, PASTA_CONTEXTOS, abrir_empresa,
+                           area_do_contexto, arquivo_validado, pasta_da_competencia,
+                           publicar_arquivo, reservar_caixa_atf)
+
 
 import requests
 
 import arquivos
+import mei
 import config
 import cripto
 import planilha
-from atf_pb import (SERVICOS, TIPO_TELA, MensagensIndisponiveis, AtfPB, Diagnostico, Emissao, Envio, EtapaNaoConcluida, Recolha,
+from atf_pb import (MENSAGEM_INDICA_ANEXO, MENSAGEM_SEM_NOTAS, RespostaATF, SERVICOS, TIPO_TELA, MensagensIndisponiveis, AtfPB, Diagnostico, Emissao, Envio, EtapaNaoConcluida, Recolha,
                     SenhaInvalida, SessaoExpirada, SiteForaDoAr)
 from navegador import Chrome, ChromeIndisponivel
 
-VERSAO = "0.5-nfse-contexto"
+VERSAO = "0.5-atf-contexto"
 FALHA_NO_RETORNO = "O ATF não devolveu os XML. Tente agendar novamente mais tarde."
+
+ERROS_ARMAZENAMENTO = (IdentidadeArmazenamentoInvalida, ArmazenamentoOcupado, OSError)
 
 log = logging.getLogger("robo")
 
@@ -80,6 +86,8 @@ class Pendencia:
     relevante: object
     alvos: list
     recolha: Recolha
+    marcador_caixa: Path | None = None
+    anteriores: frozenset[str] | None = None
 
     def faltam(self) -> dict[str, int]:
         return {c: n - self.recolha.recebidas.get(c, 0) for c, n in self.esperadas.items()
@@ -98,7 +106,8 @@ class Trabalho:
     fim: date
     cnpj: str = ""
     codigo: str = ""
-    destino: str = ""  # pasta dos arquivos desta empresa (a do escritório dela, no robô da VPS)
+    contexto: ContextoArmazenamento = field(kw_only=True)
+    execucao_id: str = field(default_factory=lambda: str(uuid4()))
 
     def __post_init__(self):
         self.tipos = arquivos.expandir_tipos(self.tipos)  # "cte" = CT-e Remetente + CT-e Destinatario
@@ -106,6 +115,10 @@ class Trabalho:
     @property
     def rotulo(self) -> str:
         return f"{self.nome} (IE {planilha.formatar_ie(self.ie)})"
+
+    @property
+    def escopo(self):
+        return self.contexto.tipo_contexto, self.contexto.contexto_id
 
 
 def destino_da_tarefa(cfg: dict, tarefa: dict) -> str:
@@ -116,6 +129,15 @@ def destino_da_tarefa(cfg: dict, tarefa: dict) -> str:
         log.warning("O portal não informou o escritório da tarefa (rode o schema.sql de novo no Supabase); "
                     "os arquivos vão para a pasta principal.")
     return arquivos.destino_do_escritorio(pastas["destino"], escritorio, bool(pastas.get("por_escritorio")))
+
+
+def contexto_portal(tarefa: dict, origem: str, tipo: str) -> ContextoArmazenamento:
+    return ContextoArmazenamento("portal", tarefa.get("org_id"), origem, tipo, tarefa.get(tipo),
+                                tarefa.get("nome") or "", tarefa.get("codigo") or "", tarefa.get("org_nome") or "")
+
+
+def referencia_pasta(destino: str, pasta: Path) -> str:
+    return pasta.relative_to(Path(destino).resolve()).as_posix()
 
 
 class Executor:
@@ -130,6 +152,7 @@ class Executor:
         self.segundos_assistido = segundos_assistido
         self.chrome: Chrome | None = None
         self.atf: AtfPB | None = None
+        self.sessao_por_contexto = None
         self.recusados: set[tuple[str, str]] = set()  # (login, impressão da senha) recusados nesta execução
         self.pendencias: list[Pendencia] = []  # rodadas à espera de mensagens (lidas de novo no final)
         # avisado a cada tarefa (empresa x serviço) que muda: (trabalho, tipo, situação, mensagem)
@@ -193,6 +216,8 @@ class Executor:
 
     def _garantir_chrome(self, diag: Diagnostico):
         if self.atf is not None and not self.atf.page.is_closed():
+            if self.atf.diag.pasta_base != diag.pasta_base:
+                self.atf._pasta_passos, self.atf._passo = None, 0
             self.atf.diag = diag
             return
         self.fechar()
@@ -209,37 +234,56 @@ class Executor:
         """Todos os trabalhos com o MESMO login. Devolve um resultado por trabalho, na mesma ordem."""
         if not trabalhos:
             return []
-        login, senha = trabalhos[0].login, trabalhos[0].senha
-        if self._impressao(login, senha) in self.recusados:
-            return [Resultado("senha_invalida", f"O ATF já recusou o login {login} nesta rodada; não tentei de novo "
-                                                "para não bloquear o acesso. Atualize a senha e agende de novo.")] * len(trabalhos)
-        diag = Diagnostico(self.cfg["pastas"]["diagnostico"], login)
-        try:
-            self._garantir_chrome(diag)
-            return self._rodada(trabalhos)
-        except SenhaInvalida as e:
-            self.recusados.add(self._impressao(login, senha))
-            return [Resultado("senha_invalida", f"Login {login} recusado pelo ATF: {e}")] * len(trabalhos)
-        except SiteForaDoAr as e:
-            return [Resultado("fora_do_ar", f"ATF fora do ar: {e} Agende de novo mais tarde.")] * len(trabalhos)
-        except EtapaNaoConcluida as e:
-            log.info("   motivo: %s", e)
-            return [Resultado("erro", FALHA_NO_RETORNO)] * len(trabalhos)
-        except (ChromeIndisponivel, MensagensIndisponiveis):
-            raise
-        except Exception:
-            log.exception("   falha inesperada")
-            self.fechar()  # conexão com o Chrome pode ter caído: recomeça na próxima
-            return [Resultado("erro", FALHA_NO_RETORNO)] * len(trabalhos)
+        t0 = trabalhos[0]
+        if (any(t.escopo != t0.escopo or (t.login, t.senha, t.inicio, t.fim) !=
+                (t0.login, t0.senha, t0.inicio, t0.fim) for t in trabalhos)
+                or len({t.ie for t in trabalhos}) != len(trabalhos)):
+            return [Resultado("erro", "A rodada deve ter um único contexto, acesso e competência, sem IEs duplicadas.")
+                    for _ in trabalhos]
+        falhas, validos = {}, []
+        for i, t in enumerate(trabalhos):
+            if (t.contexto.origem, t.contexto.tipo_documento, t.contexto.documento) != (
+                "sefaz_pb", "ie", t.ie
+            ):
+                falhas[i] = Resultado("erro", "Identidade SEFAZ-PB incompatível com a tarefa.")
+            else:
+                try:
+                    with self._pasta_empresa(t) as pasta:
+                        # Recusa competências ambíguas antes de enviar consultas ou publicar documentos.
+                        if any(tipo != "mei" for tipo in t.tipos):
+                            pasta_da_competencia(pasta, f"{t.inicio:%Y-%m}")
+                    validos.append(t)
+                except ERROS_ARMAZENAMENTO as erro:
+                    falhas[i] = Resultado("erro", str(erro))
+        resultados = iter(self._executar_rodada(validos) if validos else [])
+        return [falhas[i] if i in falhas else next(resultados) for i in range(len(trabalhos))]
 
     def _entrar(self, t: Trabalho):
+        sessao = (t.escopo, self._impressao(t.login, t.senha))
+        if self.sessao_por_contexto != sessao and self.atf.login_atual:
+            self.atf.sair(silencioso=True)
+        self.sessao_por_contexto = sessao
         if not self.atf.sessao_valida(t.login):
             self.atf.entrar(t.login, t.senha)
 
     def _rodada(self, trabalhos: list[Trabalho]) -> list[Resultado]:
         atf = self.atf
         t0 = trabalhos[0]
-        self._entrar(t0)
+        marcador = None
+        anteriores = frozenset()
+        if any(tipo in TIPO_TELA for t in trabalhos for tipo in t.tipos):
+            # O login identifica a caixa real. Trocar de organização não cria outra caixa postal.
+            marcador = reservar_caixa_atf(self.cfg["pastas"]["destino"], t0.login, t0.execucao_id)
+        try:
+            self._entrar(t0)
+            if any(tipo in ("cartao", "mei") for t in trabalhos for tipo in t.tipos):
+                atf.limpar_cache_dossie()
+            if marcador:
+                anteriores = frozenset(m["id"] for m in atf.listar_mensagens())
+        except Exception:
+            if marcador:
+                marcador.unlink()
+            raise  # Nenhuma consulta foi enviada ainda.
 
         def com_sessao(funcao, *args, **kw):
             for tentativa in (1, 2):
@@ -299,24 +343,19 @@ class Executor:
                     nome = arquivos.TIPOS.get(tipo, tipo)
                     extra = {}
                     if tipo == "mei":  # meses do ano que ainda faltam (cliente que chega sem acompanhamento)
-                        extra["periodos_extra"] = tuple(arquivos.periodos_mei(
-                            self._destino(t), t.nome, t.ie, t.codigo, t.inicio, self.cfg["mei"]["refazer_ano"]))
+                        try:
+                            extra["periodos_extra"] = tuple(self._periodos_mei(t))
+                        except ERROS_ARMAZENAMENTO as erro:
+                            emissoes[t.ie, tipo] = Emissao(t.ie, tipo, ok=False, resposta=str(erro))
+                            self._progresso(t, tipo, "erro", str(erro))
+                            continue
                     self._progresso(t, tipo, "andamento", "fazendo no ATF")
                     e = emissoes[(t.ie, tipo)] = com_sessao(atf.emitir, tipo, t.ie, t.inicio, t.fim, nome, **extra)
                     if e.arquivos:
-                        arquivos.salvar_documentos(e.arquivos, self._destino(t), t.nome, t.ie, tipo,
-                                                   f"{t.inicio:%Y-%m}", t.codigo)
-                    if e.dados:  # Dossiê MEI: entradas e saídas, notas e cartão acumulados no ano
-                        for mes, dados in sorted(e.dados.pop("outros_meses", {}).items()):
-                            dados.setdefault("inicio_atividade", e.dados.get("inicio_atividade"))
-                            arquivos.salvar_faturamento_mei(self._destino(t), t.nome, t.ie, mes, dados, t.codigo)
-                        e.dados["resumo"] = arquivos.salvar_faturamento_mei(
-                            self._destino(t), t.nome, t.ie, f"{t.inicio:%Y-%m}", e.dados, t.codigo)
-                        if self.ao_mei is not None:
-                            try:
-                                self.ao_mei(t, e.dados["resumo"])
-                            except Exception as erro:  # o arquivo já está salvo no PC: o painel recebe na próxima vez
-                                log.warning("   faturamento MEI não enviado ao portal: %s", erro)
+                        with self._pasta_empresa(t) as pasta:
+                            arquivos.salvar_documentos(e.arquivos, pasta, tipo, f"{t.inicio:%Y-%m}")
+                    if tipo == "mei" and e.dados:
+                        self._salvar_mei(t, e)
                     self._progresso(t, tipo, **situacao_emissao(e))
 
         # 2) recolhe as respostas em Minhas Mensagens. Antes, a última consulta ainda pode receber o "Nenhum registro
@@ -342,40 +381,44 @@ class Executor:
 
         periodo = (f"{t0.inicio:%d/%m/%Y}", f"{t0.fim:%d/%m/%Y}")
 
-        def relevante(anexos: list, texto: str) -> bool:
+        def relevante(anexos: list, texto: str) -> RespostaATF:
             # "Período solicitado: 01/09/2026 a 30/09/2026": resposta de outra competência não conta
             # (CT-e: "Data emissão: 01/09/2026 à 30/09/2026")
             m = re.search(r"(?:per[ií]odo\s+solicitado|data\s+emiss[aã]o):?\s*(\d{2}/\d{2}/\d{4})\s*[aà]\s*(\d{2}/\d{2}/\d{4})",
                           texto, re.I)
             if m and (m.group(1), m.group(2)) != periodo:
-                return False
-            xmls = [x for nome, dados in anexos for x in arquivos.extrair(dados, nome)]
-            if xmls:
-                return bool(arquivos.distribuir(xmls, alvos)[0])
-            return True  # sem anexo: "não existem dados para o período consultado"
-
+                return RespostaATF.OUTRA_CONSULTA
+            if not anexos:
+                if MENSAGEM_SEM_NOTAS.search(texto) and not MENSAGEM_INDICA_ANEXO.search(texto):
+                    return RespostaATF.SEM_DADOS
+                return RespostaATF.CONFERENCIA
+            xmls = []
+            for nome, dados in anexos:
+                lidos, incompleto = arquivos.inspecionar_anexo(dados, nome)
+                if incompleto or not lidos or any(arquivos.ler_xml(xml) is None for _, xml in lidos):
+                    return RespostaATF.CONFERENCIA
+                xmls.extend(lidos)
+            identificados, _ = arquivos.distribuir(xmls, alvos)
+            return RespostaATF.DOCUMENTOS if identificados else RespostaATF.OUTRA_CONSULTA
         # as respostas chegam depois do clique em Consultar (hora do próprio ATF)
         horas = [e.hora for e in envios.values() if e.hora]
         desde = min(horas) if horas else datetime.now() - timedelta(minutes=1)
         recolha = Recolha()
         if esperadas:
-            for tentativa in (1, 2):
-                try:
-                    recolha = atf.recolher(esperadas, desde, self.cfg["atf"]["minutos_espera_mensagens"], relevante,
-                                           leituras=self.cfg["atf"]["leituras_mensagens"])
-                    break
-                except MensagensIndisponiveis as e:
-                    if e.recolha is not None:  # salva o que já foi baixado antes de parar
-                        self._salvar_recolha(trabalhos, alvos, e.recolha)
-                    raise
-                except SessaoExpirada:
-                    atf.login_atual = ""
-                    self._entrar(t0)
-                    if tentativa == 2:
-                        raise EtapaNaoConcluida("a sessão do ATF expirou duas vezes")
-
-        # mensagem atrasada de uma rodada anterior (pendente) chega aqui: vai para a rodada dela
-        self._entregar_atrasadas(recolha)
+            try:
+                recolha = atf.recolher(esperadas, desde, self.cfg["atf"]["minutos_espera_mensagens"], relevante,
+                                       leituras=self.cfg["atf"]["leituras_mensagens"], anteriores=anteriores)
+            except MensagensIndisponiveis as e:
+                if e.recolha is not None:
+                    self._salvar_recolha(trabalhos, alvos, e.recolha)
+                raise
+            except SessaoExpirada as erro:
+                parcial = getattr(erro, "recolha", None)
+                if parcial is not None:
+                    parcial.conferencia.extend(parcial.arquivos)
+                    parcial.arquivos.clear()
+                    self._salvar_recolha(trabalhos, alvos, parcial, salvar_empresas=False)
+                raise EtapaNaoConcluida("A sessão expirou durante a leitura. A caixa foi mantida para conferência.") from erro
 
         # 3) distribui os XML pelo conteúdo e salva
         por_destino = self._salvar_recolha(trabalhos, alvos, recolha, salvar_empresas=False)
@@ -387,25 +430,13 @@ class Executor:
                      "volta às mensagens no final", {c: n - recolha.recebidas.get(c, 0) for c, n in esperadas.items()
                                                      if n > recolha.recebidas.get(c, 0)},
                      self.cfg["atf"]["leituras_mensagens"])
-            recolha.ignorados, recolha.mensagens_ignoradas = [], []  # já salvos em _sem_empresa
+            recolha.ignorados = []  # já salvos em _sem_empresa
             self.pendencias.append(Pendencia(trabalhos, t0.senha, envios, emissoes, esperadas, desde, relevante,
-                                             alvos, recolha))
+                                             alvos, recolha, marcador, anteriores))
+        elif marcador and completas and not recolha.incertas and all(e.ok for e in envios.values()):
+            marcador.unlink()
         return resultados
 
-    def _entregar_atrasadas(self, recolha: Recolha, pendencias: list[Pendencia] | None = None):
-        """Uma mensagem que não era desta rodada pode ser a que faltava numa rodada pendente (mesmo login):
-        o anexo vai para ela, e não para _sem_empresa."""
-        for codigo, anexos, texto in list(recolha.mensagens_ignoradas):
-            for p in (self.pendencias if pendencias is None else pendencias):
-                if p.faltam().get(codigo) and p.relevante(anexos, texto):
-                    p.recolha.arquivos.extend(anexos)
-                    p.recolha.recebidas[codigo] = p.recolha.recebidas.get(codigo, 0) + 1
-                    for anexo in anexos:
-                        if anexo in recolha.ignorados:
-                            recolha.ignorados.remove(anexo)
-                    recolha.mensagens_ignoradas.remove((codigo, anexos, texto))
-                    log.info("   resposta atrasada de %s entregue à rodada anterior", p.trabalhos[0].rotulo)
-                    break
 
     def repescar(self, ler: bool = True) -> tuple[list[tuple[list, list[Resultado]]], bool]:
         """Final da execução: lê Minhas Mensagens mais uma vez para cada rodada pendente. Devolve
@@ -414,68 +445,88 @@ class Executor:
         pendencias, self.pendencias = self.pendencias, []
         saida, tudo = [], True
         parou = "" if ler else "parando"
-        for i, p in enumerate(pendencias):
+        for p in pendencias:
             t0 = p.trabalhos[0]
             if p.faltam() and not parou:
                 log.info("Última leitura de Minhas Mensagens para o login %s (faltam %s)", t0.login, p.faltam())
                 try:
-                    self._garantir_chrome(Diagnostico(self.cfg["pastas"]["diagnostico"], t0.login))
+                    self._garantir_chrome(self._diagnostico(t0))
                     t0.senha = t0.senha or p.senha
                     self._entrar(t0)
                     nova = self.atf.recolher(p.faltam(), p.desde, self.cfg["atf"]["minutos_espera_mensagens"],
-                                             p.relevante, leituras=1)
+                                             p.relevante, leituras=1, anteriores=p.anteriores,
+                                             incertas_anteriores=frozenset(p.recolha.incertas))
                     p.recolha.arquivos.extend(nova.arquivos)
                     for c, n in nova.recebidas.items():
                         p.recolha.recebidas[c] = p.recolha.recebidas.get(c, 0) + n
-                    self._entregar_atrasadas(nova, pendencias[i + 1:])
+                    for c, n in nova.sem_dados.items():
+                        p.recolha.sem_dados[c] = p.recolha.sem_dados.get(c, 0) + n
+                    p.recolha.incertas.update(nova.incertas)
+                    p.recolha.conferencia.extend(nova.conferencia)
                     p.recolha.ignorados = nova.ignorados
                 except MensagensIndisponiveis as e:
                     parou = str(e)
                     if e.recolha is not None:
                         p.recolha.arquivos.extend(e.recolha.arquivos)
+                        p.recolha.conferencia.extend(e.recolha.conferencia)
+                        p.recolha.incertas.update(e.recolha.incertas)
                 except (SenhaInvalida, SiteForaDoAr, EtapaNaoConcluida, SessaoExpirada, ChromeIndisponivel) as e:
+                    parcial = getattr(e, "recolha", None)
+                    if parcial is not None:
+                        p.recolha.conferencia.extend(parcial.arquivos + parcial.conferencia)
+                        p.recolha.incertas.update(p.faltam())
                     log.info("   não consegui ler as mensagens de novo: %s", e)
                 except Exception:
                     log.exception("   falha inesperada na última leitura das mensagens")
             completa = not p.faltam()
             tudo = tudo and completa
             p.recolha.tempo_esgotado = not completa
-            por_destino = self._salvar_recolha(p.trabalhos, p.alvos, p.recolha, salvar_empresas=False)
-            saida.append((p.trabalhos, [self._resultado(t, p.envios, por_destino, p.recolha, completa, p.emissoes)
-                                        for t in p.trabalhos]))
+            try:
+                por_destino = self._salvar_recolha(p.trabalhos, p.alvos, p.recolha, salvar_empresas=False)
+                rs = [self._resultado(t, p.envios, por_destino, p.recolha, completa, p.emissoes)
+                      for t in p.trabalhos]
+                if (p.marcador_caixa and completa and not p.recolha.incertas and all(e.ok for e in p.envios.values())
+                        and all(r.status in ("concluido", "sem_notas") for r in rs)):
+                    p.marcador_caixa.unlink()
+            except ERROS_ARMAZENAMENTO as erro:
+                rs = [Resultado("erro", str(erro)) for _ in p.trabalhos]
+            saida.append((p.trabalhos, rs))
             p.senha = ""
+            for trabalho in p.trabalhos:
+                trabalho.senha = ""
         return saida, tudo
 
-    def _destino(self, t: Trabalho) -> str:
-        return t.destino or self.cfg["pastas"]["destino"]
 
     def _salvar_recolha(self, trabalhos: list[Trabalho], alvos, recolha: Recolha, salvar_empresas: bool = True):
         """Distribui os arquivos baixados pelo conteúdo, cada um INTEIRO (o ZIP continua ZIP). Nada se
         perde: arquivo de empresa fora da rodada vai para _sem_empresa e o que não é XML/ZIP vai para
         _nao_identificados."""
-        # uma rodada é de um login só, e o login é de um escritório: a pasta é a dele
-        destino = self._destino(trabalhos[0]) if trabalhos else self.cfg["pastas"]["destino"]
-        por_destino, sem_empresa, brutos = arquivos.distribuir_arquivos(recolha.arquivos, alvos)
+        t0 = trabalhos[0]
+        por_destino, sem_empresa, brutos = arquivos.distribuir_por_empresa(recolha.arquivos, alvos)
+        brutos.extend(recolha.conferencia)
         if brutos:
-            for caminho, (nome, dados) in zip(arquivos.salvar_nao_identificados(brutos, destino), brutos):
-                log.warning("   ATENÇÃO: o arquivo baixado '%s' (%s, %d bytes) não é XML nem ZIP de XML; guardado em %s",
+            pasta = self._area(t0, "_nao_identificados")
+            for caminho, (nome, dados) in zip(arquivos.salvar_nao_identificados(brutos, pasta), brutos):
+                log.warning("   ATENÇÃO: o arquivo baixado '%s' (%s, %d bytes) ficou para conferência em %s",
                             nome, arquivos.tipo_de_arquivo(dados), len(dados), caminho)
         sem_empresa = sem_empresa + list(recolha.ignorados)
         if sem_empresa:
-            n = arquivos.salvar_sem_empresa(sem_empresa, destino)
-            log.info("   %d arquivo(s) de empresas fora desta rodada salvos em %s/_sem_empresa", n, arquivos.PASTA_BAIXADOS)
+            pasta = self._area(t0, "_sem_empresa")
+            n = len(arquivos.salvar_nao_identificados(sem_empresa, pasta))
+            log.info("   %d arquivo(s) de empresas fora desta rodada salvos em %s", n,
+                     pasta)
         if salvar_empresas:
             for t in trabalhos:
                 for tipo in t.tipos:
                     if por_destino.get((t.ie, tipo)):
-                        arquivos.salvar_originais(por_destino[(t.ie, tipo)], self._destino(t), t.nome, t.ie, tipo,
-                                                  f"{t.inicio:%Y-%m}", t.codigo)
+                        self._salvar_originais(t, tipo, por_destino[(t.ie, tipo)])
         return por_destino
 
     def _resultado(self, t: Trabalho, envios, por_destino, recolha: Recolha, completas: bool,
                    emissoes: dict | None = None, final: bool = True) -> Resultado:
         detalhes: dict = {}
         sem_notas, faltando, falhas, partes = [], [], [], []
+        exige_conferencia = False
         total_notas = 0
         for tipo in t.tipos:
             nome = arquivos.TIPOS.get(tipo, tipo)
@@ -487,7 +538,8 @@ class Executor:
                 detalhes[tipo] = {"arquivos": n, "repetidos": 0, "notas": 0, "valor": 0.0, "sem_notas": e.sem_dados}
                 if e.dados.get("resumo"):  # Dossiê MEI
                     r = e.dados["resumo"]
-                    detalhes[tipo].update(arquivos=1, saidas=r["saidas"], entradas=r["entradas"], cartao=r["cartao"],
+                    pendente = r.get("planilha_pendente", False)
+                    detalhes[tipo].update(arquivos=0 if pendente else 1, saidas=r["saidas"], entradas=r["entradas"], cartao=r["cartao"],
                                           sem_movimento=r["sem_movimento"], limite_ano=r["limite"], meses=r["meses"],
                                           notas_acumulado=r["notas_acumulado"], notas_percentual=r["notas_percentual"],
                                           cartao_acumulado=r["cartao_acumulado"], cartao_percentual=r["cartao_percentual"])
@@ -501,6 +553,9 @@ class Executor:
                                   + (f"; {e.resposta}" if e.resposta else ""))
                     detalhes[tipo].update(situacao="sem_movimento" if r["sem_movimento"] else "concluido",
                                           mensagem=partes[-1][len(nome) + 2:])
+                    if pendente:
+                        detalhes[tipo].update(situacao="erro", mensagem=mei.PLANILHA_PENDENTE)
+                        falhas.append(f"{nome}: {mei.PLANILHA_PENDENTE}")
                     log.info("   %s %s: %s", t.nome, nome, partes[-1])
                     continue
                 detalhes[tipo].update(situacao_emissao(e))
@@ -515,11 +570,17 @@ class Executor:
                 continue
             envio = envios.get((t.ie, tipo))
             baixados = por_destino.get((t.ie, tipo), [])
-            r = arquivos.salvar_originais(baixados, self._destino(t), t.nome, t.ie, tipo,
-                                          f"{t.inicio:%Y-%m}", t.codigo) if baixados else None
+            r = self._salvar_originais(t, tipo, baixados) if baixados else None
             vazio = r is None
-            # todas as respostas chegaram e nenhuma trouxe arquivo desta empresa/tipo: sem notas no período
-            sem = vazio and envio.ok and (envio.sem_notas or completas)
+            codigo = self.cfg["atf"]["telas"][TIPO_TELA[tipo][0]]["funcao"]
+            incerta = envio.ok and not envio.sem_notas and codigo in recolha.incertas
+            sem_arquivo = sum(
+                1 for chave, consulta in envios.items() if consulta.ok and not consulta.sem_notas
+                and self.cfg["atf"]["telas"][TIPO_TELA[chave[1]][0]]["funcao"] == codigo
+                and not por_destino.get(chave)
+            )
+            sem_confirmadas = completas and recolha.sem_dados.get(codigo, 0) >= sem_arquivo
+            sem = vazio and envio.ok and (envio.sem_notas or (sem_confirmadas and not incerta))
             detalhes[tipo] = {"arquivos": r["novos"] if r else 0, "repetidos": r["repetidos"] if r else 0,
                               "notas": r["notas"] if r else 0, "valor": r["valor"] if r else 0.0, "sem_notas": bool(sem)}
             if r:
@@ -544,8 +605,17 @@ class Executor:
                 log.info("   %s %s: sem notas", t.nome, nome)
             else:
                 faltando.append(nome)
+            if incerta:
+                aviso = "Resposta do ATF ilegível ou sem confirmação de ausência de dados. Confira os anexos."
+                detalhes[tipo].update(situacao="erro", mensagem=aviso, sem_notas=False)
+                falhas.append(f"{nome}: {aviso}")
+                exige_conferencia = True
+            if envio.ok and not envio.sem_notas and not completas and nome not in faltando:
+                faltando.append(nome)
 
-        pasta = arquivos.pasta_empresa(self._destino(t), t.nome, t.ie, t.codigo).name
+        destino = self.cfg["pastas"]["destino"]
+        with self._pasta_empresa(t) as resolvida:
+            pasta = referencia_pasta(destino, resolvida)
         if sem_notas:
             partes.append("sem notas em " + ", ".join(sem_notas))
         if faltando and not final:
@@ -556,7 +626,9 @@ class Executor:
         if falhas:
             partes.append("; ".join(falhas))
         msg = "; ".join(partes) + "."
-        if any(d["arquivos"] or d["repetidos"] for d in detalhes.values()):
+        if exige_conferencia or (faltando and final):
+            status = "erro"
+        elif any(d["arquivos"] or d["repetidos"] for d in detalhes.values()):
             status = "concluido"
         elif faltando or falhas:
             status = "erro"
@@ -583,6 +655,76 @@ class Executor:
             self.chrome.fechar()
         self.atf = None
         self.chrome = None
+        self.sessao_por_contexto = None
+
+
+    def _pasta_empresa(self, t: Trabalho):
+        return abrir_empresa(self.cfg["pastas"]["destino"], t.contexto)
+
+
+    def _area(self, t: Trabalho, area: str) -> Path:
+        return area_do_contexto(self.cfg["pastas"]["destino"], area, *t.escopo, t.execucao_id)
+
+
+    def _diagnostico(self, t: Trabalho) -> Diagnostico:
+        return Diagnostico(self._area(t, "_diagnostico"), t.login)
+
+
+    def _executar_rodada(self, trabalhos: list[Trabalho]) -> list[Resultado]:
+        login, senha = trabalhos[0].login, trabalhos[0].senha
+        if self._impressao(login, senha) in self.recusados:
+            return [Resultado("senha_invalida", f"O ATF já recusou o login {login} nesta rodada; não tentei de novo "
+                                                "para não bloquear o acesso. Atualize a senha e agende de novo.")] * len(trabalhos)
+        try:
+            self._garantir_chrome(self._diagnostico(trabalhos[0]))
+            return self._rodada(trabalhos)
+        except SenhaInvalida as e:
+            self.recusados.add(self._impressao(login, senha))
+            return [Resultado("senha_invalida", f"Login {login} recusado pelo ATF: {e}")] * len(trabalhos)
+        except SiteForaDoAr as e:
+            return [Resultado("fora_do_ar", f"ATF fora do ar: {e} Agende de novo mais tarde.")] * len(trabalhos)
+        except EtapaNaoConcluida as e:
+            log.info("   motivo: %s", e)
+            mensagem = str(e)
+            return [Resultado("erro", mensagem)] * len(trabalhos)
+        except (ChromeIndisponivel, MensagensIndisponiveis, ContratoPortalIndisponivel):
+            raise
+        except ERROS_ARMAZENAMENTO as erro:
+            log.warning("Falha no armazenamento por contexto: %s", erro)
+            return [Resultado("erro", str(erro)) for _ in trabalhos]
+        except Exception:
+            log.exception("   falha inesperada")
+            self.fechar()  # conexão com o Chrome pode ter caído: recomeça na próxima
+            return [Resultado("erro", FALHA_NO_RETORNO)] * len(trabalhos)
+
+
+    def _periodos_mei(self, t: Trabalho):
+        destino = self.cfg["pastas"]["destino"]
+        refazer = self.cfg["mei"]["refazer_ano"]
+        return mei.periodos(destino, t.contexto, t.inicio, refazer)
+
+
+    def _salvar_mei(self, t: Trabalho, emissao: Emissao):
+        destino = self.cfg["pastas"]["destino"]
+        dados = emissao.dados
+        try:
+            resumo = mei.salvar(destino, t.contexto, f"{t.inicio:%Y-%m}", dados, consultado_em=agora())
+        except (ValueError, TypeError, OSError, ArmazenamentoOcupado) as erro:
+            emissao.ok, emissao.resposta = False, str(erro)
+            return
+        dados["resumo"] = resumo
+        if self.ao_mei is not None:
+            try:
+                self.ao_mei(t, resumo)
+            except ContratoPortalIndisponivel:
+                raise
+            except Exception as erro:  # O histórico salvo pode ser reenviado depois.
+                log.warning("   faturamento MEI não enviado ao portal: %s", erro)
+
+
+    def _salvar_originais(self, t: Trabalho, tipo: str, baixados):
+        with self._pasta_empresa(t) as pasta:
+            return arquivos.salvar_originais(baixados, pasta, arquivos.Alvo(t.ie, t.cnpj, [tipo]), tipo, f"{t.inicio:%Y-%m}")
 
 
 FINAIS = ("concluido", "sem_movimento", "erro")
@@ -621,6 +763,8 @@ def situacao_emissao(e) -> dict:
     if e.arquivos:
         return {"situacao": "concluido", "mensagem": f"{len(e.arquivos)} arquivo(s)"}
     if e.dados.get("resumo"):
+        if e.dados["resumo"].get("planilha_pendente"):
+            return {"situacao": "erro", "mensagem": mei.PLANILHA_PENDENTE}
         return {"situacao": "sem_movimento" if e.dados["resumo"].get("sem_movimento") else "concluido",
                 "mensagem": "faturamento do mês salvo"}
     if e.sem_dados:
@@ -692,15 +836,18 @@ class Portal:
     def _r(self, metodo, caminho, **kw):
         cab = {**self.cabecalhos, **kw.pop("headers", {})}
         r = requests.request(metodo, f"{self.url}{caminho}", headers=cab, timeout=self.timeout, **kw)
-        if r.status_code == 404 and caminho == "/rest/v1/rpc/xml_nfse_pegar_lote_v2":
-            raise ContratoPortalIndisponivel("Fila NFS-e por escritório indisponível. Confira o banco e a migração de integração.")
+        if r.status_code == 404 and caminho in ("/rest/v1/rpc/xml_nfse_pegar_lote_v2",
+                                                "/rest/v1/rpc/xml_pegar_lote_v2",
+                                                "/rest/v1/rpc/xml_mei_registrar_v2",
+                                                "/rest/v1/rpc/xml_mei_registrar_contexto"):
+            raise ContratoPortalIndisponivel(f"Função {caminho.rsplit('/', 1)[-1]} indisponível. Confira o banco e a migração de integração.")
         if r.status_code >= 400:
             raise RuntimeError(f"{metodo} {caminho} -> {r.status_code}: {r.text[:300]}")
         return r
 
     def pegar_lote(self, robo: str, login_aberto: str, maximo: int) -> list[dict]:
         """Tarefas liberadas de UM login (de preferência o que já está aberto no ATF)."""
-        return self._r("POST", "/rest/v1/rpc/xml_pegar_lote",
+        return self._r("POST", "/rest/v1/rpc/xml_pegar_lote_v2",
                        json={"p_robo": robo, "p_login": login_aberto, "p_max": maximo}).json() or []
 
     def pegar_lote_nfse(self, robo: str, maximo: int) -> list[dict]:
@@ -722,21 +869,12 @@ class Portal:
     def atualizar_tarefa(self, tid: str, campos: dict):
         self._r("PATCH", f"/rest/v1/xml_tarefas?id=eq.{tid}", json=campos, headers={"Prefer": "return=minimal"})
 
-    def registrar_mei(self, tarefa: str, meses: dict, inicio_atividade: str | None):
-        """Dossiê MEI: grava o ano mês a mês no painel (a empresa e o escritório saem da tarefa)."""
-        self._r("POST", "/rest/v1/rpc/xml_mei_registrar",
-                json={"p_tarefa": tarefa, "p_meses": meses, "p_inicio_atividade": inicio_atividade})
 
-    def registrar_mei_ie(self, ie: str, nome: str, meses: dict, inicio_atividade: str | None) -> int:
-        """Histórico do Dossiê MEI salvo no PC: grava em todos os escritórios que têm essa IE cadastrada."""
-        return self._r("POST", "/rest/v1/rpc/xml_mei_registrar_ie",
-                       json={"p_ie": ie, "p_nome": nome, "p_meses": meses, "p_inicio_atividade": inicio_atividade}).json() or 0
-
-    def avisar_mei(self, ie: str) -> dict:
+    def avisar_mei(self, ie: str, *, org_id: str | None = None) -> dict:
         """Pede ao portal que confira os limites desse MEI e mande o alerta à equipe (sem esperar o dia seguinte)."""
         if not self.site:
             return {}
-        r = requests.post(f"{self.site}/api/robo/alertas-mei", json={"ie": ie}, headers={"x-robo-chave": self._chave},
+        r = requests.post(f"{self.site}/api/robo/alertas-mei", json={"ie": ie, **({"org_id": org_id} if org_id else {})}, headers={"x-robo-chave": self._chave},
                           timeout=self.timeout)
         if r.status_code >= 400:
             raise RuntimeError(f"alertas MEI -> {r.status_code}: {r.text[:200]}")
@@ -759,6 +897,22 @@ class Portal:
     def sinal(self, robo: str, info: dict):
         self._r("POST", "/rest/v1/xml_robos", json={"id": robo, "ultimo_sinal": agora(), "versao": VERSAO, "info": info},
                 headers={"Prefer": "resolution=merge-duplicates,return=minimal"})
+
+
+    def registrar_mei_tarefa(self, tarefa: str, contexto: ContextoArmazenamento, meses: dict,
+                            inicio_atividade: str | None):
+        if (contexto.tipo_contexto, contexto.origem, contexto.tipo_documento) != ("portal", "sefaz_pb", "ie"):
+            raise IdentidadeArmazenamentoInvalida("Só uma tarefa SEFAZ do portal pode enviar MEI.")
+        self._r("POST", "/rest/v1/rpc/xml_mei_registrar_v2", json={
+            "p_tarefa": tarefa, "p_org": contexto.contexto_id, "p_ie": contexto.documento,
+            "p_meses": meses, "p_inicio_atividade": inicio_atividade,
+        })
+
+
+    def registrar_mei_contexto(self, org: str, ie: str, meses: dict, inicio_atividade: str | None) -> int:
+        return self._r("POST", "/rest/v1/rpc/xml_mei_registrar_contexto", json={
+            "p_org": org, "p_ie": ie, "p_meses": meses, "p_inicio_atividade": inicio_atividade,
+        }).json() or 0
 
 
 def agora() -> str:
@@ -792,22 +946,14 @@ class Robo:
 
     def enviar_historico_mei(self):
         """Manda ao painel o faturamento MEI que já está salvo neste PC (meses consultados antes do painel)."""
-        historicos = arquivos.historicos_mei(self.cfg["pastas"]["destino"])
-        if not historicos:
-            return
-        enviados = 0
-        for h in historicos:
+        for h in mei.historicos_portal(self.cfg["pastas"]["destino"]):
             try:
-                n = self.portal.registrar_mei_ie(h["ie"], h["nome"], h["meses"], h["inicio_atividade"])
-            except Exception as e:
-                log.warning("Faturamento MEI de %s não enviado ao painel: %s", h["nome"] or h["ie"], e)
-                continue
-            if n:
-                enviados += 1
-            else:
-                log.info("   %s (IE %s): IE sem cadastro no portal; o faturamento MEI fica só no PC",
-                         h["nome"], planilha.formatar_ie(h["ie"]))
-        log.info("Monitoramento MEI: %d de %d empresa(s) enviadas ao painel.", enviados, len(historicos))
+                n = self.portal.registrar_mei_contexto(h["org_id"], h["ie"], h["meses"], h["inicio_atividade"])
+                log.info("MEI: %d mês(es) atualizado(s) no escritório %s, IE %s.", n, h["org_id"], h["ie"])
+            except ContratoPortalIndisponivel:
+                raise
+            except Exception as erro:
+                log.warning("MEI não reenviado para escritório %s, IE %s: %s", h["org_id"], h["ie"], erro)
 
     def rodar(self):
         log.info("Robô '%s' conectado a %s. XML em: %s", self.nome, self.portal.url, self.cfg["pastas"]["destino"])
@@ -834,6 +980,8 @@ class Robo:
             try:
                 self._sinal()
                 lote = self.portal.pegar_lote(self.nome, self.executor.login_aberto, self.cfg["atf"]["empresas_por_rodada"])
+            except ContratoPortalIndisponivel:
+                raise
             except Exception as e:
                 log.warning("Sem contato com o portal: %s", e)
                 time.sleep(30)
@@ -849,23 +997,19 @@ class Robo:
             try:
                 self.processar(lote)
             except MensagensIndisponiveis as e:
-                log.error("ERRO: %s O robô vai parar; as tarefas voltam para a fila.", e)
-                for t in lote:
-                    self.portal.atualizar_tarefa(t["id"], {"status": "pendente", "iniciado_em": None, "robo": None})
-                self.tarefas_atuais = []
-                self._repescar(ler=False)  # as que esperavam mensagens ficam com o que já chegou
+                log.error("ERRO: %s Confira as tarefas e reservas antes de retomar.", e)
+                self._repescar(ler=False)
                 self.executor.fechar()
                 sys.exit(f"ERRO: {e} Confira o ATF no Chrome e ligue o robô de novo.")
+            except ContratoPortalIndisponivel:
+                raise
             except ChromeIndisponivel as e:
                 self.chrome_ok = False
-                log.error("%s — as tarefas voltam para a fila; nova tentativa em 60 s.", e)
-                for t in lote:
-                    self.portal.atualizar_tarefa(t["id"], {"status": "pendente", "iniciado_em": None, "robo": None})
-                self._sinal(forcar=True)
-                time.sleep(60)
+                self.executor.fechar()
+                sys.exit(str(e))
             except Exception:
                 log.exception("Erro inesperado no lote de %s", lote[0].get("login_atf"))
-                for t in lote:
+                for t in self._lote_interrompido():
                     self._finalizar(t, Resultado("erro", FALHA_NO_RETORNO))
             self.tarefas_atuais = []
 
@@ -896,36 +1040,41 @@ class Robo:
             self.ultimo_sinal = time.time()
 
     def processar(self, lote: list[dict]):
-        login = lote[0]["login_atf"]
-        log.info("Rodada do login %s: %d empresa(s)", login, len(lote))
-        try:
-            senha = cripto.decifrar(lote[0]["senha_cifrada"], self.privada)
-        except cripto.SenhaIlegivel as e:
-            for t in lote:
-                self._finalizar(t, Resultado("senha_invalida", f"Senha não pôde ser lida: {e}"))
-            return
-        trabalhos = [Trabalho(ie=t["ie"], nome=t["nome"], login=login, senha=senha, tipos=t["tipos"],
-                              inicio=date.fromisoformat(t["data_inicio"]), fim=date.fromisoformat(t["data_fim"]),
-                              cnpj=t.get("cnpj") or "", codigo=t.get("codigo") or "",
-                              destino=destino_da_tarefa(self.cfg, t)) for t in lote]
-        del senha
-        self.em_curso = {id(tr): (t["id"], {}) for tr, t in zip(trabalhos, lote)}
-        # mesma competência na rodada (o banco pode juntar agendamentos diferentes do mesmo login)
-        resultados = []
-        for grupo in rodadas(trabalhos, len(trabalhos), chave=lambda t: f"{t.inicio}"):
-            resultados.extend(zip(grupo, self.executor.executar_rodada(grupo)))
-        por_ie_periodo = {(t.ie, t.inicio): (t, r) for t, r in resultados}
-        for t in trabalhos:
-            t.senha = ""
+        self.em_curso = {}
+        grupos = {}
+        for tarefa in lote:
+            try:
+                contexto = contexto_portal(tarefa, "sefaz_pb", "ie")
+                tipos = tarefa.get("tipos") or []
+                inicio = date.fromisoformat(tarefa["data_inicio"])
+                fim = date.fromisoformat(tarefa["data_fim"])
+                if inicio > fim:
+                    raise ValueError("Competência inválida.")
+                login, cifra = tarefa["login_atf"], tarefa["senha_cifrada"]
+            except (KeyError, ValueError, TypeError) as erro:
+                self._finalizar(tarefa, Resultado("erro", f"Tarefa sem contexto válido: {erro}"))
+                continue
+            grupos.setdefault((contexto.contexto_id, login, cifra, inicio, fim), []).append((tarefa, contexto, tipos))
+
+        for (_, login, cifra, inicio, fim), grupo in grupos.items():
+            try:
+                senha = cripto.decifrar(cifra, self.privada)
+            except cripto.SenhaIlegivel as erro:
+                for tarefa, _, _ in grupo:
+                    self._finalizar(tarefa, Resultado("senha_invalida", f"Senha não pôde ser lida: {erro}"))
+                continue
+            trabalhos = []
+            ies = set()
+            for tarefa, contexto, tipos in grupo:
+                # Uma IE repetida pode ser outra tarefa da mesma empresa e precisa de resultado próprio.
+                if contexto.documento in ies:
+                    self._executar_grupo_portal(trabalhos)
+                    trabalhos, ies = [], set()
+                ies.add(contexto.documento)
+                trabalhos.append((tarefa, Trabalho(contexto.documento, contexto.nome, login, senha, tipos, inicio, fim,
+                                                    tarefa.get("cnpj") or "", contexto.codigo, contexto=contexto)))
+            self._executar_grupo_portal(trabalhos)
         self.chrome_ok = True
-        for t in lote:
-            trabalho, r = por_ie_periodo[(t["ie"], date.fromisoformat(t["data_inicio"]))]
-            log.info("   %s -> %s: %s", t["nome"], r.status, r.mensagem)
-            if r.pendente:  # fica "processando" até a última leitura das mensagens, no final da fila
-                self.aguardando[id(trabalho)] = t
-                self.portal.atualizar_tarefa(t["id"], {"mensagem": r.mensagem[:500], "detalhes": r.detalhes})
-            else:
-                self._finalizar(t, r)
 
     def _trava_da_empresa(self, chave: tuple) -> threading.Lock:
         """Serializa o cache da mesma identidade sem bloquear outro escritório."""
@@ -997,7 +1146,7 @@ class Robo:
 
         if r.detalhes.get("mei_nfse"):
             try:
-                self.portal.avisar_mei(t["cnpj"])
+                self.portal.avisar_mei(t["cnpj"], org_id=t["org_id"])
             except Exception as e:
                 log.warning("   alerta MEI/NFS-e não pedido ao portal: %s", e)
 
@@ -1057,9 +1206,9 @@ class Robo:
     def _mei(self, trabalho, resumo: dict):
         tarefa = self.em_curso.get(id(trabalho))
         if tarefa is not None:
-            self.portal.registrar_mei(tarefa[0], resumo.get("historico") or {}, resumo.get("inicio_atividade"))
+            self.portal.registrar_mei_tarefa(tarefa[0], trabalho.contexto, resumo.get("historico") or {}, resumo.get("inicio_atividade"))
             try:  # alerta de limite na hora (se falhar, sai no agendamento diário do portal)
-                r = self.portal.avisar_mei(trabalho.ie)
+                r = self.portal.avisar_mei(trabalho.ie, org_id=trabalho.contexto.contexto_id)
                 if r.get("enviados"):
                     log.info("   alerta MEI enviado à equipe (%d e-mail(s))", r["enviados"])
                 for erro in r.get("erros") or []:
@@ -1074,6 +1223,9 @@ class Robo:
             "status": r.status, "mensagem": r.mensagem[:500], "qtd_xml": r.qtd_xml,
             "detalhes": detalhes, "pasta": r.pasta, "concluido_em": agora(),
         })
+        # Uma falha posterior no lote não deve reescrever tarefas já confirmadas pelo painel.
+        self.tarefas_atuais = [pendente for pendente in getattr(self, "tarefas_atuais", [])
+                              if pendente["id"] != t["id"]]
 
     def encerrar(self, *_):
         log.info("Encerrando...")
@@ -1081,11 +1233,9 @@ class Robo:
         with self._trava:
             paralelas = list(self.em_paralelo.values())
             monitores = list(self.monitores_em_curso.values())
-        for t in list(self.tarefas_atuais) + list(self.aguardando.values()):  # retomada do ATF será integrada na etapa própria
-            try:
-                self.portal.atualizar_tarefa(t["id"], {"status": "pendente", "iniciado_em": None, "robo": None})
-            except Exception:
-                pass
+        interrompidas = list(self.tarefas_atuais) + list(self.aguardando.values())
+        if interrompidas:
+            log.info("ATF em andamento preservadas para conferência: %s", ", ".join(t["id"] for t in interrompidas))
         if paralelas:
             log.info("NFS-e em andamento preservadas para conferência: %s", ", ".join(t["id"] for t in paralelas))
         for m in monitores:  # a consulta interrompida sai de novo na próxima volta do robô
@@ -1095,6 +1245,29 @@ class Robo:
                 pass
         self.executor.fechar()
         sys.exit(0)
+
+
+    def _executar_grupo_portal(self, pares: list):
+        trabalhos = [trabalho for _, trabalho in pares]
+        self.em_curso.update({id(trabalho): (tarefa["id"], {}) for tarefa, trabalho in pares})
+        resultados = self.executor.executar_rodada(trabalhos)
+        for (tarefa, trabalho), resultado in zip(pares, resultados, strict=True):
+            trabalho.senha = ""
+            self._registrar_resultado(tarefa, trabalho, resultado)
+
+
+    def _registrar_resultado(self, tarefa, trabalho, resultado):
+        log.info("   %s -> %s: %s", tarefa["nome"], resultado.status, resultado.mensagem)
+        if resultado.pendente:
+            self.aguardando[id(trabalho)] = tarefa
+            self.portal.atualizar_tarefa(tarefa["id"], {"mensagem": resultado.mensagem[:500], "detalhes": resultado.detalhes})
+        else:
+            self._finalizar(tarefa, resultado)
+
+
+    def _lote_interrompido(self):
+        pendentes = {t["id"] for t in self.aguardando.values()}
+        return [t for t in self.tarefas_atuais if t["id"] not in pendentes]
 
 
 # ====================================================================== NFS-e (Portal Nacional)
@@ -1251,7 +1424,7 @@ def executar_monitor(cfg: dict, m: dict, privada, sessao_falsa=None) -> dict:
 
 
 # ====================================================================== modo local
-def rodar_local(cfg: dict, arquivo: str, inicio: date, fim: date):
+def rodar_local(cfg: dict, arquivo: str, inicio: date, fim: date, *, contexto_local: tuple[str, str]):
     leitura = planilha.ler(arquivo)
     for e in leitura.erros + leitura.avisos:
         log.warning(e)
@@ -1275,7 +1448,8 @@ def rodar_local(cfg: dict, arquivo: str, inicio: date, fim: date):
                 resultados.append((emp, Resultado("senha_invalida", f"SENHA do login {emp.login} em branco na planilha.")))
                 continue
             prontos.append((emp, Trabalho(ie=emp.ie, nome=emp.nome, login=emp.login, senha=senha, tipos=emp.tipos,
-                                          inicio=inicio, fim=fim, cnpj=emp.cnpj, codigo=emp.codigo)))
+                                          inicio=inicio, fim=fim, cnpj=emp.cnpj, codigo=emp.codigo,
+                                          contexto=ContextoArmazenamento("local", contexto_local[0], "sefaz_pb", "ie", emp.ie, emp.nome, emp.codigo, contexto_local[1]))))
         for grupo in rodadas(prontos, cfg["atf"]["empresas_por_rodada"], chave=lambda p: p[1].login):
             log.info("Rodada do login %s: %d empresa(s)", grupo[0][1].login, len(grupo))
             try:
@@ -1304,13 +1478,13 @@ def rodar_local(cfg: dict, arquivo: str, inicio: date, fim: date):
                           "O robô parou de vez.")
     finally:
         executor.fechar()
-    log.info("Relatório: %s", salvar_relatorio(cfg, resultados, inicio))
+    log.info("Relatório: %s", salvar_relatorio(cfg, resultados, inicio, contexto_local=contexto_local))
     if parada:
         log.error("ERRO: %s O que já tinha sido baixado foi salvo; rode de novo mais tarde para o que faltou.", parada)
         sys.exit(1)
 
 
-def salvar_relatorio(cfg, resultados, inicio: date) -> Path:
+def salvar_relatorio(cfg, resultados, inicio: date, *, contexto_local: tuple[str, str]) -> Path:
     from openpyxl import Workbook
     from openpyxl.styles import Font
 
@@ -1324,10 +1498,12 @@ def salvar_relatorio(cfg, resultados, inicio: date) -> Path:
         ws.append([emp.codigo, emp.nome, planilha.formatar_ie(emp.ie), r.status, r.qtd_xml, r.mensagem, r.pasta])
     for col, w in zip("ABCDEFG", (10, 32, 16, 16, 8, 70, 40)):
         ws.column_dimensions[col].width = w
-    pasta = Path(cfg["pastas"]["destino"]) / "_relatorios"
-    pasta.mkdir(parents=True, exist_ok=True)
-    destino = pasta / f"xml_{inicio:%Y-%m}_{datetime.now():%Y%m%d_%H%M%S}.xlsx"
-    wb.save(destino)
+    pasta = area_do_contexto(cfg["pastas"]["destino"], "_relatorios", "local", contexto_local[0], str(uuid4()))
+    destino = arquivo_validado(pasta, f"xml_{inicio:%Y-%m}.xlsx")
+    try:
+        publicar_arquivo(destino, wb.save)
+    finally:
+        wb.close()
     return destino
 
 
@@ -1415,10 +1591,10 @@ def main():
                     help="NFS-e do Portal Nacional com um certificado A1 deste PC (pergunta o arquivo e a senha)")
     ap.add_argument("--conferir-banco", action="store_true", help="mostra o endereço efetivo do Supabase")
     ap.add_argument("--confirmar-banco", metavar="URL", help="confirma o banco antes de iniciar ou reenviar")
-    ap.add_argument("--criar-contexto-local", action="store_true", help="autoriza o identificador persistente do teste NFS-e")
+    ap.add_argument("--criar-contexto-local", action="store_true", help="autoriza o identificador persistente do modo local ATF ou teste NFS-e")
     args = ap.parse_args()
-    if args.criar_contexto_local and not args.nfse_teste:
-        ap.error("--criar-contexto-local exige --nfse-teste nesta etapa")
+    if args.criar_contexto_local and not (args.nfse_teste or args.local):
+        ap.error("--criar-contexto-local exige --local ou --nfse-teste")
     usa_portal = not (args.local or args.nfse_teste or args.gerar_chaves or args.mostrar_chave_publica
                      or args.modelo or args.gravar is not None)
 
@@ -1433,7 +1609,7 @@ def main():
             if not args.confirmar_banco or endereco_banco(args.confirmar_banco) != banco:
                 sys.exit("Confira --conferir-banco e informe a URL esperada em --confirmar-banco.")
             cfg["portal"]["supabase_url"] = banco
-        if args.nfse_teste:
+        if args.nfse_teste or args.local:
             contexto_local = config.carregar_contexto_local(confirmar_criacao=args.criar_contexto_local)
         cfg["_avisos"] = config.resolver_pastas(cfg)
     except config.ConfigInvalida as erro:
@@ -1448,7 +1624,7 @@ def main():
     arquivos.FORMATO_COMPETENCIA = cfg["pastas"]["formato_competencia"]  # pasta do mês: 102026 ou 2026-10
     arquivos.GERAR_PDF = bool(cfg["pastas"].get("pdf_das_notas", True))
     if not (args.gerar_chaves or args.mostrar_chave_publica or args.modelo or args.gravar is not None):
-        log.info("Arquivos do ATF: %s", Path(cfg["pastas"]["destino"]) / arquivos.PASTA_BAIXADOS)
+        log.info("ATF e NFS-e por escritório: %s", Path(cfg["pastas"]["destino"]) / PASTA_CONTEXTOS)
         log.info("NFS-e por escritório: %s", Path(cfg["pastas"]["destino"]) / PASTA_CONTEXTOS)
 
     if args.gerar_chaves:
@@ -1484,7 +1660,7 @@ def main():
         for inicio, fim in periodos:
             if len(periodos) > 1:
                 log.info("===== Competência %s =====", f"{inicio:%m/%Y}")
-            rodar_local(cfg, args.local, inicio, fim)
+            rodar_local(cfg, args.local, inicio, fim, contexto_local=contexto_local)
             cfg["mei"]["refazer_ano"] = False  # o ano já foi refeito na primeira competência
         return
 

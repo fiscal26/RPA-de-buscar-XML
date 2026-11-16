@@ -3,10 +3,25 @@ import zipfile
 from pathlib import Path
 
 import arquivos
+import mei
+import pytest
+from armazenamento import ContextoArmazenamento, abrir_empresa
 from util import IE_EMPRESA, IE_OUTRA, chave, cte, evento, evento_cte, nfe
 
 EMPRESA = "11222333000181"
 OUTRA = "45723174000110"
+CTX = ContextoArmazenamento("portal", "7b245ed0-a8a0-4242-bcf0-24c8eb2895c6", "sefaz_pb", "ie", IE_EMPRESA, "Empresa", "7")
+
+
+@pytest.fixture
+def tmp_path(tmp_path_factory):
+    return tmp_path_factory.mktemp("a")
+
+
+@pytest.fixture
+def pasta_validada(tmp_path):
+    with abrir_empresa(tmp_path, CTX) as pasta:
+        yield pasta
 
 
 def _zip(itens: dict[str, bytes]) -> bytes:
@@ -35,39 +50,44 @@ def test_extrai_zip_dentro_de_zip():
     assert sorted(n for n, _ in arquivos.extrair(externo, "x.zip")) == ["a.xml", "b.xml"]
 
 
-def test_saida_organizada_e_separa_outra_empresa(tmp_path):
+def test_saida_organizada_e_separa_outra_empresa(pasta_validada):
     xmls = [("1.xml", nfe(EMPRESA, OUTRA, 1, ie_emit=IE_EMPRESA)),
-            ("2.xml", nfe(EMPRESA, OUTRA, 2, "2026-10-01", ie_emit=IE_EMPRESA)),
-            ("3.xml", nfe(OUTRA, EMPRESA, 3, ie_emit=IE_OUTRA)), ("ruim.xml", b"<a/>")]
-    r = arquivos.salvar(xmls, tmp_path, "Padaria: Centro", IE_EMPRESA, EMPRESA, "nfe_saida", codigo="015")
-    base = tmp_path / "Arquivos baixados" / "015-Padaria Centro"
-    assert (base / "092026" / "NF-e Saida" / f"{chave(EMPRESA, numero=1)}.xml").exists()
-    assert (base / "102026" / "NF-e Saida" / f"{chave(EMPRESA, '2610', numero=2)}.xml").exists()
-    assert len(list((base / "_conferir").iterdir())) == 1
-    assert (r.salvos, r.conferir, r.invalidos) == (2, 1, 1)
-
-    r2 = arquivos.salvar(xmls, tmp_path, "Padaria: Centro", IE_EMPRESA, EMPRESA, "nfe_saida", codigo="015")
-    assert (r2.salvos, r2.repetidos) == (0, 2)  # rodar de novo não duplica
-
-
-def test_entrada_confere_destinatario_pela_ie_sem_cnpj(tmp_path):
-    r = arquivos.salvar([("x.xml", nfe(OUTRA, EMPRESA, 9, ie_dest=IE_EMPRESA))], tmp_path, "Loja", IE_EMPRESA, "",
-                        "nfe_entrada")
-    assert r.salvos == 1 and r.conferir == 0
-    assert list(tmp_path.glob("Arquivos baixados/Loja/092026/NF-e Entrada/*.xml"))
+            ("2.xml", nfe(EMPRESA, OUTRA, 2, ie_emit=IE_EMPRESA)),
+            ("3.xml", nfe(OUTRA, EMPRESA, 3, ie_emit=IE_OUTRA)), ("ruim.bin", b"ilegivel")]
+    alvo = arquivos.Alvo(IE_EMPRESA, EMPRESA, ["nfe_saida"])
+    por, fora, conferir = arquivos.distribuir_por_empresa(xmls, [alvo])
+    assert fora == [xmls[2]] and conferir == [xmls[3]]
+    r = arquivos.salvar_originais(por[(IE_EMPRESA, "nfe_saida")], pasta_validada, alvo, "nfe_saida", "2026-09")
+    assert r["novos"] == 2 and r["notas"] == 2
+    assert len(list(Path(r["pasta"]).glob("*.xml"))) == 2
+    r2 = arquivos.salvar_originais(por[(IE_EMPRESA, "nfe_saida")], pasta_validada, alvo, "nfe_saida", "2026-09")
+    assert r2["novos"] == 0 and r2["repetidos"] == 2
 
 
-def test_nfce(tmp_path):
-    r = arquivos.salvar([("c.xml", nfe(EMPRESA, "", 4, modelo="65", ie_emit=IE_EMPRESA))], tmp_path, "Loja",
-                        IE_EMPRESA, EMPRESA, "nfce")
-    assert r.salvos == 1 and list(tmp_path.glob("Arquivos baixados/*/092026/NFC-e/*.xml"))
+def test_entrada_confere_destinatario_pela_ie_sem_cnpj(pasta_validada):
+    alvo = arquivos.Alvo(IE_EMPRESA, "", ["nfe_entrada"])
+    r = arquivos.salvar_originais([("x.xml", nfe(OUTRA, EMPRESA, 9, ie_dest=IE_EMPRESA))],
+                                  pasta_validada, alvo, "nfe_entrada", "2026-09")
+    assert r["novos"] == 1 and r["notas"] == 1
+    assert list(Path(r["pasta"]).glob("*.xml"))
 
 
-def test_evento_vai_para_subpasta(tmp_path):
-    ch = chave(EMPRESA, numero=1)
-    r = arquivos.salvar([("ev.xml", evento(EMPRESA, ch))], tmp_path, "Loja", IE_EMPRESA, EMPRESA, "nfe_saida")
-    assert r.salvos == 1
-    assert list(tmp_path.glob("Arquivos baixados/*/092026/NF-e Saida/Eventos/*.xml"))
+def test_nfce(pasta_validada):
+    alvo = arquivos.Alvo(IE_EMPRESA, EMPRESA, ["nfce"])
+    r = arquivos.salvar_originais([("c.xml", nfe(EMPRESA, "", 4, modelo="65", ie_emit=IE_EMPRESA))],
+                                  pasta_validada, alvo, "nfce", "2026-09")
+    assert r["novos"] == 1 and r["notas"] == 1
+    assert list(Path(r["pasta"]).glob("*.xml"))
+
+
+def test_evento_posterior_preservado_e_descontado_do_total(pasta_validada):
+    alvo = arquivos.Alvo(IE_EMPRESA, EMPRESA, ["nfe_saida"])
+    nota = nfe(EMPRESA, OUTRA, 1, ie_emit=IE_EMPRESA)
+    arquivos.salvar_originais([("nota.xml", nota)], pasta_validada, alvo, "nfe_saida", "2026-09")
+    cancelamento = evento(EMPRESA, chave(EMPRESA, numero=1))
+    r = arquivos.salvar_originais([("evento.xml", cancelamento)], pasta_validada, alvo, "nfe_saida", "2026-09")
+    assert r["novos"] == 1 and r["notas"] == 0 and r["valor"] == 0
+    assert {p.read_bytes() for p in Path(r["pasta"]).glob("*.xml")} == {nota, cancelamento}
 
 
 def test_distribuir_pelo_conteudo():
@@ -93,7 +113,7 @@ def test_pasta_id_nome(tmp_path):
 
 def test_arquivo_que_nao_e_xml_nao_se_perde(tmp_path):
     salvos = arquivos.salvar_nao_identificados([("relatorio.pdf", b"%PDF-1.4 teste")], tmp_path)
-    assert salvos[0].parent == tmp_path / "Arquivos baixados" / "_nao_identificados"
+    assert salvos[0].parent == tmp_path
     assert salvos[0].read_bytes() == b"%PDF-1.4 teste" and salvos[0].suffix == ".pdf"
     assert arquivos.tipo_de_arquivo(b"%PDF-1.4") == "PDF"
 
@@ -103,21 +123,21 @@ def test_gzip(tmp_path):
     assert [n for n, _ in arquivos.extrair(gzip.compress(nfe(EMPRESA, OUTRA, 1)), "nota.xml.gz")] == ["nota.xml"]
 
 
-def test_zip_guardado_como_veio_e_total_no_nome_da_pasta(tmp_path):
+def test_zip_guardado_como_veio_e_total_no_nome_da_pasta(pasta_validada):
     zip1 = _zip({"a.xml": nfe(EMPRESA, OUTRA, 1, ie_emit=IE_EMPRESA, valor=1000.5),
                  "b.xml": nfe(EMPRESA, OUTRA, 2, ie_emit=IE_EMPRESA, valor=234.06),
                  "c.xml": nfe(EMPRESA, OUTRA, 3, ie_emit=IE_EMPRESA, valor=99999),
                  "cancel.xml": evento(EMPRESA, chave(EMPRESA, numero=3)).replace(b"<tpEvento>110111", b"<tpEvento>110111")})
-    r = arquivos.salvar_originais([("Dados 2026.zip", zip1)], tmp_path, "joao", IE_EMPRESA, "nfe_saida", "2026-09", "5")
-    pasta = tmp_path / "Arquivos baixados" / "5-joao" / "092026" / "NF-e Saida - R$ 1.234,56"
+    r = arquivos.salvar_originais([("Dados 2026.zip", zip1)], pasta_validada, arquivos.Alvo(IE_EMPRESA, EMPRESA, ["nfe_saida"]), "nfe_saida", "2026-09")
+    pasta = pasta_validada / "092026" / "NF-e Saida - R$ 1.234,56"
     assert r["pasta"] == str(pasta) and (r["notas"], r["valor"]) == (2, 1234.56)  # a nota 3 foi cancelada
     (arquivo,) = list(pasta.iterdir())
     assert arquivo.name == "NF-e Saida 2026-09.zip" and arquivo.read_bytes() == zip1  # o ZIP intacto
 
     # rodar de novo não duplica; um ZIP novo soma no total e a pasta é renomeada
-    assert arquivos.salvar_originais([("x.zip", zip1)], tmp_path, "joao", IE_EMPRESA, "nfe_saida", "2026-09", "5")["repetidos"] == 1
+    assert arquivos.salvar_originais([("x.zip", zip1)], pasta_validada, arquivos.Alvo(IE_EMPRESA, EMPRESA, ["nfe_saida"]), "nfe_saida", "2026-09")["repetidos"] == 1
     zip2 = _zip({"d.xml": nfe(EMPRESA, OUTRA, 4, ie_emit=IE_EMPRESA, valor=10)})
-    r = arquivos.salvar_originais([("y.zip", zip2)], tmp_path, "joao", IE_EMPRESA, "nfe_saida", "2026-09", "5")
+    r = arquivos.salvar_originais([("y.zip", zip2)], pasta_validada, arquivos.Alvo(IE_EMPRESA, EMPRESA, ["nfe_saida"]), "nfe_saida", "2026-09")
     assert r["pasta"].endswith("NF-e Saida - R$ 1.244,56") and len(list(Path(r["pasta"]).iterdir())) == 2
 
 
@@ -125,20 +145,22 @@ def test_distribuir_arquivos_inteiros():
     venda = _zip({"v1.xml": nfe(EMPRESA, OUTRA, 1, ie_emit=IE_EMPRESA, ie_dest=IE_OUTRA),
                   "v2.xml": nfe(EMPRESA, "", 2, ie_emit=IE_EMPRESA)})
     alvos = [arquivos.Alvo(IE_EMPRESA, "", ["nfe_saida"]), arquivos.Alvo(IE_OUTRA, "", ["nfe_entrada"])]
-    por, sem_empresa, nao = arquivos.distribuir_arquivos([("z.zip", venda), ("r.pdf", b"%PDF")], alvos)
-    assert list(por) == [(IE_EMPRESA, "nfe_saida")] and por[(IE_EMPRESA, "nfe_saida")][0][1] == venda
+    por, sem_empresa, nao = arquivos.distribuir_por_empresa([("z.zip", venda), ("r.pdf", b"%PDF")], alvos)
+    assert set(por) == {(IE_EMPRESA, "nfe_saida"), (IE_OUTRA, "nfe_entrada")}
+    assert por[(IE_EMPRESA, "nfe_saida")][0][1] == venda
+    assert len(por[(IE_OUTRA, "nfe_entrada")]) == 1 and arquivos.ler_xml(por[(IE_OUTRA, "nfe_entrada")][0][1])
     assert not sem_empresa and [n for n, _ in nao] == ["r.pdf"]
 
 
-def test_documento_pdf_na_pasta_do_servico(tmp_path):
+def test_documento_pdf_na_pasta_do_servico(pasta_validada):
     pdf = b"%PDF-1.4\n% certidao\n%%EOF"
-    r = arquivos.salvar_documentos([("Saida.pdf", pdf)], tmp_path, "Padaria", "160123453", "certidao", "2026-09", "5")
+    r = arquivos.salvar_documentos([("Saida.pdf", pdf)], pasta_validada, "certidao", "2026-09")
     assert r["novos"] == 1
-    arq = tmp_path / "Arquivos baixados" / "5-Padaria" / "092026" / "Certidão de Débitos" / "Certidão de Débitos 2026-09.pdf"
+    arq = pasta_validada / "092026" / "Certidão de Débitos" / "Certidão de Débitos 2026-09.pdf"
     assert arq.read_bytes() == pdf
     # de novo: o mesmo arquivo não repete; um novo fica ao lado
-    assert arquivos.salvar_documentos([("Saida.pdf", pdf)], tmp_path, "Padaria", "160123453", "certidao", "2026-09", "5")["repetidos"] == 1
-    arquivos.salvar_documentos([("Saida.pdf", pdf + b" ")], tmp_path, "Padaria", "160123453", "certidao", "2026-09", "5")
+    assert arquivos.salvar_documentos([("Saida.pdf", pdf)], pasta_validada, "certidao", "2026-09")["repetidos"] == 1
+    arquivos.salvar_documentos([("Saida.pdf", pdf + b" ")], pasta_validada, "certidao", "2026-09")
     assert (arq.parent / "Certidão de Débitos 2026-09 (2).pdf").exists()
 
 
@@ -156,7 +178,7 @@ def test_cte_vai_para_a_destinataria_com_o_valor_da_prestacao():
         for i, d in enumerate((c1, c2, cancelado, marcado)):
             z.writestr(f"{i}.xml", d)
     alvos = [arquivos.Alvo(IE_EMPRESA, "", ["cte_rem", "cte_dest"]), arquivos.Alvo(IE_OUTRA, "", ["cte_dest", "nfe_saida"])]
-    por, sem, brutos = arquivos.distribuir_arquivos([("CTe_XML.zip", zip_.getvalue())], alvos)
+    por, sem, brutos = arquivos.distribuir_por_empresa([("CTe_XML.zip", zip_.getvalue())], alvos)
     assert list(por) == [(IE_EMPRESA, "cte_dest")] and not sem and not brutos
     # a mesma empresa como remetente vai para "CT-e Remetente"
     rem = cte("45723174000110", "", 3, cnpj_rem="11222333000181", ie_rem=IE_EMPRESA)
@@ -196,10 +218,10 @@ def test_faturamento_mei_acumula_os_meses(tmp_path):
                  ["- NFEs:", "1", "10,00", "5", "30.000,00"], ["TOTAIS", "", "10,00", "", "30.000,00"]]
     com_valor.append(["- Cartão:", "---", "---", "3", "2.000,00"])
     for mes, linhas in (("2026-08", com_valor), ("2026-09", REAL)):
-        r = arquivos.salvar_faturamento_mei(tmp_path, "Mei", IE_EMPRESA, mes, ler_docs_fiscais(linhas), "7")
+        r = mei.salvar(tmp_path, CTX, mes, ler_docs_fiscais(linhas))
     assert (r["notas_acumulado"], r["notas_percentual"]) == (30000.0, 37.0)  # notas e cartão separados
     assert (r["cartao_acumulado"], r["cartao_percentual"]) == (2000.0, 2.5)
-    pasta = tmp_path / "Arquivos baixados" / "7-Mei" / "Dossiê MEI"
+    pasta = Path(r["pasta"])
     dados = json.loads((pasta / "Faturamento MEI 2026.json").read_text(encoding="utf-8"))
     assert sorted(dados["meses"]) == ["2026-08", "2026-09"] and len(dados["meses"]["2026-09"]["itens"]) == 5
     from openpyxl import load_workbook
@@ -211,11 +233,11 @@ def test_faturamento_mei_acumula_os_meses(tmp_path):
 
 def test_meses_que_faltam_e_limite_proporcional(tmp_path):
     from datetime import date
-    assert [p[0].month for p in arquivos.periodos_mei(tmp_path, "N", IE_EMPRESA, "", date(2026, 4, 1))] == [1, 2, 3]
-    arquivos.salvar_faturamento_mei(tmp_path, "N", IE_EMPRESA, "2026-02", {"saidas": 1.0, "itens": []})
-    assert [p[0].month for p in arquivos.periodos_mei(tmp_path, "N", IE_EMPRESA, "", date(2026, 4, 1))] == [1, 3]
-    assert len(arquivos.periodos_mei(tmp_path, "N", IE_EMPRESA, "", date(2026, 4, 1), refazer_ano=True)) == 3
-    assert arquivos.periodos_mei(tmp_path, "N", IE_EMPRESA, "", date(2026, 1, 1)) == []
+    assert [p[0].month for p in mei.periodos(tmp_path, CTX, date(2026, 4, 1))] == [1, 2, 3]
+    mei.salvar(tmp_path, CTX, "2026-02", {"saidas": 1.0, "entradas": 0, "qtd_saidas": 1, "qtd_entradas": 0, "sem_movimento": False, "itens": []})
+    assert [p[0].month for p in mei.periodos(tmp_path, CTX, date(2026, 4, 1))] == [1, 3]
+    assert len(mei.periodos(tmp_path, CTX, date(2026, 4, 1), refazer_ano=True)) == 3
+    assert mei.periodos(tmp_path, CTX, date(2026, 1, 1)) == []
     assert arquivos.limite_mei(2026, None) == 81000.0
     assert arquivos.limite_mei(2026, "2026-03-10") == 67500.0  # março a dezembro: 10 x 6.750
     assert arquivos.limite_mei(2026, "2010-05-14") == 81000.0
@@ -224,15 +246,15 @@ def test_meses_que_faltam_e_limite_proporcional(tmp_path):
 def test_historicos_mei_para_o_painel(tmp_path):
     """O que já está salvo no PC vai para o painel: um item por empresa/ano, sem a tabela bruta."""
     for mes, saidas in (("2026-08", 1000.0), ("2026-09", 2500.5)):
-        arquivos.salvar_faturamento_mei(tmp_path, "Loja MEI", IE_EMPRESA, mes,
+        mei.salvar(tmp_path, CTX, mes,
                                         {"saidas": saidas, "entradas": 300.0, "cartao": {"qtd": 2, "valor": 90.0},
-                                         "sem_movimento": False, "linhas": [["NFEs", "1"]], "inicio_atividade": "2026-03-10"},
-                                        codigo="7")
-    (h,) = arquivos.historicos_mei(tmp_path)
-    assert h["ie"] == IE_EMPRESA and h["nome"] == "Loja MEI" and h["inicio_atividade"] == "2026-03-10"
+                                         "qtd_saidas": 1, "qtd_entradas": 1,
+                                         "sem_movimento": False, "linhas": [["NFEs", "1"]], "inicio_atividade": "2026-03-10"})
+    (h,) = mei.historicos_portal(tmp_path)
+    assert h["ie"] == IE_EMPRESA and h["org_id"] == CTX.contexto_id and h["inicio_atividade"] == "2026-03-10"
     assert sorted(h["meses"]) == ["2026-08", "2026-09"] and h["meses"]["2026-09"]["saidas"] == 2500.5
     assert all("linhas" not in m for m in h["meses"].values())
-    assert arquivos.historicos_mei(tmp_path / "vazio") == []
+    assert list(mei.historicos_portal(tmp_path / "vazio")) == []
 
 
 def test_pasta_por_escritorio_e_historico_mei_dentro_dela(tmp_path):
@@ -247,29 +269,31 @@ def test_pasta_por_escritorio_e_historico_mei_dentro_dela(tmp_path):
         (pasta / "Faturamento MEI 2026.json").write_text(json.dumps(
             {"empresa": {"ie": "16" + str(len(str(raiz))).zfill(7), "nome": "Joao"}, "meses": {"2026-01": {"saidas": 1}}}),
             encoding="utf-8")
-    assert len(arquivos.historicos_mei(tmp_path)) == 2
+    assert list(mei.historicos_portal(tmp_path)) == []  # dados sem identidade não são reenviados
 
 
-def test_pdf_de_cada_nota_do_atf(tmp_path):
+def test_pdf_de_cada_nota_do_atf(pasta_validada):
     """NF-e, NFC-e e CT-e baixados do ATF ganham o PDF (DANFE, DANFC-e, DACTE) em <tipo>/PDF/<chave>.pdf;
     nota cancelada fica sem PDF; rodar de novo não refaz."""
     import xml_completo as xc
     cancelada = xc.chave("55", 2)
     pacote = _zip({"1.xml": xc.nfe("55", 1), "2.xml": xc.nfe("55", 2),
                    "c.xml": evento(EMPRESA, cancelada), "3.xml": xc.nfe("65", 3), "4.xml": xc.cte(4)})
-    r = arquivos.salvar_originais([("Dados.zip", pacote)], tmp_path, "joao", IE_EMPRESA, "nfe_saida", "2026-11", "5")
-    pdfs = Path(r["pasta"]) / arquivos.PASTA_PDF
-    assert r["pdfs"] == 3
-    assert {p.name for p in pdfs.iterdir()} == {f"{xc.chave('55', 1)}.pdf", f"{xc.chave('65', 3)}.pdf", f"{xc.chave('57', 4)}.pdf"}
-    assert all(p.read_bytes().startswith(b"%PDF") for p in pdfs.iterdir())
-    assert [p.name for p in Path(r["pasta"]).iterdir() if p.is_file()] == ["NF-e Saida 2026-11.zip"]  # o ZIP continua intacto
-    assert arquivos.salvar_originais([("Dados.zip", pacote)], tmp_path, "joao", IE_EMPRESA, "nfe_saida", "2026-11", "5")["pdfs"] == 0
+    alvo = arquivos.Alvo(IE_EMPRESA, EMPRESA, ["nfe_saida", "nfce", "cte_rem"])
+    por, _, conferir = arquivos.distribuir_por_empresa([("Dados.zip", pacote)], [alvo])
+    assert conferir == [("Dados.zip", pacote)]
+    for tipo, chave_pdf in (("nfe_saida", xc.chave("55", 1)), ("nfce", xc.chave("65", 3)), ("cte_rem", xc.chave("57", 4))):
+        r = arquivos.salvar_originais(por[(IE_EMPRESA, tipo)], pasta_validada, alvo, tipo, "2026-11")
+        pdfs = Path(r["pasta"]) / arquivos.PASTA_PDF
+        assert r["pdfs"] == 1 and {p.name for p in pdfs.iterdir()} == {f"{chave_pdf}.pdf"}
+        assert all(p.read_bytes().startswith(b"%PDF") for p in pdfs.iterdir())
+        assert arquivos.salvar_originais(por[(IE_EMPRESA, tipo)], pasta_validada, alvo, tipo, "2026-11")["pdfs"] == 0
 
 
-def test_sem_pdf_quando_desligado(tmp_path, monkeypatch):
+def test_sem_pdf_quando_desligado(pasta_validada, monkeypatch):
     import xml_completo as xc
     monkeypatch.setattr(arquivos, "GERAR_PDF", False)
-    r = arquivos.salvar_originais([("a.xml", xc.nfe("55", 1))], tmp_path, "joao", IE_EMPRESA, "nfe_saida", "2026-11", "5")
+    r = arquivos.salvar_originais([("a.xml", xc.nfe("55", 1))], pasta_validada, arquivos.Alvo(IE_EMPRESA, EMPRESA, ["nfe_saida"]), "nfe_saida", "2026-11")
     assert r["pdfs"] == 0 and not (Path(r["pasta"]) / arquivos.PASTA_PDF).exists()
 
 

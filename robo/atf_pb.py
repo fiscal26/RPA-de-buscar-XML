@@ -33,6 +33,7 @@ import logging
 import random
 import shutil
 import re
+from enum import Enum
 import time
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
@@ -41,6 +42,7 @@ from typing import Callable
 from urllib.parse import urlparse
 
 from navegador import CapturadorArquivos, pausa
+from armazenamento import arquivo_validado, criar_subpasta_validada, subpasta_existente_validada
 
 Aviso = Callable[[str], None]
 _log_robo = logging.getLogger("robo")
@@ -338,8 +340,21 @@ class Recolha:
     recebidas: dict[str, int] = field(default_factory=dict)       # código FIS -> mensagens lidas
     ignorados: list[tuple[str, bytes]] = field(default_factory=list)  # anexos de outra competência/empresa
     # as mesmas mensagens, inteiras (código, anexos, texto): podem ser de uma rodada anterior que ficou pendente
-    mensagens_ignoradas: list[tuple[str, list, str]] = field(default_factory=list)
+    sem_dados: dict[str, int] = field(default_factory=dict)
+    incertas: set[str] = field(default_factory=set)
+    conferencia: list[tuple[str, bytes]] = field(default_factory=list)
     tempo_esgotado: bool = False   # nem todas as respostas chegaram (tempo ou leituras esgotados)
+
+
+MENSAGEM_SEM_NOTAS = re.compile(r"n[aã]o\s+existem\s+dados|nenhum\s+registro\s+satisfaz", re.I)
+MENSAGEM_INDICA_ANEXO = re.compile(r"abra\s+o\s+arquivo\s+em\s+anexo|arquivo\s+dispon[ií]vel", re.I)
+
+
+class RespostaATF(Enum):
+    DOCUMENTOS = "documentos"
+    SEM_DADOS = "sem_dados"
+    CONFERENCIA = "conferencia"
+    OUTRA_CONSULTA = "outra_consulta"
 
 
 class Diagnostico:
@@ -357,12 +372,12 @@ class Diagnostico:
     def salvar(self, page, motivo: str) -> Path | None:
         pasta = self.pasta_base / f"{datetime.now():%Y-%m-%d_%H%M%S}_{self.rotulo}_{re.sub(r'[^a-z0-9]+', '-', motivo.lower())[:30]}"
         try:
-            pasta.mkdir(parents=True, exist_ok=True)
-            (pasta / "log.txt").write_text("\n".join(self.linhas + [f"MOTIVO: {motivo}"]), encoding="utf-8")
+            pasta = criar_subpasta_validada(self.pasta_base, pasta.name)
+            arquivo_validado(pasta, "log.txt").write_text("\n".join(self.linhas + [f"MOTIVO: {motivo}"]), encoding="utf-8")
             if page is None or page.is_closed():
                 return pasta
             try:
-                page.screenshot(path=str(pasta / "tela.png"), full_page=True)
+                page.screenshot(path=str(arquivo_validado(pasta, "tela.png")), full_page=True)
             except Exception:
                 pass
             campos, textos = [f"URL: {page.url}"], []
@@ -373,8 +388,8 @@ class Diagnostico:
                     textos.append(f"=== quadro {i} ({frame.url})\n" + frame.evaluate("() => document.body ? document.body.innerText : ''")[:20000])
                 except Exception as e:
                     campos.append(f"(não li o quadro: {e})")
-            (pasta / "campos.txt").write_text("\n".join(campos), encoding="utf-8")
-            (pasta / "texto.txt").write_text("\n\n".join(textos), encoding="utf-8")
+            arquivo_validado(pasta, "campos.txt").write_text("\n".join(campos), encoding="utf-8")
+            arquivo_validado(pasta, "texto.txt").write_text("\n\n".join(textos), encoding="utf-8")
         except Exception:
             return None
         return pasta
@@ -459,20 +474,19 @@ class AtfPB:
         por sessão em <diagnóstico>/passos. Senhas aparecem como bolinhas (o ATF mascara o campo)."""
         try:
             if self._pasta_passos is None:
-                base = Path(self.diag.pasta_base) / "passos"
-                base.mkdir(parents=True, exist_ok=True)
+                base = criar_subpasta_validada(self.diag.pasta_base, "passos")
                 limite = time.time() - self.atf.get("dias_passos", 3) * 86400
                 for velha in base.iterdir():  # só os últimos dias, para não encher o disco
                     if velha.is_dir() and velha.stat().st_mtime < limite:
-                        shutil.rmtree(velha, ignore_errors=True)
-                self._pasta_passos = base / f"{datetime.now():%Y-%m-%d_%H%M%S}_{self.diag.rotulo}"
-                self._pasta_passos.mkdir(parents=True, exist_ok=True)
+                        validada = subpasta_existente_validada(base, velha.name)
+                        shutil.rmtree(validada, ignore_errors=True)
+                self._pasta_passos = criar_subpasta_validada(base, f"{datetime.now():%Y%m%d_%H%M%S}")
             self._passo += 1
-            with open(self._pasta_passos / "passos.txt", "a", encoding="utf-8") as f:
+            with open(arquivo_validado(self._pasta_passos, "passos.txt"), "a", encoding="utf-8") as f:
                 f.write(f"{self._passo:04d} {datetime.now():%H:%M:%S} {texto}\n")
             if self.page is not None and not self.page.is_closed():
-                nome = re.sub(r"[^A-Za-z0-9]+", "-", texto)[:50].strip("-")
-                self.page.screenshot(path=str(self._pasta_passos / f"{self._passo:04d}_{nome}.png"), timeout=5000)
+                nome = re.sub(r"[^A-Za-z0-9]+", "-", texto)[:20].strip("-")
+                self.page.screenshot(path=str(arquivo_validado(self._pasta_passos, f"{self._passo:04d}_{nome}.png")), timeout=5000)
         except Exception:
             pass  # a gravação é só para conferir: nunca atrapalha o robô
 
@@ -1553,20 +1567,21 @@ class AtfPB:
                 self.diag.salvar(self.page, "anexo-nao-baixado")
         return texto, len(capt.recebidos) - antes
 
-    def ler_consulta(self, mae: dict, capt: CapturadorArquivos) -> tuple[str, list, bool]:
+    def ler_consulta(self, mae: dict, capt: CapturadorArquivos) -> tuple[str, list, bool, bool]:
         """Lê as mensagens de uma consulta: abre a mãe (abrirFilhas) e cada filha ainda não lida.
-        Devolve (textos, anexos baixados, achou a mensagem final)."""
+        Devolve (textos, anexos baixados, achou a mensagem final, faltou anexo)."""
         quadro = self._quadro_mensagens()
         filhas = [mae]
         if mae.get("filhas", 0) > 0:
             self._ir(quadro, f"{self._base_seg(quadro)}SEGf_MinhasMensagens.do?hidsqMensagem={mae['id']}")
             filhas = [f for f in quadro.evaluate(_JS_MENSAGENS) if f["id"] != mae["id"]] or [mae]
-        textos, antes, final = [], len(capt.recebidos), False
+        textos, antes, final, faltou_anexo = [], len(capt.recebidos), False, False
         # abre primeiro a filha com clipe (anexo) e para na mensagem final: as de andamento
         # ("tarefa recebida", "em processamento") só são abertas se nenhuma tiver anexo
         pendentes = sorted((f for f in filhas if f["id"] not in self._filhas_lidas), key=lambda f: not f.get("anexo"))
         for f in pendentes:
             texto, n = self._ler_mensagem(quadro, f["id"], mae["id"], capt)
+            faltou_anexo |= bool(f.get("anexo")) and n == 0
             self._filhas_lidas.add(f["id"])
             self._log(f"Mensagem {f['id']} ({mae.get('remetente', '')[:30]}): {n} arquivo(s)")
             textos.append(texto)
@@ -1574,17 +1589,20 @@ class AtfPB:
                 final = True
                 break
         self.ultimo_uso = time.time()
-        return "\n".join(textos), capt.recebidos[antes:], final
+        return "\n".join(textos), capt.recebidos[antes:], final, faltou_anexo
 
     def recolher(self, esperadas: dict[str, int], desde: datetime, minutos: int,
-                 relevante: Callable[[list, str], bool] | None = None, leituras: int | None = None) -> Recolha:
+                 relevante: Callable[[list, str], RespostaATF], leituras: int | None = None,
+                 *, anteriores: frozenset[str],
+                 incertas_anteriores: frozenset[str] = frozenset()) -> Recolha:
         """Acompanha Minhas Mensagens até chegarem as respostas finais esperadas ({código FIS: quantas})
         das consultas feitas a partir de 'desde' (hora do ATF ao clicar em Consultar), ou até o tempo
         acabar. Cada consulta gera uma mensagem mãe com 3 filhas; a final ("Tarefa executada...") traz o
-        anexo, ou vem sem anexo quando não há dados. Só conta se 'relevante(anexos, texto)' disser que é
-        desta rodada (outra competência ou outra empresa não contam). 'leituras' limita quantas vezes a
-        caixa é lida (o que não chegou fica para o final da execução)."""
+        anexo ou a ausência de dados. A classificação separa respostas válidas, consultas de outras
+        empresas ou períodos e mensagens para conferência. 'leituras' limita as tentativas nesta rodada."""
         recolha = Recolha()
+        recolha.incertas.update(incertas_anteriores)
+        aceitos: dict[str, list] = {}
         lidas = 0
         capt = CapturadorArquivos(self.contexto, self.cfg["chrome"]["pasta_downloads"], log=self.aviso)
         limite = time.time() + minutos * 60
@@ -1596,23 +1614,40 @@ class AtfPB:
                 lidas += 1
                 maes = [m for m in lista
                         if m["codigo"] in esperadas and m["id"] not in self._mensagens_lidas
+                        and m["id"] not in anteriores
                         and (not m["data"] or _data_br(m["data"]) >= desde - timedelta(seconds=5))]
                 for mae in maes:
-                    textos, anexos, final = self.ler_consulta(mae, capt)
+                    textos, anexos, final, faltou_anexo = self.ler_consulta(mae, capt)
                     recolha.textos.append((mae["codigo"], textos))
-                    if not final:
+                    if not final and not faltou_anexo:
                         continue  # ainda processando: volta nela na próxima leitura da caixa
                     self._mensagens_lidas.add(mae["id"])
-                    if relevante is None or relevante(anexos, textos):
-                        recolha.recebidas[mae["codigo"]] = recolha.recebidas.get(mae["codigo"], 0) + 1
+                    classe = relevante(anexos, textos)
+                    codigo = mae["codigo"]
+                    if classe is not RespostaATF.OUTRA_CONSULTA and (
+                        faltou_anexo or codigo in recolha.incertas or recolha.recebidas.get(codigo, 0) >= esperadas[codigo]
+                    ):
+                        classe = RespostaATF.CONFERENCIA
+                    if classe in (RespostaATF.DOCUMENTOS, RespostaATF.SEM_DADOS):
+                        recolha.recebidas[codigo] = recolha.recebidas.get(codigo, 0) + 1
+                        aceitos.setdefault(codigo, []).extend(anexos)
+                        if classe is RespostaATF.SEM_DADOS:
+                            recolha.sem_dados[codigo] = recolha.sem_dados.get(codigo, 0) + 1
+                        continue
+                    if classe is RespostaATF.CONFERENCIA:
+                        self._log("Resposta sem evidência de conclusão: mantida para conferência")
+                        recolha.incertas.add(codigo)
+                        recolha.recebidas.pop(codigo, None)
+                        recolha.sem_dados.pop(codigo, None)
+                        anexos = aceitos.pop(codigo, []) + anexos
+                        recolha.conferencia.extend(anexos)
                     else:
                         self._log("Consulta de outra empresa ou competência: não conta")
                         # o anexo não vai para a pasta de nenhuma empresa da rodada (fica em _sem_empresa)
                         recolha.ignorados.extend(anexos)
-                        recolha.mensagens_ignoradas.append((mae["codigo"], anexos, textos))
-                        for anexo in anexos:
-                            if anexo in capt.recebidos:
-                                capt.recebidos.remove(anexo)
+                    for anexo in anexos:
+                        if anexo in capt.recebidos:
+                            capt.recebidos.remove(anexo)
                 if all(recolha.recebidas.get(c, 0) >= n for c, n in esperadas.items()):
                     break
                 if time.time() >= limite or (leituras and lidas >= leituras):
@@ -1623,15 +1658,26 @@ class AtfPB:
                 faltam = {c: n - recolha.recebidas.get(c, 0) for c, n in esperadas.items()}
                 self.aviso(f"Aguardando o ATF entregar os XML em Minhas Mensagens (faltam {faltam}; leitura "
                            f"{lidas}{f' de {leituras}' if leituras else ''})...")
-        except MensagensIndisponiveis as e:
-            capt.verificar()
-            recolha.arquivos = list(capt.recebidos)
+        except (MensagensIndisponiveis, SessaoExpirada) as e:
             e.recolha = recolha  # o que já foi baixado é salvo antes de parar
             raise
         finally:
             capt.verificar()
             capt.encerrar()
-            recolha.arquivos = list(capt.recebidos)
+            # Um download que chega fora da leitura da mensagem não tem dono identificável.
+            restantes = list(capt.recebidos)
+            arquivos_aceitos = [anexo for itens in aceitos.values() for anexo in itens]
+            for anexo in arquivos_aceitos:
+                if anexo in restantes:
+                    restantes.remove(anexo)
+            if restantes:
+                recolha.conferencia.extend(arquivos_aceitos + restantes)
+                recolha.incertas.update(esperadas)
+                recolha.recebidas.clear()
+                recolha.sem_dados.clear()
+                recolha.tempo_esgotado = True
+            else:
+                recolha.arquivos = arquivos_aceitos
         return recolha
 
     # ------------------------------------------------------------------ saída
@@ -1656,3 +1702,8 @@ class AtfPB:
                 self._log(f"Não limpei os cookies do ATF: {e}")
         self.login_atual = ""
         self._url_tela.clear()
+
+
+    def limpar_cache_dossie(self):
+        """O cartão e o MEI só compartilham a consulta dentro da mesma rodada."""
+        self._dossie_cache.clear()
