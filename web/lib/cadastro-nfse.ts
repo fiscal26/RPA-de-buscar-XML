@@ -1,6 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { cnpjValido, formatarDocumento, soDigitos } from "@/lib/documentos";
+import { lerTodosMei } from "./mei-acompanhamento";
 import { IDS_TIPOS_NFSE } from "@/lib/xml";
 
 export type EmpresaCadastro = { org_id: string; cnpj: string; nome: string; codigo: string; tipos: string[] };
@@ -14,7 +15,7 @@ export async function empresasComCnpj(supabase: SupabaseClient, orgId?: string):
     nfse = nfse.eq("org_id", orgId);
     sefaz = sefaz.eq("org_id", orgId);
   }
-  const [{ data: n }, { data: s }] = await Promise.all([nfse, sefaz]);
+  const [{ data: n }, { data: s }] = await Promise.all([lerTodosMei<EmpresaCadastro>(nfse.order("org_id").order("cnpj")), lerTodosMei<Omit<EmpresaCadastro,"tipos">>(sefaz.order("org_id").order("ie"))]);
   const vistas = new Set<string>();
   const lista: EmpresaCadastro[] = [];
   for (const e of [...(n ?? []), ...(s ?? []).map((x) => ({ ...x, tipos: IDS_TIPOS_NFSE }))]) {

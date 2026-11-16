@@ -77,6 +77,47 @@ async function acessivel(page) {
     await page.screenshot({path:path.join(pasta,'mei-computador.png'),fullPage:true});
     const capturas='/tmp/xml-mei-capturas';fs.mkdirSync(capturas,{recursive:true});for(const nome of ['mei-celular.png','mei-computador.png'])fs.copyFileSync(path.join(pasta,nome),path.join(capturas,nome));
   });
+  await teste('Cadastro individual NFS-e salva sem certificado e chega à seleção para agendar', async()=>{
+    await page.goto(`${url}/painel/empresas/nova`);
+    const org=page.getByRole('combobox',{name:'Escritório',exact:true});await org.fill('Horizonte');await org.press('Enter');
+    await page.getByRole('textbox',{name:'CNPJ',exact:true}).fill('37335118000180');
+    await page.getByRole('textbox',{name:'CNPJ',exact:true}).blur();
+    await page.waitForFunction(()=>document.querySelector('#empresa-nome')?.value==='Prestadora Sugerida');
+    await page.getByRole('textbox',{name:'Nome da empresa',exact:true}).fill('Prestadora Cadastro Individual');
+    await page.getByRole('button',{name:'Salvar empresa',exact:true}).click();
+    await page.getByRole('heading',{name:'Empresa cadastrada',exact:true}).waitFor();
+    await page.getByRole('link',{name:'Agendar consultas desta empresa'}).click();
+    await page.getByRole('group',{name:'Empresas cadastradas',exact:true}).waitFor();
+    assert.ok(await page.getByRole('checkbox',{name:/Prestadora Cadastro Individual/}).isChecked());
+    await page.getByRole('button',{name:'Conferir empresas',exact:true}).click();await page.getByRole('heading',{name:'Confira as empresas escolhidas'}).waitFor();
+    await page.goto(`${url}/painel/empresas`);await page.getByRole('searchbox',{name:'Buscar empresas'}).fill('Prestadora Cadastro Individual');
+    await page.waitForFunction(()=>document.querySelectorAll('.empresas-tabela tbody tr').length===1);
+    assert.equal(await page.locator('.empresas-tabela tbody tr').count(),1);
+  });
+  await teste('Cadastro SEFAZ reutiliza login, preserva campos após erro e agenda sem planilha no celular', async()=>{
+    await page.goto(`${url}/painel/empresas/nova?origem=sefaz&org=org-1`);
+    await page.setViewportSize({width:390,height:844});
+    await page.getByRole('textbox',{name:'Nome da empresa',exact:true}).fill('Comercio Cadastro Individual');
+    await page.getByRole('combobox',{name:'Login já cadastrado',exact:true}).click();await page.getByRole('option',{name:'contador.exemplo',exact:true}).click();
+    await page.getByRole('textbox',{name:'Inscrição estadual da Paraíba'}).fill('161234569');
+    await acessivel(page);assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+    const telas='/workspace/capturas-cadastro-individual';fs.mkdirSync(telas,{recursive:true});
+    await page.evaluate(()=>scrollTo(0,0));await page.screenshot({path:path.join(telas,'celular.png'),fullPage:true});
+    await page.setViewportSize({width:1440,height:1000});await page.evaluate(()=>scrollTo(0,0));await page.screenshot({path:path.join(telas,'computador.png'),fullPage:true});await page.setViewportSize({width:390,height:844});
+    await page.getByRole('checkbox',{name:'NF-e Entrada',exact:true}).uncheck();
+    await page.getByRole('textbox',{name:'Inscrição estadual da Paraíba'}).fill('111111111');
+    await page.getByRole('button',{name:'Salvar empresa',exact:true}).click();await page.getByRole('alert').waitFor();
+    assert.equal(await page.getByRole('textbox',{name:'Nome da empresa',exact:true}).inputValue(),'Comercio Cadastro Individual');
+    assert.equal(await page.getByRole('textbox',{name:'Inscrição estadual da Paraíba'}).inputValue(),'111111111');
+    assert.equal(await page.locator('input[name=acesso_id]').inputValue(),'acesso-1');
+    assert.equal(await page.getByRole('checkbox',{name:'NF-e Entrada',exact:true}).isChecked(),false);
+    await page.getByRole('textbox',{name:'Inscrição estadual da Paraíba'}).fill('161234569');
+    await page.getByRole('button',{name:'Salvar empresa',exact:true}).click();await page.getByRole('heading',{name:'Empresa cadastrada',exact:true}).waitFor();
+    await page.getByRole('link',{name:'Agendar consultas desta empresa'}).click();
+    await page.getByRole('button',{name:'Conferir empresas',exact:true}).click();await page.getByRole('heading',{name:'Confira as empresas escolhidas'}).waitFor();
+    await page.getByRole('button',{name:'Confirmar agendamento',exact:true}).click();await page.getByRole('link',{name:/Acompanhar/}).first().waitFor();
+    await page.setViewportSize({width:1440,height:1000});
+  });
   await teste('Formulário vazio identifica os campos, preserva o foco e remove o erro após a correção', async () => {
     await page.goto(`${url}/login`);
     assert.equal(await page.locator('.validacao-resumo').count(), 0);
@@ -118,7 +159,7 @@ async function acessivel(page) {
   await teste('Prévia NFS-e lê o cadastro e leva o foco à conferência sem gravar agendamento', async () => {
     await page.getByRole('radiogroup', { name: 'Empresas', exact: true }).getByText('Escolher entre as cadastradas', { exact: true }).click();
     await page.locator('input[name=cnpjs]').first().check();
-    await page.getByRole('button', { name: 'Ler planilha', exact: true }).click();
+    await page.getByRole('button', { name: 'Conferir empresas', exact: true }).click();
     await page.locator('.conferencia-planilha').waitFor();
     assert.ok(await page.locator('.conferencia-planilha').evaluate((e) => e === document.activeElement));
     assert.ok(await page.getByRole('button', { name: 'Confirmar agendamento' }).isVisible());

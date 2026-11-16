@@ -26,8 +26,8 @@ const CERTIFICADO: Record<SituacaoCertificado, { nome: string; classe: string }>
   falta: { nome: "Falta", classe: "st-erro" },
 };
 
-export default function FormAgendamentoNfse({ organizacoes, competencia, empresas, certificados }: {
-  organizacoes?: OrgOpcao[]; competencia: string; empresas: EmpresaOpcao[]; certificados: CertificadoOpcao[];
+export default function FormAgendamentoNfse({ organizacoes, competencia, empresas, certificados, fonteInicial = "planilha", orgInicial, empresaInicial }: {
+  organizacoes?: OrgOpcao[]; competencia: string; empresas: EmpresaOpcao[]; certificados: CertificadoOpcao[]; fonteInicial?: "planilha" | "cadastro"; orgInicial?: string; empresaInicial?: string;
 }) {
   const [previa, ler, lendo] = useActionState(prepararAgendamentoNfse, undefined);
   const conferencia = useRef<HTMLDivElement>(null);
@@ -37,9 +37,9 @@ export default function FormAgendamentoNfse({ organizacoes, competencia, empresa
   useEffect(() => { if (resultado?.ok) sucesso.current?.focus(); }, [resultado?.ok]);
   const [enviando, iniciar] = useTransition();
   const [quando, setQuando] = useState<"agora" | "agendar">("agora");
-  const [fonte, setFonte] = useState<"planilha" | "cadastro">("planilha");
-  const [org, setOrg] = useState(organizacoes ? "" : empresas[0]?.org_id ?? certificados[0]?.org_id ?? "");
-  const [marcadas, setMarcadas] = useState<Set<string>>(new Set());
+  const [fonte, setFonte] = useState<"planilha" | "cadastro">(fonteInicial);
+  const [org, setOrg] = useState(organizacoes ? (organizacoes.some((o) => o.id === orgInicial) ? orgInicial! : "") : empresas[0]?.org_id ?? certificados[0]?.org_id ?? "");
+  const [marcadas, setMarcadas] = useState<Set<string>>(new Set(empresas.filter((e) => e.cnpj === empresaInicial && (!organizacoes || e.org_id === orgInicial)).map((e) => e.cnpj)));
   const [filtro, setFiltro] = useState("");
   // administrador: só as empresas e os certificados da organização escolhida
   const daOrg = organizacoes ? empresas.filter((e) => e.org_id === org) : empresas;
@@ -99,8 +99,7 @@ export default function FormAgendamentoNfse({ organizacoes, competencia, empresa
           <p className="suave">Escolha a organização para ver as empresas cadastradas.</p>
         ) : !daOrg.length ? (
           <p className="suave">
-            Nenhuma empresa com CNPJ no cadastro ainda. Envie uma planilha (da NFS-e ou da SEFAZ) uma primeira vez; depois
-            elas aparecem aqui para marcar.
+            Nenhuma empresa com CNPJ no cadastro ainda. <Link href="/painel/empresas/nova">Cadastre uma empresa</Link> ou importe uma planilha.
           </p>
         ) : (
           <div className="selecao-empresas">
@@ -152,7 +151,7 @@ export default function FormAgendamentoNfse({ organizacoes, competencia, empresa
             <p id="nfse-horario" className="suave">Horário de Brasília.</p>
           </>
         )}
-        <p className="form-envio"><button type="submit" disabled={lendo}>{lendo ? "Lendo…" : "Ler planilha"}</button></p>
+        <p className="form-envio"><button type="submit" disabled={lendo}>{lendo ? "Conferindo…" : fonte === "cadastro" ? "Conferir empresas" : "Ler planilha"}</button></p>
         <span className="sr" role="status">{lendo ? "Lendo e conferindo as empresas. Aguarde." : ""}</span>
       </Formulario>
 

@@ -22,9 +22,9 @@ export default async function Empresas({ searchParams }: { searchParams: Promise
   const { supabase, admin, perfil } = await contexto();
   // Senhas e certificados cifrados não são lidos nesta tela.
   const [{ data: e }, { data: a }, { data: n }, { data: c }, rMei, rSugestoes, rDecisoes] = await Promise.all([
-    supabase.from("xml_empresas").select("*, xml_acessos(login), organizacoes(nome)").order("nome"),
-    supabase.from("xml_acessos").select("id, login, atualizado_em").order("login"),
-    supabase.from("xml_nfse_empresas").select("id, org_id, cnpj, codigo, nome, nome_fixo, tipos, organizacoes(nome)").order("nome"),
+    lerTodosMei(supabase.from("xml_empresas").select("*, xml_acessos(login), organizacoes(nome)").order("nome").order("id")),
+    lerTodosMei(supabase.from("xml_acessos").select("id, login, atualizado_em").order("login").order("id")),
+    lerTodosMei(supabase.from("xml_nfse_empresas").select("id, org_id, cnpj, codigo, nome, nome_fixo, tipos, organizacoes(nome)").order("nome").order("id")),
     supabase.from("xml_nfse_certificados").select("org_id, cnpj, validade, procurador"),
     supabase.from("xml_mei_cadastros").select("org_id, cnpj, nome, ativo, inicio_atividade, inicio_mei, fim_mei"),
     supabase.from("xml_tarefas").select("org_id, ie").contains("detalhes", { mei_nfse: { detectado_no_xml: true } }).limit(10000),
@@ -70,7 +70,7 @@ export default async function Empresas({ searchParams }: { searchParams: Promise
   return <>
     <header className="empresas-cabecalho">
       <div><h1>Empresas</h1><p className="suave">{agrupadas.length} empresas · SEFAZ e NFS-e</p></div>
-      <div className="linha">{(admin || perfil.papel === "gestor") && <Link className="botao secundario" href="/painel/mei/gerenciar">Gerenciar MEIs</Link>}<Link className="botao" href="/painel/agendar">Importar empresas</Link></div>
+      <div className="linha"><Link className="botao" href="/painel/empresas/nova">Cadastrar empresa</Link>{(admin || perfil.papel === "gestor") && <Link className="botao secundario" href="/painel/mei/gerenciar">Gerenciar MEIs</Link>}<Link className="botao secundario" href="/painel/agendar">Importar planilha</Link></div>
     </header>
     <ListaEmpresas empresas={agrupadas} />
     {(admin || perfil.papel === "gestor") && <details className="empresas-painel" open={!!empresaInicial}>
@@ -81,7 +81,7 @@ export default async function Empresas({ searchParams }: { searchParams: Promise
           Consulte os dados do CNPJ e confirme o enquadramento antes de salvar.</p>
         {rMei.error ? <p className="faixa alerta">O cadastro MEI ficará disponível após a atualização do banco.</p>
           : opcoesMei.length ? <FormCadastroMei key={empresaInicial ?? "cadastro-mei"} empresas={opcoesMei} cadastros={cadastros} empresaInicial={empresaInicial} />
-          : <p className="suave">Importe primeiro uma empresa com CNPJ por um agendamento da SEFAZ ou da NFS-e.</p>}
+          : <p className="suave">Cadastre primeiro uma empresa com CNPJ pelo botão Cadastrar empresa ou importe uma planilha.</p>}
       </div>
     </details>}
     <details className="empresas-painel">
