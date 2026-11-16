@@ -9,6 +9,7 @@ import { lerPlanilha } from "@/lib/planilha";
 import { cifrarSenha } from "@/lib/cripto";
 import { normalizarDocumento, normalizarIe } from "@/lib/documentos";
 import { IDS_TIPOS } from "@/lib/xml";
+import { carregarSelecaoSefaz } from "@/lib/cadastro-sefaz";
 import { corrigirNome } from "@/lib/nomes";
 
 /** Empresa da conferência (sem senha nenhuma: as senhas vão à parte, cifradas, por login). */
@@ -23,6 +24,7 @@ export type AcessoAgendamento = { login: string; senhaCifrada: string | null; ca
 export type Previa = {
   erro?: string;
   ok?: string;
+  fonte?: "cadastro"; empresasIds?: string[];
   agendamentoId?: string; agendamentoIds?: string[]; competenciasAgendadas?: string[];
   itens?: ItemAgendamento[];
   acessos?: AcessoAgendamento[];
@@ -48,7 +50,6 @@ export async function prepararAgendamento(_: Previa | undefined, form: FormData)
   if (!orgId) return { erro: "Escolha a organização." };
 
   const arquivo = form.get("arquivo");
-  if (!(arquivo instanceof File) || arquivo.size === 0) return { erro: "Escolha a planilha das empresas (.xlsx ou .csv)." };
   const competencia = String(form.get("competencia") ?? "");
   const competenciaFinal = String(form.get("competencia_final") || competencia);
   const erroCompetencia = erroPeriodo(competencia, competenciaFinal, "2006-01");
@@ -59,6 +60,14 @@ export async function prepararAgendamento(_: Previa | undefined, form: FormData)
     if (!executarEm) return { erro: "Informe a data e a hora em que o robô deve começar." };
   }
 
+  if(form.get("fonte")==="cadastro") {
+    const ids=[...new Set(form.getAll("empresas").map(String))];
+    const selecao=await carregarSelecaoSefaz(supabase,orgId,ids);
+    if("erro" in selecao)return {erro:selecao.erro};
+    const {empresas,logins:porId}=selecao;
+    return {fonte:"cadastro",empresasIds:ids,itens:empresas.map((e)=>({ie:e.ie,nome:e.nome,cnpj:e.cnpj,codigo:e.codigo,filial:e.filial,login:porId.get(e.acesso_id!)!,tipos:e.tipos,linha:0,cadastrada:true})),acessos:[...new Set(empresas.map((e)=>porId.get(e.acesso_id!)!))].map((login)=>({login,senhaCifrada:null,cadastrado:true})),erros:[],avisos:[],nomeArquivo:"Empresas cadastradas",orgId,competencia,competenciaFinal,executarEm};
+  }
+  if (!(arquivo instanceof File) || arquivo.size === 0) return { erro: "Escolha a planilha das empresas (.xlsx ou .csv)." };
   let leitura;
   try {
     leitura = await lerPlanilha(arquivo);
@@ -109,7 +118,7 @@ export async function prepararAgendamento(_: Previa | undefined, form: FormData)
 const SENHA_CIFRADA = /^v1:[A-Za-z0-9+/=]{100,2000}$/;
 
 export async function confirmarAgendamento(previa: Previa): Promise<Previa> {
-  const { user, perfil, admin } = await contexto();
+  const { user, perfil, admin, supabase } = await contexto();
   const orgId = admin ? previa.orgId ?? "" : perfil.org_id ?? "";
   if (!orgId || !previa.itens?.length) return { erro: "Agendamento vazio." };
   // confere de novo no servidor (os dados vieram do navegador)
@@ -120,6 +129,17 @@ export async function confirmarAgendamento(previa: Previa): Promise<Previa> {
   const executarEm = previa.executarEm && !Number.isNaN(Date.parse(previa.executarEm)) ? previa.executarEm : new Date().toISOString();
   const agora = new Date().toISOString();
   const db = clienteAdmin(); // chave secreta: a organização já foi conferida pela sessão acima
+
+  if(previa.fonte === "cadastro") {
+    const selecao=await carregarSelecaoSefaz(supabase,orgId,previa.empresasIds??[]);
+    if("erro" in selecao)return {erro:selecao.erro};
+    // Relê os cadastros na confirmação; não recria empresas removidas nem altera acessos.
+    const r=await db.rpc("xml_agendar_periodo",{p_org:orgId,p_criado_por:user.id,p_inicio:`${competencia}-01`,p_fim:`${competenciaFinal}-01`,p_executar:executarEm,p_origem:"sefaz",p_nome:"Empresas cadastradas",p_empresas:selecao.empresas.map((e)=>({id:e.id,tipos:e.tipos})),p_certificado:null});
+    if(r.error)return {erro:"Não foi possível agendar as empresas selecionadas. Confira os cadastros e tente novamente."};
+    const ids=(r.data??[]) as string[];
+    revalidatePath("/painel/agendamentos");
+    return {ok:`${ids.length} competências agendadas para ${selecao.empresas.length} empresas.`,agendamentoId:ids[0],agendamentoIds:ids,competenciasAgendadas:competenciasPeriodo(competencia,competenciaFinal)};
+  }
 
   // 1) logins do contador (senha nova substitui a guardada)
   const acessos = (previa.acessos ?? []).flatMap((a) => {

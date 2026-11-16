@@ -14,7 +14,8 @@
     "test:mei:db": "node --test tests/mei-db.test.cjs tests/mei-historico-db.test.cjs",
     "test:cnpja": "node --test tests/cnpja.test.cjs tests/cnpja-db.test.cjs",
     "test:interface": "node tests/interface.browser.cjs",
-    "test:mei:descoberta": "node --test tests/mei-descoberta.test.cjs tests/mei-descoberta-db.test.cjs"
+    "test:mei:descoberta": "node --test tests/mei-descoberta.test.cjs tests/mei-descoberta-db.test.cjs",
+    "test:cadastro": "node --test tests/cadastro-individual*.test.cjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.7",

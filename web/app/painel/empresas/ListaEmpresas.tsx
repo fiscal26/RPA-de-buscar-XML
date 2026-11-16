@@ -94,8 +94,8 @@ export default function ListaEmpresas({ empresas }: { empresas: EmpresaAgrupada[
         </tr>)}</tbody>
       </table>
       {!selecionadas.length && <div className="empresas-vazio"><h2>{empresas.length ? "Nenhuma empresa encontrada" : "Sua lista de empresas começa aqui"}</h2>
-        <p className="suave">{empresas.length ? "Tente outro nome, documento ou filtro." : "Importe a planilha em um agendamento para cadastrar suas empresas."}</p>
-        {empresas.length ? <button type="button" className="secundario" onClick={limpar}>Limpar busca e filtros</button> : <Link className="botao" href="/painel/agendar">Importar empresas</Link>}</div>}
+        <p className="suave">{empresas.length ? "Tente outro nome, documento ou filtro." : "Cadastre uma empresa individualmente ou importe uma planilha."}</p>
+        {empresas.length ? <button type="button" className="secundario" onClick={limpar}>Limpar busca e filtros</button> : <Link className="botao" href="/painel/empresas/nova">Cadastrar empresa</Link>}</div>}
     </div>
     <div className="empresas-rodape"><span role="status">{selecionadas.length ? `${inicio + 1}–${Math.min(inicio + 25, selecionadas.length)} de ${selecionadas.length} empresas` : "0 empresas"}</span>
       {paginas > 1 && <nav aria-label="Paginação das empresas"><button type="button" className="secundario pequeno" disabled={atual === 1} onClick={() => transicaoSuave(() => setPagina(atual - 1))}>Anterior</button>

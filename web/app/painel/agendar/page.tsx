@@ -3,10 +3,13 @@ import { contexto } from "@/lib/sessao";
 import { competenciaBR, mesAnterior } from "@/lib/documentos";
 import FormAgendamento from "../FormAgendamento";
 import FormAgendamentoNfse from "../FormAgendamentoNfse";
+import { lerTodosMei } from "@/lib/mei-acompanhamento";
+import type { EmpresaSefazOpcao } from "../FormAgendamento";
 import { empresasComCnpj } from "@/lib/cadastro-nfse";
 
-export default async function Agendar({ searchParams }: { searchParams: Promise<{ origem?: string }> }) {
-  const nfse = (await searchParams).origem === "nfse";
+export default async function Agendar({ searchParams }: { searchParams: Promise<{ origem?: string; fonte?: string; org?: string; empresa?: string }> }) {
+  const sp = await searchParams;
+  const nfse = sp.origem === "nfse";
   const { supabase, admin } = await contexto();
   // última planilha usada (desta origem): o link só aparece quando já houve um agendamento
   const { data: ultimo } = await supabase.from("xml_agendamentos").select("id, competencia")
@@ -27,6 +30,7 @@ export default async function Agendar({ searchParams }: { searchParams: Promise<
       .then(({ data }) => (data ?? []).map((c) => ({ id: c.id as string, org_id: c.org_id as string, nome: (c.nome as string) ?? "",
         cnpj: c.cnpj as string, procurador: !!c.procurador, vencido: !!c.validade && Date.parse(c.validade as string) < Date.now() }))),
   ]) : [[], []];
+  const empresasSefaz = nfse ? {data:[],error:null} : await lerTodosMei<EmpresaSefazOpcao>(supabase.from("xml_empresas").select("id,org_id,ie,cnpj,nome,codigo,acesso_id").order("org_id").order("nome").order("id"));
   return (
     <>
       <h1>Agendar uma competência</h1>
@@ -68,7 +72,7 @@ export default async function Agendar({ searchParams }: { searchParams: Promise<
             </details>
           </section>
           <div className="cartao">
-            <FormAgendamentoNfse organizacoes={organizacoes} competencia={mesAnterior()} empresas={empresasNfse} certificados={certificadosNfse} />
+            <FormAgendamentoNfse organizacoes={organizacoes} competencia={mesAnterior()} empresas={empresasNfse} certificados={certificadosNfse} fonteInicial={sp.fonte === "cadastro" ? "cadastro" : "planilha"} orgInicial={sp.org} empresaInicial={sp.empresa} />
           </div>
         </div>
       ) : (
@@ -76,8 +80,8 @@ export default async function Agendar({ searchParams }: { searchParams: Promise<
           <section className="cartao">
             <h2 className="titulo-cartao">Antes de enviar</h2>
             <ol className="preparo">
-              <li>Baixe a planilha modelo.</li>
-              <li>Preencha uma empresa por linha: inscrição estadual, nome, login e senha do ATF.</li>
+              <li>Escolha as empresas já cadastradas ou envie uma planilha.</li>
+              <li>Para uma nova empresa, use <Link href="/painel/empresas/nova?origem=sefaz">Cadastrar empresa</Link>: inscrição estadual, nome e login ATF.</li>
               <li>Apague o X dos serviços de que a empresa não precisa.</li>
             </ol>
             <a className="botao" href="/modelos/modelo_empresas_sefaz_pb.xlsx" download>Baixar a planilha modelo</a>
@@ -101,7 +105,7 @@ export default async function Agendar({ searchParams }: { searchParams: Promise<
             </details>
           </section>
           <div className="cartao">
-            <FormAgendamento organizacoes={organizacoes} competencia={mesAnterior()} />
+            {empresasSefaz.error ? <p className="faixa erro">Não foi possível carregar as empresas cadastradas. Atualize a página.</p> : <FormAgendamento organizacoes={organizacoes} competencia={mesAnterior()} empresas={empresasSefaz.data} fonteInicial={sp.fonte === "cadastro" ? "cadastro" : "planilha"} orgInicial={sp.org} empresaInicial={sp.empresa} />}
           </div>
         </div>
       )}

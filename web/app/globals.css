@@ -1190,3 +1190,9 @@ progress.progresso-nativo::-moz-progress-bar { background: var(--carimbo); borde
 .mei-decisao .formulario { max-width: 36rem; }
 .mei-gestao select { max-width: 100%; }
 @media (max-width: 600px) { .mei-gestao .linha { align-items: stretch; flex-direction: column; } .mei-gestao .linha > label { width: 100%; } }
+
+.cadastro-individual { max-width: 52rem; padding: clamp(1rem, 3vw, 2rem); }
+.cadastro-individual > .formulario { margin-top: 1.5rem; }
+.cadastro-servicos { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: .5rem 1rem; }
+.cadastro-individual .linha > input { flex: 1; min-width: 0; }
+@media (max-width: 600px) { .cadastro-individual .linha { flex-direction: column; align-items: stretch; } }

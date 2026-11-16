@@ -16,7 +16,8 @@ import { confirmarAgendamento, prepararAgendamento, type Previa } from "./action
 
 type OrgOpcao = { id: string; nome: string };
 
-export default function FormAgendamento({ organizacoes, competencia }: { organizacoes?: OrgOpcao[]; competencia: string }) {
+export type EmpresaSefazOpcao = {id:string;org_id:string;ie:string;cnpj:string;nome:string;codigo:string;acesso_id:string|null};
+export default function FormAgendamento({ organizacoes, competencia, empresas = [], fonteInicial = "planilha", orgInicial, empresaInicial }: { organizacoes?: OrgOpcao[]; competencia: string; empresas?: EmpresaSefazOpcao[]; fonteInicial?: "planilha"|"cadastro"; orgInicial?:string; empresaInicial?:string }) {
   const [previa, ler, lendo] = useActionState(prepararAgendamento, undefined);
   const conferencia = useRef<HTMLDivElement>(null);
   useEffect(() => { if (previa?.itens && !previa.erro) conferencia.current?.focus(); }, [previa]);
@@ -24,6 +25,15 @@ export default function FormAgendamento({ organizacoes, competencia }: { organiz
   const sucesso = useRef<HTMLDivElement>(null);
   useEffect(() => { if (resultado?.ok) sucesso.current?.focus(); }, [resultado?.ok]);
   const [enviando, iniciar] = useTransition();
+  const [fonte,setFonte] = useState<"planilha"|"cadastro">(fonteInicial);
+  const [org,setOrg] = useState(organizacoes ? (organizacoes.some((o)=>o.id===orgInicial)?orgInicial!:"") : empresas[0]?.org_id??"");
+  const [marcadas,setMarcadas] = useState(new Set(empresas.filter((e)=>e.id===empresaInicial&&(!organizacoes||e.org_id===orgInicial)).map((e)=>e.id)));
+  const [filtro,setFiltro] = useState("");
+  const daOrg = organizacoes ? empresas.filter((e)=>e.org_id===org) : empresas;
+  const disponiveis = daOrg.filter((e)=>e.acesso_id);
+  const todas = disponiveis.length>0&&disponiveis.every((e)=>marcadas.has(e.id));
+  const termo=filtro.toLocaleLowerCase("pt-BR").trim();
+  const visivel=(e:EmpresaSefazOpcao)=>!termo||`${e.nome} ${e.codigo} ${e.ie} ${e.cnpj}`.toLocaleLowerCase("pt-BR").includes(termo)||(/^[-.\d\s/]+$/.test(termo)&&`${e.ie} ${e.cnpj}`.includes(termo.replace(/\D/g,"")));
   const [quando, setQuando] = useState<"agora" | "agendar">("agora");
 
   function confirmar() {
@@ -56,11 +66,11 @@ export default function FormAgendamento({ organizacoes, competencia }: { organiz
           <>
             <label htmlFor="org_id">Organização</label>
 <Escolha id="org_id" nome="org_id" rotulo="Organização" placeholder="Escolha a organização…"
-              opcoes={organizacoes.map((o) => ({ id: o.id, titulo: o.nome }))} />
+              valor={org} aoMudar={(v)=>{setOrg(v);setMarcadas(new Set());}} opcoes={organizacoes.map((o) => ({ id: o.id, titulo: o.nome }))} />
           </>
         )}
-        <label htmlFor="arquivo">Planilha das empresas</label>
-        <SeletorArquivo id="arquivo" nome="arquivo" aceita=".xlsx,.xlsm,.csv" obrigatorio titulo="Escolher a planilha (.xlsx ou .csv)" />
+        <p className="rotulo-campo">Empresas</p><Segmentado nome="fonte" rotulo="Empresas" valor={fonte} aoMudar={setFonte} opcoes={[{id:"planilha",texto:"As de uma planilha"},{id:"cadastro",texto:"Escolher entre as cadastradas"}]} />
+        {fonte === "planilha" ? <><label htmlFor="arquivo">Planilha das empresas</label><SeletorArquivo id="arquivo" nome="arquivo" aceita=".xlsx,.xlsm,.csv" obrigatorio titulo="Escolher a planilha (.xlsx ou .csv)" /></> : organizacoes&&!org ? <p className="suave">Escolha a organização para ver as empresas cadastradas.</p> : !daOrg.length ? <p className="suave">Nenhuma empresa SEFAZ cadastrada. <Link href="/painel/empresas/nova?origem=sefaz">Cadastrar empresa</Link></p> : <div className="selecao-empresas"><div className="selecao-topo"><label className="selecionar-todas"><input type="checkbox" checked={todas} onChange={()=>setMarcadas(todas?new Set():new Set(disponiveis.map((e)=>e.id)))} />Selecionar todas com acesso ATF</label><input type="search" aria-label="Procurar empresa SEFAZ" placeholder="Nome, código, CNPJ ou IE" value={filtro} onChange={(e)=>setFiltro(e.target.value)} /></div><div className="lista-empresas" role="group" aria-label="Empresas SEFAZ cadastradas">{daOrg.map((e)=><label key={e.id} hidden={!visivel(e)}><input type="checkbox" name="empresas" value={e.id} disabled={!e.acesso_id} checked={marcadas.has(e.id)} onChange={(ev)=>setMarcadas((m)=>{const n=new Set(m);if(ev.target.checked)n.add(e.id);else n.delete(e.id);return n;})} /><span className="nome-empresa">{e.nome}{!e.acesso_id&&<small> · falta login ATF</small>}</span><span className="doc suave">IE {formatarIe(e.ie)}</span></label>)}</div><p className="suave">{marcadas.size} selecionadas. Serão usados os serviços e logins já salvos no cadastro.</p></div>}
 
         <PeriodoCompetencias competencia={competencia} minimo="2006-01" />
 
@@ -74,13 +84,13 @@ export default function FormAgendamento({ organizacoes, competencia }: { organiz
             <p id="sefaz-horario" className="suave">Horário de Brasília.</p>
           </>
         )}
-        <p className="form-envio"><button type="submit" disabled={lendo}>{lendo ? "Lendo…" : "Ler planilha"}</button></p>
+        <p className="form-envio"><button type="submit" disabled={lendo}>{lendo ? "Conferindo…" : fonte === "cadastro" ? "Conferir empresas" : "Ler planilha"}</button></p>
         <span className="sr" role="status">{lendo ? "Lendo e conferindo as empresas. Aguarde." : ""}</span>
       </Formulario>
 
       {previa?.itens && !previa.erro && (
         <div ref={conferencia} tabIndex={-1} className="conferencia-planilha" style={{ marginTop: "1.5rem" }}>
-          <h2>Confira a planilha {previa.nomeArquivo}</h2>
+          <h2>{previa.nomeArquivo === "Empresas cadastradas" ? "Confira as empresas escolhidas" : `Confira a planilha ${previa.nomeArquivo}`}</h2>
           <p>
             <b>{previa.itens.length}</b> {previa.itens.length === 1 ? "empresa" : "empresas"} · período <b>{competenciaBR(previa.competencia)}{previa.competenciaFinal && previa.competenciaFinal !== previa.competencia && ` a ${competenciaBR(previa.competenciaFinal)}`}</b> ·{" "}
             {previa.executarEm ? `começa em ${dataHoraBR(previa.executarEm)}` : "começa assim que possível"}.
