@@ -16,3 +16,5 @@ robo/robo_xml.log
 # Gravações de passos (podem ter dados de clientes)
 robo/gravacoes/
 robo/nfse_cache/
+
+.venv/

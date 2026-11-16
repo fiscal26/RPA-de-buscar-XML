@@ -37,6 +37,10 @@ import time
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import urlsplit
+
+from armazenamento import (ArmazenamentoOcupado, ContextoArmazenamento,
+                           IdentidadeArmazenamentoInvalida, PASTA_CONTEXTOS)
 
 import requests
 
@@ -48,7 +52,7 @@ from atf_pb import (SERVICOS, TIPO_TELA, MensagensIndisponiveis, AtfPB, Diagnost
                     SenhaInvalida, SessaoExpirada, SiteForaDoAr)
 from navegador import Chrome, ChromeIndisponivel
 
-VERSAO = "0.4-piloto"
+VERSAO = "0.5-nfse-contexto"
 FALHA_NO_RETORNO = "O ATF não devolveu os XML. Tente agendar novamente mais tarde."
 
 log = logging.getLogger("robo")
@@ -663,6 +667,16 @@ def competencia(texto: str | None) -> tuple[date, date]:
 
 
 # ====================================================================== portal (Supabase)
+class ContratoPortalIndisponivel(RuntimeError):
+    pass
+
+
+def contexto_nfse(tarefa: dict) -> ContextoArmazenamento:
+    return ContextoArmazenamento("portal", tarefa["org_id"], "nfse_nacional", "cnpj", tarefa["cnpj"],
+                                 tarefa.get("nome") or "", tarefa.get("codigo") or "",
+                                 tarefa.get("org_nome") or "")
+
+
 class Portal:
     """Conversa com o Supabase usando a chave service_role (só neste computador)."""
 
@@ -678,6 +692,8 @@ class Portal:
     def _r(self, metodo, caminho, **kw):
         cab = {**self.cabecalhos, **kw.pop("headers", {})}
         r = requests.request(metodo, f"{self.url}{caminho}", headers=cab, timeout=self.timeout, **kw)
+        if r.status_code == 404 and caminho == "/rest/v1/rpc/xml_nfse_pegar_lote_v2":
+            raise ContratoPortalIndisponivel("Fila NFS-e por escritório indisponível. Confira o banco e a migração de integração.")
         if r.status_code >= 400:
             raise RuntimeError(f"{metodo} {caminho} -> {r.status_code}: {r.text[:300]}")
         return r
@@ -689,27 +705,22 @@ class Portal:
 
     def pegar_lote_nfse(self, robo: str, maximo: int) -> list[dict]:
         """Tarefas liberadas da NFS-e (Portal Nacional), cada uma com o certificado A1 cifrado."""
-        return self._r("POST", "/rest/v1/rpc/xml_nfse_pegar_lote", json={"p_robo": robo, "p_max": maximo}).json() or []
+        return self._r("POST", "/rest/v1/rpc/xml_nfse_pegar_lote_v2", json={"p_robo": robo, "p_max": maximo}).json() or []
 
-    def meses_nfse_consultados(self, tarefa: str, cnpj: str, competencia: str) -> list[str]:
+    def meses_nfse_consultados(self, tarefa: str, cnpj: str, competencia: str, *, org_id: str) -> list[str]:
         """O banco, e não as pastas do PC, comprova os meses consultados (inclusive zero)."""
         tarefas = self._r("GET", "/rest/v1/xml_tarefas", params={
-            "select": "org_id", "id": f"eq.{tarefa}"}).json()
-        if len(tarefas) != 1:
+            "select": "org_id,ie", "id": f"eq.{tarefa}"}).json()
+        if len(tarefas) != 1 or tarefas[0]["org_id"] != org_id or tarefas[0]["ie"] != cnpj:
             raise RuntimeError("Tarefa NFS-e não encontrada para consultar o histórico")
         ano = competencia[:4]
         meses = self._r("GET", "/rest/v1/xml_mei_nfse_meses", params={
-            "select": "competencia", "org_id": f"eq.{tarefas[0]['org_id']}", "cnpj": f"eq.{cnpj}",
+            "select": "competencia", "org_id": f"eq.{org_id}", "cnpj": f"eq.{cnpj}",
             "and": f"(competencia.gte.{ano}-01-01,competencia.lte.{competencia[:7]}-01)"}).json()
         return [m["competencia"][:7] for m in meses]
 
     def atualizar_tarefa(self, tid: str, campos: dict):
         self._r("PATCH", f"/rest/v1/xml_tarefas?id=eq.{tid}", json=campos, headers={"Prefer": "return=minimal"})
-
-    def devolver_tarefas(self, robo: str):
-        """Tarefas que ficaram 'processando' com este robô (ex.: o PC desligou) voltam para a fila."""
-        self._r("PATCH", f"/rest/v1/xml_tarefas?status=eq.processando&robo=eq.{requests.utils.quote(robo)}",
-                json={"status": "pendente", "iniciado_em": None, "robo": None}, headers={"Prefer": "return=minimal"})
 
     def registrar_mei(self, tarefa: str, meses: dict, inicio_atividade: str | None):
         """Dossiê MEI: grava o ano mês a mês no painel (a empresa e o escritório saem da tarefa)."""
@@ -777,7 +788,7 @@ class Robo:
         self._trava = threading.Lock()
         self.em_paralelo: dict[str, dict] = {}       # id -> tarefa da NFS-e em andamento
         self.monitores_em_curso: dict[str, dict] = {}  # id -> empresa do Monitor Fiscal em andamento
-        self._travas_cnpj: dict[str, threading.Lock] = {}
+        self._travas_empresa: dict[tuple, threading.Lock] = {}
 
     def enviar_historico_mei(self):
         """Manda ao painel o faturamento MEI que já está salvo neste PC (meses consultados antes do painel)."""
@@ -804,7 +815,6 @@ class Robo:
         log.info("Filas deste robô: %s", ", ".join({"sefaz": "SEFAZ (ATF)", "nfse": "NFS-e (Portal Nacional)"}[f] for f in filas))
         if "sefaz" in filas:
             self.enviar_historico_mei()
-        self.portal.devolver_tarefas(self.nome)
         threading.Thread(target=self._batimento, name="sinal-de-vida", daemon=True).start()
         # NFS-e e Monitor Fiscal não usam o Chrome: cada fila tem a sua linha de trabalho, com várias empresas ao
         # mesmo tempo, enquanto o ATF segue aqui (um login por vez, no Chrome)
@@ -917,10 +927,10 @@ class Robo:
             else:
                 self._finalizar(t, r)
 
-    def _trava_do_cnpj(self, cnpj: str) -> threading.Lock:
-        """Uma empresa por vez: duas tarefas do mesmo CNPJ (ex.: duas competências) dividem o cache e as pastas."""
+    def _trava_da_empresa(self, chave: tuple) -> threading.Lock:
+        """Serializa o cache da mesma identidade sem bloquear outro escritório."""
         with self._trava:
-            return self._travas_cnpj.setdefault(cnpj, threading.Lock())
+            return self._travas_empresa.setdefault(chave, threading.Lock())
 
     def _fila_paralela(self, nome: str, pegar, processar, em_curso: dict, paralelo: int):
         """Linha de trabalho de uma fila de API: mantém até `paralelo` empresas em andamento ao mesmo tempo e pega
@@ -939,6 +949,10 @@ class Robo:
                     try:
                         lote = pegar(self.nome, livres) or []
                         avisou = False
+                    except ContratoPortalIndisponivel as erro:
+                        log.error("%s", erro)
+                        self.parar = True
+                        return
                     except Exception as e:  # sem contato, ou tabela ainda não criada (schema.sql antigo)
                         if not avisou:
                             log.warning("Fila %s indisponível no portal: %s", nome, e)
@@ -948,15 +962,17 @@ class Robo:
                 for t in lote:
                     with self._trava:
                         em_curso[t["id"]] = t
-                    pool.submit(self._rodar_um, processar, t, em_curso, vaga)
+                    pool.submit(self._rodar_um, processar, t, em_curso, vaga, nome)
                 if not lote:
                     vaga.wait(self.cfg["portal"]["intervalo_segundos"] if livres > 0 else 30)
                     vaga.clear()
 
-    def _rodar_um(self, processar, t: dict, em_curso: dict, vaga=None):
+    def _rodar_um(self, processar, t: dict, em_curso: dict, vaga, origem: str):
         try:
-            with self._trava_do_cnpj(t.get("cnpj") or t["id"]):
-                processar(t)
+            chave = (origem, t.get("org_id"), t.get("cnpj") or t["id"])
+            with self._trava_da_empresa(chave):
+                if not self.parar:
+                    processar(t)
         except Exception:
             log.exception("Erro inesperado em %s", t.get("nome"))
         finally:
@@ -969,7 +985,9 @@ class Robo:
         self.portal.atualizar_tarefa(t["id"], {"detalhes": {tipo: {"situacao": "andamento", "mensagem": ""}
                                                             for tipo in t.get("tipos") or []}})
         try:
-            t = {**t, "meses_consultados": self.portal.meses_nfse_consultados(t["id"], t["cnpj"], str(t["data_inicio"]))}
+            contexto = contexto_nfse(t)
+            t = {**t, "meses_consultados": self.portal.meses_nfse_consultados(
+                t["id"], contexto.documento, str(t["data_inicio"]), org_id=contexto.contexto_id)}
             r = executar_nfse(self.cfg, t, self.privada)
         except Exception:
             log.exception("Erro inesperado na NFS-e de %s", t["nome"])
@@ -1063,11 +1081,13 @@ class Robo:
         with self._trava:
             paralelas = list(self.em_paralelo.values())
             monitores = list(self.monitores_em_curso.values())
-        for t in list(self.tarefas_atuais) + list(self.aguardando.values()) + paralelas:  # voltam para a fila
+        for t in list(self.tarefas_atuais) + list(self.aguardando.values()):  # retomada do ATF será integrada na etapa própria
             try:
                 self.portal.atualizar_tarefa(t["id"], {"status": "pendente", "iniciado_em": None, "robo": None})
             except Exception:
                 pass
+        if paralelas:
+            log.info("NFS-e em andamento preservadas para conferência: %s", ", ".join(t["id"] for t in paralelas))
         for m in monitores:  # a consulta interrompida sai de novo na próxima volta do robô
             try:
                 self.portal.devolver_monitor(m["id"])
@@ -1088,6 +1108,11 @@ def executar_nfse(cfg: dict, t: dict, privada, sessao_falsa=None) -> Resultado:
 
     def todos(situacao: str, mensagem: str) -> dict:
         return {tipo: {"situacao": situacao, "mensagem": mensagem[:200]} for tipo in tipos}
+
+    try:
+        contexto = contexto_nfse(t)
+    except (KeyError, TypeError, ValueError) as erro:
+        return Resultado("erro", f"Contexto NFS-e inválido: {erro}", detalhes=todos("erro", "contexto inválido"))
 
     try:
         pfx = cripto.decifrar_arquivo(t["pfx_cifrado"], privada)
@@ -1112,25 +1137,27 @@ def executar_nfse(cfg: dict, t: dict, privada, sessao_falsa=None) -> Resultado:
     try:
         with nfse.contexto_tls(pfx, senha) as ctx:
             cliente = nfse.ClienteADN(sessao_falsa or nfse.sessao_com_certificado(ctx), cnpj_consulta=consulta)
-            destino, codigo = destino_da_tarefa(cfg, t), t.get("codigo") or ""
+            destino = cfg["pastas"]["destino"]
             opcoes = dict(pdf="nfse_pdf" in tipos, com_emitidas="nfse_emitidas" in tipos,
                           com_recebidas="nfse_recebidas" in tipos, relatorio="nfse_retencoes" in tipos)
             anteriores = nfse.meses_sem_busca(competencia, t.get("meses_consultados") or [])
-            r = nfse.baixar_competencia(cliente, cnpj, competencia, destino, t["nome"], codigo, **opcoes)
+            r = nfse.baixar_competencia(cliente, contexto, competencia, destino, **opcoes)
             # O cache contém emitidas mesmo se o usuário escolheu só salvar as recebidas.
-            meses_mei.append(nfse.resumo_mei(cnpj, competencia))
+            meses_mei.append(r.resumo_mei)
             # MEI (cadastrado como MEI na SEFAZ ou que emite NFS-e como MEI) que ainda não tinha o ano: os meses de
             # janeiro até a competência saem junto, somente onde ainda não há registro no banco
-            if anteriores and not t.get("mei_bloqueado", False) and (t.get("mei") or nfse.eh_mei(cnpj)):
+            if anteriores and not t.get("mei_bloqueado", False) and (t.get("mei") or r.detectado_mei):
                 for mes in anteriores:
-                    extra = nfse.baixar_competencia(cliente, cnpj, mes, destino, t["nome"], codigo, atualizar=False,
+                    extra = nfse.baixar_competencia(cliente, contexto, mes, destino, atualizar=False,
                                                     **opcoes)
                     n = len(extra.emitidas) + len(extra.recebidas)
-                    meses_mei.append(nfse.resumo_mei(cnpj, mes))
+                    meses_mei.append(extra.resumo_mei)
                     if n:
                         meses_extra.append((mes, n))
                 log.info("   MEI %s: meses anteriores do ano conferidos (%s)", t["nome"],
                          ", ".join(f"{m[5:]}/{m[:4]}: {n} nota(s)" for m, n in meses_extra) or "nenhuma nota")
+    except (IdentidadeArmazenamentoInvalida, ArmazenamentoOcupado, OSError) as erro:
+        return Resultado("erro", str(erro), detalhes=todos("erro", str(erro)))
     except nfse.ErroADN as e:
         texto = str(e)
         if "certificado" in texto.lower() and "E2214" not in texto:
@@ -1147,7 +1174,7 @@ def executar_nfse(cfg: dict, t: dict, privada, sessao_falsa=None) -> Resultado:
         del pfx, senha
 
     detalhes, partes = {}, []
-    detalhes["mei_nfse"] = {"meses": meses_mei, "detectado_no_xml": nfse.eh_mei(cnpj)}
+    detalhes["mei_nfse"] = {"meses": meses_mei, "detectado_no_xml": r.detectado_mei}
     for tipo, notas, rotulo in (("nfse_emitidas", r.emitidas, "emitida"), ("nfse_recebidas", r.recebidas, "recebida")):
         if tipo in tipos:
             detalhes[tipo] = ({"situacao": "concluido", "mensagem": f"{len(notas)} nota(s)", "arquivos": len(notas)} if notas
@@ -1170,7 +1197,7 @@ def executar_nfse(cfg: dict, t: dict, privada, sessao_falsa=None) -> Resultado:
         partes.append(f"{r.canceladas} cancelada(s) fora")
     if meses_extra:
         partes.append(f"e mais {sum(n for _, n in meses_extra)} nota(s) dos meses anteriores do ano (MEI)")
-    pasta = r.pasta.parent.name if r.pasta else ""
+    pasta = r.pasta.parent.relative_to(Path(destino).resolve()).as_posix() if r.pasta else ""
     return Resultado("concluido" if total else "sem_notas", "NFS-e: " + ", ".join(partes) if partes else "NFS-e: nada a baixar",
                      qtd_xml=total, detalhes=detalhes, pasta=pasta)
 
@@ -1304,7 +1331,7 @@ def salvar_relatorio(cfg, resultados, inicio: date) -> Path:
     return destino
 
 
-def testar_nfse(cfg: dict, competencia: str | None):
+def testar_nfse(cfg: dict, competencia: str | None, *, contexto_local: tuple[str, str]):
     """Baixa as NFS-e de uma competência pelo Portal Nacional com um .pfx escolhido na hora.
     A senha é digitada aqui e não fica gravada em lugar nenhum."""
     import getpass
@@ -1334,12 +1361,17 @@ def testar_nfse(cfg: dict, competencia: str | None):
         sys.exit("Competência inválida: use MM/AAAA (ex.: 09/2026).")
     comp = f"{inicio:%Y-%m}"
     alvo = consulta or cnpj
+    try:
+        contexto = ContextoArmazenamento("local", contexto_local[0], "nfse_nacional", "cnpj", alvo,
+                                         info["nome"] or alvo, nome_contexto=contexto_local[1])
+    except (TypeError, ValueError) as erro:
+        sys.exit(str(erro))
     log.info("NFS-e %s de %s: consultando o Portal Nacional...", f"{inicio:%m/%Y}", alvo)
     try:
         with nfse.contexto_tls(pfx, senha) as ctx:
             cliente = nfse.ClienteADN(nfse.sessao_com_certificado(ctx), cnpj_consulta=alvo)
-            r = nfse.baixar_competencia(cliente, alvo, comp, cfg["pastas"]["destino"], (alvo if consulta else info["nome"]) or alvo)
-    except nfse.ErroADN as e:
+            r = nfse.baixar_competencia(cliente, contexto, comp, cfg["pastas"]["destino"])
+    except (nfse.ErroADN, IdentidadeArmazenamentoInvalida, ArmazenamentoOcupado, OSError) as e:
         sys.exit(f"Erro: {e}")
     log.info("%d documento(s) novo(s) recebido(s) do Portal Nacional", r.novos_documentos)
     log.info("Competência %s: %d emitida(s), %d recebida(s), %d cancelada(s) fora do relatório",
@@ -1351,6 +1383,21 @@ def testar_nfse(cfg: dict, competencia: str | None):
 
 
 # ====================================================================== entrada
+def endereco_banco(valor: str) -> str:
+    """Aceita somente a origem do banco, sem credenciais nem parâmetros na URL."""
+    if not isinstance(valor, str) or not valor or any(c.isspace() for c in valor):
+        raise config.ConfigInvalida("Informe o endereço do Supabase.")
+    try:
+        url = urlsplit(valor)
+        _ = url.port  # Valida a porta antes de apresentar o endereço.
+        if (url.scheme not in ("https", "http") or not url.hostname or url.username is not None
+                or url.password is not None or url.path not in ("", "/") or "?" in valor or "#" in valor):
+            raise ValueError
+    except ValueError as erro:
+        raise config.ConfigInvalida("Endereço do Supabase inválido. Use apenas a origem, sem credenciais ou parâmetros.") from erro
+    return valor.rstrip("/")
+
+
 def main():
     ap = argparse.ArgumentParser(description="Robô de XML da SEFAZ-PB")
     ap.add_argument("--gerar-chaves", action="store_true", help="cria o par de chaves das senhas do ATF")
@@ -1366,22 +1413,43 @@ def main():
                     help="grava os passos que você faz no Chrome do robô (ex.: --gravar faturas)")
     ap.add_argument("--nfse-teste", action="store_true",
                     help="NFS-e do Portal Nacional com um certificado A1 deste PC (pergunta o arquivo e a senha)")
+    ap.add_argument("--conferir-banco", action="store_true", help="mostra o endereço efetivo do Supabase")
+    ap.add_argument("--confirmar-banco", metavar="URL", help="confirma o banco antes de iniciar ou reenviar")
+    ap.add_argument("--criar-contexto-local", action="store_true", help="autoriza o identificador persistente do teste NFS-e")
     args = ap.parse_args()
+    if args.criar_contexto_local and not args.nfse_teste:
+        ap.error("--criar-contexto-local exige --nfse-teste nesta etapa")
+    usa_portal = not (args.local or args.nfse_teste or args.gerar_chaves or args.mostrar_chave_publica
+                     or args.modelo or args.gravar is not None)
+
+
+    try:
+        cfg = config.carregar(preparar_pastas=False)
+        if usa_portal or args.conferir_banco:
+            banco = endereco_banco(cfg["portal"]["supabase_url"])
+            if args.conferir_banco:
+                print(f"Banco efetivo: {banco}")
+                return
+            if not args.confirmar_banco or endereco_banco(args.confirmar_banco) != banco:
+                sys.exit("Confira --conferir-banco e informe a URL esperada em --confirmar-banco.")
+            cfg["portal"]["supabase_url"] = banco
+        if args.nfse_teste:
+            contexto_local = config.carregar_contexto_local(confirmar_criacao=args.criar_contexto_local)
+        cfg["_avisos"] = config.resolver_pastas(cfg)
+    except config.ConfigInvalida as erro:
+        sys.exit(str(erro))
 
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(message)s", datefmt="%d/%m %H:%M:%S",
         handlers=[logging.StreamHandler(), logging.FileHandler(config.RAIZ / "robo_xml.log", encoding="utf-8")],
     )
-    try:
-        cfg = config.carregar()
-    except config.ConfigInvalida as e:
-        sys.exit(str(e))
     for aviso in cfg.get("_avisos", []):
         log.warning("ATENÇÃO: %s", aviso)
     arquivos.FORMATO_COMPETENCIA = cfg["pastas"]["formato_competencia"]  # pasta do mês: 102026 ou 2026-10
     arquivos.GERAR_PDF = bool(cfg["pastas"].get("pdf_das_notas", True))
     if not (args.gerar_chaves or args.mostrar_chave_publica or args.modelo or args.gravar is not None):
-        log.info("Os arquivos baixados ficam em: %s", Path(cfg["pastas"]["destino"]) / arquivos.PASTA_BAIXADOS)
+        log.info("Arquivos do ATF: %s", Path(cfg["pastas"]["destino"]) / arquivos.PASTA_BAIXADOS)
+        log.info("NFS-e por escritório: %s", Path(cfg["pastas"]["destino"]) / PASTA_CONTEXTOS)
 
     if args.gerar_chaves:
         publica = cripto.gerar_chaves(Path(cfg["chaves"]["privada"]))
@@ -1404,7 +1472,7 @@ def main():
         print(planilha.copiar_modelo(args.modelo))
         return
     if args.nfse_teste:
-        testar_nfse(cfg, args.competencia)
+        testar_nfse(cfg, args.competencia, contexto_local=contexto_local)
         return
     if args.mei_ano:
         cfg["mei"]["refazer_ano"] = True

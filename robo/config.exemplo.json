@@ -1,6 +1,11 @@
 {
   "_comentario": "Copie para config.json e altere só o que precisar. Padrões em config.py.",
   "_pastas": "Sem a chave pastas, os arquivos vão para Documentos\\RPA XML LotiVisse deste computador. Para outra pasta: \"pastas\": {\"destino\": \"D:\\\\Clientes\\\\XML\"}",
+  "_banco": "Confira --conferir-banco e use --confirmar-banco com a URL esperada. SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY prevalecem sobre portal.",
+  "armazenamento": {
+    "local_id": "",
+    "local_nome": "Escritório local"
+  },
   "portal": {
     "supabase_url": "https://SEU-PROJETO.supabase.co",
     "chave_service_role": "COLE-AQUI-A-CHAVE-SERVICE-ROLE",

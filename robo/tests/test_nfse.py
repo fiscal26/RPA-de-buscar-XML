@@ -7,6 +7,24 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 import nfse
+from pathlib import Path
+from armazenamento import ContextoArmazenamento, abrir_empresa
+
+ORG = "7b245ed0-a8a0-4242-bcf0-24c8eb2895c6"
+
+
+@pytest.fixture
+def tmp_path(tmp_path_factory):
+    return tmp_path_factory.mktemp("n")
+
+
+def contexto(cnpj="11222333000181", org=ORG):
+    return ContextoArmazenamento("portal", org, "nfse_nacional", "cnpj", cnpj, "Lotivisse", "7")
+
+
+def pasta_empresa(cfg, cnpj="11222333000181"):
+    with abrir_empresa(cfg["pastas"]["destino"], contexto(cnpj)) as pasta:
+        return pasta
 
 DONO = "11222333000181"
 CLIENTE = "44555666000199"
@@ -139,13 +157,13 @@ def test_evento_nao_e_nota():
 
 def test_busca_por_nsu_ate_acabar_e_continua_do_ultimo(tmp_path):
     portal = PortalFalso(documentos_exemplo())
-    cache = nfse.Cache(DONO, tmp_path)
+    cache = nfse.Cache(tmp_path / DONO)
     assert nfse.atualizar_cache(cliente(portal), cache) == 6
     assert [p[0].rsplit("/", 1)[-1] for p in portal.pedidos] == ["0", "2", "4", "6"]
     assert portal.pedidos[0][1] == {"lote": "true"}
     # de novo: começa do último NSU guardado e não traz nada repetido
     portal.pedidos.clear()
-    assert nfse.atualizar_cache(cliente(portal), nfse.Cache(DONO, tmp_path)) == 0
+    assert nfse.atualizar_cache(cliente(portal), nfse.Cache(tmp_path / DONO)) == 0
     assert portal.pedidos[0][0].endswith("/DFe/6")
 
 
@@ -154,7 +172,7 @@ def test_espera_e_repete_quando_o_portal_limita(tmp_path):
     portal = PortalFalso(documentos_exemplo()[:1], falhas=[Resposta(429, {}, cabecalhos={"Retry-After": "3"}),
                                                           Resposta(503, {})])
     c = nfse.ClienteADN(portal, intervalo=0.01, dormir=esperas.append)
-    assert nfse.atualizar_cache(c, nfse.Cache(DONO, tmp_path)) == 1
+    assert nfse.atualizar_cache(c, nfse.Cache(tmp_path / DONO)) == 1
     assert 3.0 in esperas and c.intervalo > 0.01
 
 
@@ -176,13 +194,12 @@ def test_baixa_a_competencia_separa_e_monta_o_relatorio(tmp_path):
     from openpyxl import load_workbook
 
     portal = PortalFalso(documentos_exemplo())
-    r = nfse.baixar_competencia(cliente(portal), DONO, "2026-09", tmp_path / "destino", "Lotivisse", "7",
-                                cache_raiz=tmp_path / "cache")
+    r = nfse.baixar_competencia(cliente(portal), contexto(), "2026-09", tmp_path / "destino")
     assert [n.numero for n in r.emitidas] == ["1", "2"]          # a cancelada e a de outubro ficam de fora
     assert [n.numero for n in r.recebidas] == ["77"]
     assert r.canceladas == 1 and r.pdfs == 3
     emitidas = r.pasta / nfse.PASTA_EMITIDAS
-    assert r.pasta.parent.name == "7-Lotivisse" and r.pasta.name == "092026"
+    assert r.pasta.parent.name.startswith(f"cnpj_{DONO}") and r.pasta.name == "092026"
     assert len(list(emitidas.glob("*.xml"))) == 2 and len(list(emitidas.glob("*.pdf"))) == 2
     assert len(list((r.pasta / nfse.PASTA_RECEBIDAS).glob("*.xml"))) == 1
     # o mês num XML só, no envelope ABRASF (importação da Domínio): cada nota entra como veio, com a assinatura
@@ -212,9 +229,8 @@ def test_baixa_a_competencia_separa_e_monta_o_relatorio(tmp_path):
 
 
 def test_sem_notas_na_competencia_nao_cria_relatorio(tmp_path):
-    r = nfse.baixar_competencia(cliente(PortalFalso([])), DONO, "2026-09", tmp_path / "d", "X",
-                                cache_raiz=tmp_path / "c")
-    assert r.relatorio is None and not r.emitidas and not (tmp_path / "d").exists()
+    r = nfse.baixar_competencia(cliente(PortalFalso([])), contexto(), "2026-09", tmp_path / "d")
+    assert r.relatorio is None and not r.emitidas and not list((tmp_path / "d").rglob("*.xlsx"))
 
 
 def _pfx(cn: str, senha: str = "1234") -> bytes:
@@ -256,14 +272,13 @@ def tarefa(chaves, tipos, pfx=None, senha="1234", cnpj=DONO, certificado_cnpj=DO
     import cripto
     _, publica = chaves
     pfx = pfx or _pfx(f"LOTIVISSE LTDA:{certificado_cnpj}", senha)
-    return {"id": "t1", "cnpj": cnpj, "nome": "Lotivisse", "codigo": "7", "tipos": tipos, "data_inicio": "2026-09-01",
+    return {"id": "t1", "org_id": ORG, "org_nome": "Escritório", "cnpj": cnpj, "nome": "Lotivisse", "codigo": "7", "tipos": tipos, "data_inicio": "2026-09-01",
             "certificado_cnpj": certificado_cnpj, "pfx_cifrado": cripto.cifrar_arquivo(pfx, publica),
             "senha_cifrada": cripto.cifrar(senha, publica)}
 
 
 @pytest.fixture
 def cfg_nfse(tmp_path, monkeypatch):
-    monkeypatch.setattr(nfse, "CACHE", tmp_path / "cache")
     monkeypatch.setattr(nfse.ClienteADN.__init__, "__defaults__", ("", nfse.ADN, 0, lambda s: None))  # sem esperas
     return {"pastas": {"destino": str(tmp_path / "destino")}}
 
@@ -273,7 +288,7 @@ def test_tarefa_do_portal_baixa_e_conta_por_servico(chaves, cfg_nfse):
     portal = PortalFalso(documentos_exemplo())
     r = robo_xml.executar_nfse(cfg_nfse, tarefa(chaves, ["nfse_emitidas", "nfse_recebidas", "nfse_pdf", "nfse_retencoes"]),
                                chaves[0], sessao_falsa=portal)
-    assert r.status == "concluido" and r.qtd_xml == 3 and r.pasta == "7-Lotivisse"
+    assert r.status == "concluido" and r.qtd_xml == 3 and (Path(cfg_nfse["pastas"]["destino"]) / r.pasta) == pasta_empresa(cfg_nfse)
     assert r.detalhes["nfse_emitidas"] == {"situacao": "concluido", "mensagem": "2 nota(s)", "arquivos": 2}
     assert r.detalhes["nfse_recebidas"]["arquivos"] == 1 and r.detalhes["nfse_pdf"]["arquivos"] == 3
     assert r.detalhes["nfse_retencoes"]["situacao"] == "concluido"
@@ -297,7 +312,7 @@ def test_so_emitidas_sem_relatorio_nem_pdf(chaves, cfg_nfse, tmp_path):
     r = robo_xml.executar_nfse(cfg_nfse, tarefa(chaves, ["nfse_emitidas"]), chaves[0], sessao_falsa=portal)
     assert r.qtd_xml == 2 and set(r.detalhes) == {"nfse_emitidas", "mei_nfse"}
     assert r.detalhes["mei_nfse"]["meses"] == [{"competencia": "2026-09-01", "valor": 11000.0, "quantidade": 2}]
-    pasta = tmp_path / "destino" / "Arquivos baixados" / "7-Lotivisse" / "092026"
+    pasta = pasta_empresa(cfg_nfse) / "092026"
     assert not (pasta / nfse.PASTA_RECEBIDAS).exists() and not list(pasta.glob("*.xlsx"))
     assert not list(pasta.rglob("*.pdf")) and not any("/danfse/" in p[0] for p in portal.pedidos)
 
@@ -347,7 +362,7 @@ def test_tarefa_vai_para_a_pasta_do_escritorio(chaves, cfg_nfse, tmp_path):
     t["org_nome"] = "Contábil Sousa"
     r = robo_xml.executar_nfse(cfg_nfse, t, chaves[0], sessao_falsa=PortalFalso(documentos_exemplo()))
     assert r.qtd_xml == 2
-    assert (tmp_path / "destino" / "Contábil Sousa" / "Arquivos baixados" / "7-Lotivisse" / "092026" / nfse.PASTA_EMITIDAS).is_dir()
+    assert (pasta_empresa(cfg_nfse) / "092026" / nfse.PASTA_EMITIDAS).is_dir()
 
 
 def test_certificado_do_escritorio_por_procuracao(chaves, cfg_nfse):
@@ -387,7 +402,7 @@ def test_mei_sem_busca_anterior_baixa_desde_janeiro(chaves, cfg_nfse, tmp_path):
     """MEI (emite NFS-e como MEI) que nunca teve busca: sai com os meses de janeiro até a competência."""
     import robo_xml
     r = robo_xml.executar_nfse(cfg_nfse, tarefa(chaves, ["nfse_emitidas"]), chaves[0], sessao_falsa=PortalFalso(_docs_mei()))
-    base = tmp_path / "destino" / "Arquivos baixados" / "7-Lotivisse"
+    base = pasta_empresa(cfg_nfse)
     assert (base / "092026" / nfse.PASTA_EMITIDAS).is_dir()
     assert (base / "022026" / nfse.PASTA_EMITIDAS).is_dir() and (base / "072026" / nfse.PASTA_EMITIDAS).is_dir()
     assert (base / "072026" / f"{nfse.PASTA_EMITIDAS} 072026.xml").exists()
@@ -403,13 +418,13 @@ def test_mei_pelo_cadastro_da_sefaz(chaves, cfg_nfse, tmp_path):
     import robo_xml
     t = {**tarefa(chaves, ["nfse_emitidas"]), "mei": True}
     robo_xml.executar_nfse(cfg_nfse, t, chaves[0], sessao_falsa=PortalFalso(_docs_mei(simples="")))
-    assert (tmp_path / "destino" / "Arquivos baixados" / "7-Lotivisse" / "072026").is_dir()
+    assert (pasta_empresa(cfg_nfse) / "072026").is_dir()
 
 
 def test_empresa_que_nao_e_mei_baixa_so_a_competencia(chaves, cfg_nfse, tmp_path):
     import robo_xml
     r = robo_xml.executar_nfse(cfg_nfse, tarefa(chaves, ["nfse_emitidas"]), chaves[0], sessao_falsa=PortalFalso(_docs_mei(simples="3")))
-    base = tmp_path / "destino" / "Arquivos baixados" / "7-Lotivisse"
+    base = pasta_empresa(cfg_nfse)
     assert (base / "092026").is_dir() and not (base / "072026").exists() and not (base / "022026").exists()
     assert "meses anteriores" not in r.mensagem
 
@@ -426,7 +441,7 @@ def test_portal_sem_pdf_o_robo_gera_o_danfse_do_xml(tmp_path):
     docs = [(i, "NFSE", f"2507507{i:043d}", nota_xml(f"2507507{i:043d}", str(i), DONO, CLIENTE, "Cliente Um SA", 100.0 * i))
             for i in range(1, 7)]
     portal = SemPdf(docs)
-    r = nfse.baixar_competencia(cliente(portal), DONO, "2026-09", tmp_path / "d", "X", cache_raiz=tmp_path / "cache")
+    r = nfse.baixar_competencia(cliente(portal), contexto(), "2026-09", tmp_path / "d")
     pdfs = list((r.pasta / nfse.PASTA_EMITIDAS).glob("*.pdf"))
     assert len(pdfs) == 6 and all(p.read_bytes().startswith(b"%PDF") for p in pdfs)
     assert r.pdfs == 6 and r.pdfs_gerados == 6 and r.pdfs_faltando == 0
@@ -462,12 +477,12 @@ def test_portal_busca_historico_no_escritorio_da_tarefa(monkeypatch):
         def json(self): return self.dados
     def requisicao(metodo, caminho, **kw):
         chamadas.append((caminho, kw["params"]))
-        return RespostaJson([{"org_id": "org-a"}] if caminho.endswith("xml_tarefas") else [{"competencia": "2026-01-01"}])
+        return RespostaJson([{"org_id": ORG, "ie": DONO}] if caminho.endswith("xml_tarefas") else [{"competencia": "2026-01-01"}])
     portal = robo_xml.Portal("https://example.test", "sb_secret_teste")
     monkeypatch.setattr(portal, "_r", requisicao)
-    assert portal.meses_nfse_consultados("tarefa-a", DONO, "2026-09-01") == ["2026-01"]
+    assert portal.meses_nfse_consultados("tarefa-a", DONO, "2026-09-01", org_id=ORG) == ["2026-01"]
     assert chamadas[0][1]["id"] == "eq.tarefa-a"
-    assert chamadas[1][1]["org_id"] == "eq.org-a"
+    assert chamadas[1][1]["org_id"] == f"eq.{ORG}"
     assert chamadas[1][1]["cnpj"] == f"eq.{DONO}"
 
 
@@ -475,12 +490,12 @@ def test_falha_ao_ler_historico_nao_consulta_api_nem_grava_zero(monkeypatch):
     import robo_xml
     from types import SimpleNamespace
     finalizados = []
-    def falhar(*args): raise RuntimeError("Banco indisponível")
+    def falhar(*args, **kwargs): raise RuntimeError("Banco indisponível")
     def nao_consultar(*args): raise AssertionError("Não deve consultar sem ler o histórico")
     monkeypatch.setattr(robo_xml, "executar_nfse", nao_consultar)
     portal = SimpleNamespace(atualizar_tarefa=lambda *a: None, meses_nfse_consultados=falhar)
     robo = SimpleNamespace(portal=portal, cfg={}, privada=None, _finalizar=lambda t, r: finalizados.append(r))
-    robo_xml.Robo._uma_nfse(robo, {"id":"t", "cnpj":DONO, "nome":"MEI", "data_inicio":"2026-09-01", "tipos":["nfse_emitidas"]})
+    robo_xml.Robo._uma_nfse(robo, {"id":"t", "org_id":ORG, "cnpj":DONO, "nome":"MEI", "data_inicio":"2026-09-01", "tipos":["nfse_emitidas"]})
     assert finalizados[0].status == "erro"
     assert "mei_nfse" not in finalizados[0].detalhes
 
@@ -490,7 +505,7 @@ def test_mei_pausado_nao_amplia_ano_por_indicacao_no_xml(chaves, cfg_nfse, tmp_p
     import robo_xml
     t = {**tarefa(chaves, ["nfse_emitidas"]), "mei": True, "mei_bloqueado": True}
     r = robo_xml.executar_nfse(cfg_nfse, t, chaves[0], sessao_falsa=PortalFalso(_docs_mei()))
-    base = tmp_path / "destino" / "Arquivos baixados" / "7-Lotivisse"
+    base = pasta_empresa(cfg_nfse)
     assert (base / "092026").is_dir()
     assert not (base / "072026").exists() and not (base / "022026").exists()
     assert "meses anteriores" not in r.mensagem

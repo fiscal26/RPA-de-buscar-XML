@@ -1,0 +1,249 @@
+import json
+import os
+import stat
+import subprocess
+import sys
+from dataclasses import replace
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+import armazenamento
+import config
+from armazenamento import (
+    PASTA_CONTEXTOS, ArmazenamentoOcupado, ContextoArmazenamento,
+    IdentidadeArmazenamentoInvalida, abrir_empresa,
+)
+
+
+ORG_A = "7b245ed0-a8a0-4242-bcf0-24c8eb2895c6"
+ORG_B = "6d12ae21-e996-4f5d-925a-d844a32399e4"
+EMPRESA = ContextoArmazenamento("portal", ORG_A, "sefaz_pb", "ie", "160123453",
+                               "Empresa/A", "007", "Escritório A")
+
+
+@pytest.fixture
+def destino(tmp_path_factory):
+    return tmp_path_factory.mktemp("v2")
+
+
+def test_identidades_separadas_e_legado_preservado(destino):
+    legado = destino / "Arquivos baixados" / "007-Empresa_A"
+    legado.mkdir(parents=True)
+    (legado / "original.xml").write_bytes(b"legado")
+    contextos = [
+        EMPRESA, replace(EMPRESA, documento="000000019", nome="Empresa:A"),
+        replace(EMPRESA, contexto_id=ORG_B), replace(EMPRESA, tipo_contexto="local"),
+        replace(EMPRESA, origem="nfse_nacional", tipo_documento="cnpj", documento="11222333000181"),
+        replace(EMPRESA, origem="nfse_nacional", tipo_documento="cnpj", documento="11222333000262"),
+    ]
+    caminhos = []
+    for contexto in contextos:
+        with abrir_empresa(destino, contexto) as pasta:
+            caminhos.append(pasta)
+            assert pasta.is_relative_to(destino / PASTA_CONTEXTOS)
+            assert pasta.name.startswith(f"{contexto.tipo_documento}_{contexto.documento}")
+    assert len(set(caminhos)) == len(contextos)
+    assert list(legado.iterdir()) == [legado / "original.xml"]
+    assert (legado / "original.xml").read_bytes() == b"legado"
+
+
+def test_renomeacao_preserva_pasta_e_metadados_iniciais(destino):
+    with abrir_empresa(destino, EMPRESA) as inicial:
+        prefixo, _, rotulo = inicial.name.partition("--")
+        assert prefixo == "ie_160123453"
+        assert "007-Empresa_A".startswith(rotulo)
+        dados_iniciais = json.loads((inicial / "empresa.json").read_text(encoding="utf-8"))
+    atual = replace(EMPRESA, nome="Outro nome", codigo="", nome_contexto="Escritório renomeado")
+    with abrir_empresa(destino, atual) as pasta:
+        assert pasta == inicial
+        dados = json.loads((pasta / "empresa.json").read_text(encoding="utf-8"))
+        assert dados["identidade"] == EMPRESA.identidade
+        assert dados["rotulos_atuais"] == atual.rotulos
+        assert dados["rotulos_iniciais"] == EMPRESA.rotulos
+        assert dados["criado_em"] == dados_iniciais["criado_em"]
+
+
+def test_rotulos_longos_e_prefixo_parecido_nao_alteram_identidade(destino):
+    contexto = replace(EMPRESA, nome="Á" * 200 + "/A", nome_contexto="É" * 200)
+    with abrir_empresa(destino, contexto) as pasta:
+        (pasta.parent / "ie_1601234530--outro").mkdir()
+    with abrir_empresa(destino, replace(contexto, nome="Á" * 200 + ":B")) as existente:
+        assert existente == pasta
+    outro = replace(contexto, documento="000000019")
+    with abrir_empresa(destino, outro) as distinta:
+        assert distinta != pasta
+        assert distinta.name.startswith("ie_000000019")
+        tamanho = len(str(distinta).encode("utf-16-le")) // 2
+        assert tamanho + armazenamento.RESERVA_ARQUIVOS <= armazenamento.LIMITE_CAMINHO
+
+
+@pytest.mark.parametrize("mudanca", [
+    {"contexto_id": ""}, {"contexto_id": "00000000-0000-0000-0000-000000000000"},
+    {"documento": "16012345A"}, {"documento": "160123450"}, {"documento": 160123453},
+    {"origem": "nfse_nacional"}, {"tipo_contexto": "../portal"},
+    {"origem": "nfse_nacional", "tipo_documento": "cnpj", "documento": "11ABC333000181"},
+])
+def test_rejeita_identidade_invalida(mudanca):
+    with pytest.raises(IdentidadeArmazenamentoInvalida):
+        replace(EMPRESA, **mudanca)
+
+
+@pytest.mark.parametrize("estado", ["ausente", "malformado", "versao", "identidade", "duplicado"])
+def test_conflito_ou_metadado_invalido_bloqueia_sem_reparar(destino, estado):
+    with abrir_empresa(destino, EMPRESA) as pasta:
+        metadados = pasta / "empresa.json"
+    if estado == "duplicado":
+        (pasta.parent / "ie_160123453--duplicada").mkdir()
+    elif estado == "ausente":
+        metadados.unlink()
+    elif estado == "malformado":
+        metadados.write_bytes(b"{")
+    else:
+        dados = json.loads(metadados.read_text(encoding="utf-8"))
+        if estado == "versao":
+            dados["versao"] = 1
+        else:
+            dados["identidade"]["documento"] = "000000019"
+        metadados.write_text(json.dumps(dados), encoding="utf-8")
+    anterior = metadados.read_bytes() if metadados.exists() else None
+    with pytest.raises(IdentidadeArmazenamentoInvalida):
+        with abrir_empresa(destino, EMPRESA):
+            pytest.fail("A empresa ficou disponível com metadados ambíguos ou inválidos.")
+    assert (metadados.read_bytes() if metadados.exists() else None) == anterior
+
+
+def test_trava_entre_processos_e_liberacao_apos_erro(destino):
+    script = """
+import sys
+from armazenamento import ArmazenamentoOcupado, ContextoArmazenamento, abrir_empresa
+ctx = ContextoArmazenamento("portal", sys.argv[2], "sefaz_pb", "ie", "160123453", "Outro nome")
+try:
+    with abrir_empresa(sys.argv[1], ctx):
+        sys.exit(2)
+except ArmazenamentoOcupado:
+    sys.exit(0)
+"""
+    with pytest.raises(RuntimeError, match="interrompido"):
+        with abrir_empresa(destino, EMPRESA):
+            processo = subprocess.run(
+                [sys.executable, "-B", "-c", script, str(destino), ORG_A],
+                cwd=Path(armazenamento.__file__).parent, timeout=10, check=False,
+            )
+            assert processo.returncode == 0
+            raise RuntimeError("interrompido")
+    with abrir_empresa(destino, EMPRESA) as pasta:
+        assert pasta.is_dir()
+    assert not list((destino / PASTA_CONTEXTOS / "_travas").iterdir())
+
+
+def test_falha_ao_atualizar_metadados_preserva_versao_anterior(destino, monkeypatch):
+    with abrir_empresa(destino, EMPRESA) as pasta:
+        metadados = pasta / "empresa.json"
+        anterior = metadados.read_bytes()
+
+    def falhar(*args):
+        raise OSError("falha simulada antes da publicação")
+
+    monkeypatch.setattr(Path, "replace", falhar)
+    with pytest.raises(OSError, match="falha simulada"):
+        with abrir_empresa(destino, replace(EMPRESA, nome="Novo")):
+            pytest.fail("Metadados não publicados.")
+    assert metadados.read_bytes() == anterior
+    assert list(pasta.iterdir()) == [metadados]
+
+
+def test_raiz_longa_falha_antes_de_criar_pastas(destino):
+    longa = destino / ("x" * 120)
+    with pytest.raises(IdentidadeArmazenamentoInvalida, match="longo demais"):
+        with abrir_empresa(longa, EMPRESA):
+            pytest.fail("Caminho incompatível aceito.")
+    assert not longa.exists()
+
+
+def test_v2_recusa_redirecionamento_para_o_legado(destino):
+    legado = destino / "Arquivos baixados"
+    legado.mkdir()
+    redirecionamento = destino / PASTA_CONTEXTOS
+    if os.name == "nt":
+        subprocess.run(["cmd", "/c", "mklink", "/J", str(redirecionamento), str(legado)],
+                       check=True, capture_output=True, timeout=10)
+    else:
+        redirecionamento.symlink_to(legado, target_is_directory=True)
+    with pytest.raises(IdentidadeArmazenamentoInvalida):
+        with abrir_empresa(destino, EMPRESA):
+            pytest.fail("Redirecionamento aceito.")
+    assert not list(legado.iterdir())
+
+
+@pytest.mark.parametrize("tag", [0x9000001A, 0x9000F01A])
+def test_reabre_pasta_e_metadados_com_tags_cloud_files(destino, monkeypatch, tag):
+    with abrir_empresa(destino, EMPRESA) as pasta:
+        entradas_cloud = {pasta, pasta / "empresa.json"}
+
+    lstat_real = Path.lstat
+
+    def lstat_cloud(caminho):
+        dados = lstat_real(caminho)
+        if caminho in entradas_cloud:
+            return SimpleNamespace(st_mode=dados.st_mode, st_reparse_tag=tag,
+                                   st_file_attributes=stat.FILE_ATTRIBUTE_REPARSE_POINT)
+        return dados
+
+    monkeypatch.setattr(Path, "lstat", lstat_cloud)
+    with abrir_empresa(destino, replace(EMPRESA, nome="Nome atualizado")) as existente:
+        assert existente == pasta
+        dados = json.loads((existente / "empresa.json").read_text(encoding="utf-8"))
+        assert dados["rotulos_atuais"]["nome"] == "Nome atualizado"
+
+
+@pytest.mark.parametrize("tag, modo", [
+    (0xA000000C, stat.S_IFDIR),  # link simbólico com tipo aparentemente válido
+    (0xA0000003, stat.S_IFDIR),  # junction
+    (0x9000001C, stat.S_IFDIR),  # outra tag Microsoft sem redirecionamento
+    (0, stat.S_IFDIR),           # tag não informada
+    (0x9000001A, stat.S_IFREG),  # Cloud Files com tipo errado
+])
+def test_recusa_outras_tags_e_cloud_files_com_tipo_errado(destino, monkeypatch, tag, modo):
+    dados = SimpleNamespace(st_mode=modo, st_reparse_tag=tag,
+                            st_file_attributes=stat.FILE_ATTRIBUTE_REPARSE_POINT)
+    monkeypatch.setattr(Path, "lstat", lambda caminho: dados)
+    with pytest.raises(IdentidadeArmazenamentoInvalida):
+        armazenamento._validar_entrada(destino, stat.S_ISDIR)
+
+
+def test_contexto_local_exige_confirmacao_e_persiste(tmp_path, monkeypatch):
+    arquivo = tmp_path / "config.json"
+    monkeypatch.setattr(config, "ARQUIVO_CONFIG", arquivo)
+    original = '{"pastas": {"destino": "D:/XML"}, "armazenamento": {"local_nome": "Local A"}}'
+    arquivo.write_text(original, encoding="utf-8-sig")
+    anterior = arquivo.read_bytes()
+    with pytest.raises(config.ConfigInvalida, match="Confirme"):
+        config.carregar_contexto_local()
+    assert arquivo.read_bytes() == anterior
+    identificador, nome = config.carregar_contexto_local(confirmar_criacao=True)
+    dados = json.loads(arquivo.read_text(encoding="utf-8"))
+    assert dados["pastas"] == {"destino": "D:/XML"}
+    assert dados["armazenamento"] == {"local_id": identificador, "local_nome": "Local A"}
+    assert config.carregar_contexto_local() == (identificador, nome)
+
+
+def test_contexto_local_invalido_ou_sem_gravacao_nao_e_aceito(tmp_path, monkeypatch):
+    arquivo = tmp_path / "config.json"
+    monkeypatch.setattr(config, "ARQUIVO_CONFIG", arquivo)
+    invalido = b'{"armazenamento": {"local_id": "invalido"}}'
+    arquivo.write_bytes(invalido)
+    with pytest.raises(config.ConfigInvalida, match="UUID"):
+        config.carregar_contexto_local(confirmar_criacao=True)
+    assert arquivo.read_bytes() == invalido
+
+    def falhar(*args):
+        raise PermissionError("somente leitura")
+
+    arquivo.write_bytes(b"{}")
+    monkeypatch.setattr(config, "gravar_json_atomico", falhar)
+    with pytest.raises(config.ConfigInvalida, match="somente leitura"):
+        config.carregar_contexto_local(confirmar_criacao=True)
+    assert arquivo.read_bytes() == b"{}"
+    assert not list(tmp_path.glob("*.lock"))

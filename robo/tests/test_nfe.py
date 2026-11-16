@@ -231,7 +231,7 @@ def test_filas_de_api_rodam_varias_empresas_ao_mesmo_tempo():
            [{"id": "t8", "nome": "E0 de novo", "cnpj": f"{0:014d}"}]
     robo = robo_xml.Robo.__new__(robo_xml.Robo)
     robo.cfg, robo.nome, robo.parar = {"portal": {"intervalo_segundos": 0.05}}, "teste", False
-    robo._trava, robo._travas_cnpj = threading.Lock(), {}
+    robo._trava, robo._travas_empresa = threading.Lock(), {}
     em_curso, feitos, juntos, pico = {}, [], set(), [0]
     trava = threading.Lock()
 
