@@ -19,8 +19,10 @@ test('migração MEI/NFS-e, isolamento, fila e substituição de competências',
       grant usage on schema auth to authenticated; grant execute on function auth.uid() to authenticated;`);
     const schema = fs.readFileSync(path.join(__dirname, '../supabase/schema.sql'), 'utf8');
     const migration = fs.readFileSync(path.join(__dirname, '../supabase/migrations/20261112_mei_nfse.sql'), 'utf8');
-    await db.exec(schema);
-    await db.exec(migration); // reaplicação não pode apagar dados nem falhar
+    // Migrações antigas são reaplicadas antes das mais recentes; a fila atual acrescenta um campo à resposta.
+    await db.exec(schema.split('-- Descoberta cadastral e decisões de acompanhamento MEI')[0]);
+    await db.exec(migration);
+    await db.exec(schema); // consolidado atual reaplicável, sem apagar histórico
     await db.exec(`grant select on all tables in schema public to authenticated;
       insert into auth.users values ('${user}');
       insert into organizacoes(id,nome) values ('${org}','Escritório A'),('${outro}','Escritório B');

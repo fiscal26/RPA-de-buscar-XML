@@ -82,10 +82,21 @@ test('carteira com mais de mil empresas é carregada em páginas, inclusive o ú
   let paginas = 0;
   const supabase = { from: (tabela) => {
     const q = { select: () => q, gte: () => q, lte: () => q, order: () => q, contains: () => q,
-      range: async (de, ate) => { paginas++; return { data: tabelas[tabela].slice(de, ate + 1), error: null }; } };
+      range: async (de, ate) => { paginas++; return { data: (tabelas[tabela] ?? []).slice(de, ate + 1), error: null }; } };
     return q;
   } };
   const { meis, erros } = await carregarMeis(supabase, 2026);
   assert.equal(erros.length, 0); assert.equal(meis.length, 1200); assert.ok(paginas >= 8);
   assert.equal(meis.find((m) => m.ie === empresas[1199].ie).ano.faturamento.total, 2000);
+});
+
+test('decisão canônica exclui também marcação MEI legada e mantém acesso ao histórico',()=>{
+ for(const estado of ['pausado','ignorado']) {
+  const decisao={org_id:org,cnpj,estado,versao:1,origem:'manual',motivo:'Cliente não quer acompanhar'};
+  assert.deepEqual(consolidarCarteira(2026,[grupo],[vinculo],[],[],[],[decisao]),[]);
+  const [historico]=consolidarCarteira(2026,[grupo],[vinculo],[],[],[],[decisao],true);
+  assert.equal(historico.ano.faturamento.total,2000);assert.equal(historico.decisao.estado,estado);
+ }
+ const outra={org_id:'outro',cnpj,estado:'ignorado'};
+ assert.equal(consolidarCarteira(2026,[grupo],[vinculo],[],[],[],[outra]).length,1);
 });

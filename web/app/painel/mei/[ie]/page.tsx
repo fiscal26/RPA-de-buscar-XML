@@ -1,3 +1,4 @@
+import DadosCadastrais from "@/components/mei/DadosCadastrais";
 import Tabela from "@/components/ui/Tabela";
 import Icone from "@/components/Icones";
 import Link from "next/link";
@@ -24,7 +25,7 @@ export default async function PainelMei({ params, searchParams }: {
   const gerencia = admin || perfil.papel === "gestor";
   const atual = new Date().getFullYear();
   const ano = Number(sp.ano) >= 2018 && Number(sp.ano) <= atual ? Number(sp.ano) : atual;
-  const { meis: lista } = await carregarMeis(supabase, ano, ie);
+  const { meis: lista } = await carregarMeis(supabase, ano, ie, true);
   const mei = lista.find((m) => m.org === sp.org) ?? lista[0];
   if (!mei) notFound();
   const a = mei.ano;
@@ -56,7 +57,7 @@ export default async function PainelMei({ params, searchParams }: {
         </div>
         <div className="acoes-cabeca">
           <SeletorAno ano={ano} atual={atual} />
-          {gerencia && (
+          {gerencia && (!mei.decisao || mei.decisao.estado === "ativo") && (
             <form action={naoEhMei}>
               <input type="hidden" name="ie" value={mei.ie} />
               <input type="hidden" name="org" value={mei.org} />
@@ -66,14 +67,16 @@ export default async function PainelMei({ params, searchParams }: {
         </div>
       </div>
 
+      <DadosCadastrais supabase={supabase} org={mei.org} cnpj={mei.cnpj} decisao={mei.decisao} />
+
       {a.conferirFontes && <p className="faixa alerta">Há resumo antigo do ATF sem os tipos de documento.
         Até reprocessar o Dossiê MEI, usamos o maior valor entre esse resumo e as NFS-e, sem presumir que podem ser somados.
         O total é provisório e os alertas automáticos ficam suspensos para evitar duplicidade.</p>}
 
       {gerencia && <section className="cartao">
         <h2 className="titulo-cartao">Atualizar faturamento</h2>
-        <FormReprocessar org={mei.org} documento={mei.ie} competencia={`${ano}-${String(Math.max(a.ultimo, a.primeiroMes) + 1).padStart(2, "0")}`} />
-        <Link href="/painel/empresas#cadastro-mei" className="link-discreto">Editar enquadramento MEI</Link>
+        {(!mei.decisao || mei.decisao.estado === "ativo") && <FormReprocessar org={mei.org} documento={mei.ie} competencia={`${ano}-${String(Math.max(a.ultimo, a.primeiroMes) + 1).padStart(2, "0")}`} />}
+        <Link href={`/painel/mei/gerenciar?org=${mei.org}&cnpj=${mei.cnpj}#cadastro-mei`} className="link-discreto">Editar enquadramento MEI</Link>
       </section>}
 
       <div className={`faixa ${classeFaixa} faixa-mei`}>
@@ -166,7 +169,7 @@ export default async function PainelMei({ params, searchParams }: {
           Para receitas e compras que não aparecem nas consultas: vendas sem nota para pessoa física, serviços sem NFS-e, compras em outro estado.
           Use valor negativo para corrigir para menos. Entram no faturamento ou nas compras do mês.
         </p>
-        <FormAjuste org={mei.org} ie={mei.ie} ano={ano} mesPadrao={Math.max(a.ultimo, a.primeiroMes)} />
+        {(!mei.decisao || mei.decisao.estado === "ativo") ? <FormAjuste org={mei.org} ie={mei.ie} ano={ano} mesPadrao={Math.max(a.ultimo, a.primeiroMes)} /> : <p className="faixa alerta">Acompanhamento {mei.decisao.estado}. Histórico preservado; reative na gestão para voltar a consultar.</p>}
         {mei.ajustes.length > 0 && (
           <ul className="ajustes-lista">
             {mei.ajustes.map((j) => (

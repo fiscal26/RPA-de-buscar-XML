@@ -2,7 +2,7 @@
 
 import Formulario from "@/components/ui/Formulario";
 
-import { useActionState, useEffect, useState, useTransition } from "react";
+import { useActionState, useEffect, useRef, useState, useTransition } from "react";
 import Escolha from "@/components/ui/Escolha";
 import { dataBR, dataHoraBR, formatarDocumento } from "@/lib/documentos";
 import type { CadastroMei } from "@/lib/mei-carteira";
@@ -31,6 +31,7 @@ function CamposMei({ empresa, cadastro }: { empresa: Empresa; cadastro?: Cadastr
   useEffect(() => {
     if (estado?.ok) window.dispatchEvent(new Event("notificacoes:atualizar"));
   }, [estado]);
+  const tocados = useRef({ abertura: false, inicio: false });
   const [abertura, setAbertura] = useState(cadastro?.inicio_atividade ?? "");
   const [inicio, setInicio] = useState(cadastro?.inicio_mei.slice(0, 7) ?? "");
   const [fim, setFim] = useState(cadastro?.fim_mei?.slice(0, 7) ?? "");
@@ -38,6 +39,22 @@ function CamposMei({ empresa, cadastro }: { empresa: Empresa; cadastro?: Cadastr
   const [consulta, setConsulta] = useState<ResultadoCnpj>();
   const [consultando, iniciarConsulta] = useTransition();
   const [aplicado, setAplicado] = useState(false);
+  const possuiCadastro = !!cadastro;
+  useEffect(() => {
+    let atual = true;
+    iniciarConsulta(async () => {
+      try {
+        const r = await consultarCnpj(empresa.org, empresa.cnpj, false);
+        if (!atual) return;
+        setConsulta(r);
+        if (!possuiCadastro && r.dados?.mei === true && !r.aviso) {
+          if (!tocados.current.abertura && r.dados.abertura) setAbertura((v) => v || r.dados!.abertura!);
+          if (!tocados.current.inicio && r.dados.inicioMei) setInicio((v) => v || r.dados!.inicioMei!.slice(0, 7));
+        }
+      } catch { if (atual) setConsulta({ erro: "Consulta automática indisponível. Tente novamente ou preencha manualmente." }); }
+    });
+    return () => { atual = false; };
+  }, [empresa.org, empresa.cnpj, possuiCadastro]);
   const dados = consulta?.dados;
   const divergente = dados && ((cadastro?.inicio_atividade && dados.abertura && cadastro.inicio_atividade !== dados.abertura)
     || (cadastro?.inicio_mei && dados.inicioMei && cadastro.inicio_mei.slice(0, 7) !== dados.inicioMei.slice(0, 7))
@@ -83,8 +100,8 @@ function CamposMei({ empresa, cadastro }: { empresa: Empresa; cadastro?: Cadastr
       <label className="caixa-opcao"><input type="checkbox" name="ativo" checked={ativo} onChange={(e) => setAtivo(e.target.checked)} />
         Acompanhar esta empresa como MEI</label>
       <div className="grade-campos">
-        <label>Data de abertura<input type="date" name="abertura" value={abertura} onChange={(e) => setAbertura(e.target.value)} required /></label>
-        <label>MEI desde<input type="month" name="inicio" value={inicio} onChange={(e) => setInicio(e.target.value)} required /></label>
+        <label>Data de abertura<input type="date" name="abertura" value={abertura} onChange={(e) => { tocados.current.abertura = true; setAbertura(e.target.value); }} required /></label>
+        <label>MEI desde<input type="month" name="inicio" value={inicio} onChange={(e) => { tocados.current.inicio = true; setInicio(e.target.value); }} required /></label>
         <label>Último mês como MEI (opcional)<input type="month" name="fim" value={fim} onChange={(e) => setFim(e.target.value)} /></label>
       </div>
       <p className="suave">O cadastro vale para este CNPJ no escritório, tanto na SEFAZ quanto na NFS-e.

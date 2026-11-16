@@ -6,7 +6,7 @@ import { FRACAO_COMPRAS, LIMITE_ANO, MESES_LONGOS, NIVEIS, mil, pct, reais } fro
 import SeletorAno from "./SeletorAno";
 
 export default async function MonitoramentoMei({ searchParams }: { searchParams: Promise<{ ano?: string; filtro?: string }> }) {
-  const { supabase, admin } = await contexto();
+  const { supabase, admin, perfil } = await contexto();
   const atual = new Date().getFullYear();
   const sp = await searchParams;
   const pedido = Number(sp.ano);
@@ -51,7 +51,7 @@ export default async function MonitoramentoMei({ searchParams }: { searchParams:
             e R$ 64.800 de compras (proporcionais no ano de abertura).
           </p>
         </div>
-        <div className="acoes-cabeca"><Link href="/painel/empresas#cadastro-mei" className="botao secundario">Cadastrar ou editar MEI</Link><SeletorAno ano={ano} atual={atual} /></div>
+        <div className="acoes-cabeca">{(admin || perfil.papel === "gestor") && <><Link href="/painel/mei/gerenciar" className="botao">Trazer MEIs cadastrados</Link><Link href="/painel/mei/gerenciar#empresas-mei" className="botao secundario">Gerenciar acompanhamento</Link></>}<SeletorAno ano={ano} atual={atual} /></div>
       </div>
 
       {erros.length > 0 && (
@@ -90,8 +90,8 @@ export default async function MonitoramentoMei({ searchParams }: { searchParams:
         {meis.length === 0 ? (
           <div className="vazio-mei">
             <p><b>Nenhum MEI acompanhado em {ano}.</b></p>
-            <p className="suave">Cadastre uma prestadora como MEI em Empresas, ou marque “Dossiê MEI” na planilha da SEFAZ. Ela aparece mesmo antes da primeira consulta.</p>
-            <Link href="/painel/empresas#cadastro-mei" className="botao">Cadastrar MEI</Link>
+            <p className="suave">Verifique as empresas já cadastradas e confirme quais MEIs devem entrar. Novos CNPJs serão verificados automaticamente após a ativação do serviço.</p>
+            <Link href="/painel/mei/gerenciar" className="botao">Gerenciar acompanhamento</Link>
           </div>
         ) : (
           <div className="ranking" role="table" aria-label="MEIs por faturamento no ano">

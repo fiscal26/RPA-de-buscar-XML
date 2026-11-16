@@ -10,9 +10,42 @@ const certs=empresas.slice(0,12).map((e,i)=>({id:`cert-${i}`,org_id:e.org_id,cnp
 const monitores=empresas.slice(0,32).map((e,i)=>({...e,ciencia:true,ativo:true,status:i===1?'erro':'ok',mensagem:i===1?'O Ambiente Nacional está temporariamente indisponível. Uma nova consulta será realizada no horário programado.':'Consulta concluída. XML e DANFE organizados na pasta da empresa.',proxima_consulta:'2026-11-16T14:00:00Z',ultima_consulta:'2026-11-15T14:00:00Z',ultima_nota_em:'2026-11-15T13:45:00Z'}));
 const dados:Record<string,any[]>={organizacoes:orgs,xml_empresas:empresas,xml_nfse_empresas:empresas.slice(0,12).map(e=>({...e,tipos:['nfse_emitidas','nfse_recebidas']})),xml_agendamentos:ags,xml_tarefas:tarefas,xml_acessos:[{id:'acesso-1',login:'contador.exemplo',atualizado_em:'2026-11-13T12:00:00Z'}],xml_nfse_certificados:certs,xml_robos:[{id:'Robô XML',ultimo_sinal:new Date().toISOString()}],xml_nfe_monitor:monitores,xml_nfe_notas:empresas.slice(0,32).flatMap(e=>Array.from({length:3},(_,i)=>({org_id:e.org_id,cnpj:e.cnpj,valor:3200+i*173,situacao:'autorizada',emissao:'2026-11-12T12:00:00Z',encontrada_em:'2026-11-15T14:00:00Z'}))),xml_mei_cadastros:[]};
 function consulta(tabela:string) {
+ if(estadoGlobal.__meiInterface)Object.assign(dados,estadoGlobal.__meiInterface);
  let linhas=[...(dados[tabela]??[])],unica=false;
  const q:any={select:()=>q,order:()=>q,eq:(k:string,v:unknown)=>{linhas=linhas.filter(x=>x[k]===v);return q},neq:(k:string,v:unknown)=>{linhas=linhas.filter(x=>x[k]!==v);return q},in:(k:string,v:unknown[])=>{linhas=linhas.filter(x=>v.includes(x[k]));return q},limit:(n:number)=>{linhas=linhas.slice(0,n);return q},range:(a:number,b:number)=>{linhas=linhas.slice(a,b+1);return q},gte:()=>q,lte:()=>q,not:()=>q,is:()=>q,contains:()=>{linhas=[];return q},maybeSingle:()=>{unica=true;return q},single:()=>{unica=true;return q},then:(resolve:any,reject:any)=>Promise.resolve({data:unica?linhas[0]??null:linhas,error:null,count:linhas.length}).then(resolve,reject),insert:()=>{throw Error('Comparação: escrita desativada')},update:()=>{throw Error('Comparação: escrita desativada')},delete:()=>{throw Error('Comparação: escrita desativada')},upsert:()=>{throw Error('Comparação: escrita desativada')}};return q;
 }
-export async function contexto() {const perfil={id:'usuario-exemplo',org_id:'org-1',nome:'Marina Oliveira',email:'marina@example.invalid',papel:'admin' as const,ativo:true};return {supabase:{from:consulta} as unknown as SupabaseClient,user:{id:perfil.id},perfil,org:orgs[0],admin:true};}
+export async function contexto() {const perfil={id:'usuario-exemplo',org_id:'org-1',nome:'Marina Oliveira',email:'marina@example.invalid',papel:'admin' as const,ativo:true};return {supabase:interfaceDb as unknown as SupabaseClient,user:{id:perfil.id},perfil,org:orgs[0],admin:true};}
 export type Perfil={id:string;org_id:string|null;nome:string;email:string;papel:'admin'|'gestor'|'usuario';ativo:boolean};
 export type Organizacao={id:string;nome:string;ativo:boolean};
+
+// Estado fictício compartilhado apenas pelo servidor da cópia temporária de testes.
+const estadoGlobal=globalThis as unknown as {__meiInterface?:Record<string,any[]>};
+if(estadoGlobal.__meiInterface) Object.assign(dados,estadoGlobal.__meiInterface);
+else {
+ dados.xml_mei_worker=[{ultimo_sinal:new Date().toISOString()}];
+ dados.xml_mei_acompanhamento=[];dados.xml_mei_sincronizacoes=[];dados.xml_mei_sincronizacao_itens=[];
+ estadoGlobal.__meiInterface=dados;
+}
+export const interfaceDb={from:consulta,async rpc(nome:string,p:Record<string,any>) {
+ const estado=estadoGlobal.__meiInterface!;
+ if(nome==='xml_cnpja_reservar')return {data:{status:'aguardar',segundos:13},error:null};
+ if(nome==='xml_mei_enfileirar'){
+  const id='lote-teste';estado.xml_mei_sincronizacoes=[{id,org_id:'org-1',origem:'manual',estado:'concluido',criado_em:new Date().toISOString()}];
+  estado.xml_mei_sincronizacao_itens=empresas.slice(0,3).map((e,i)=>({id:`item-${i}`,lote_id:id,org_id:e.org_id,cnpj:e.cnpj,nome:e.nome,resultado:i<2?'elegivel':'revisar',mensagem:i<2?'SIMEI confirmado na base consultada.':'Início no SIMEI não informado. Confira antes de incluir.',dados:{cnpj:e.cnpj,mei:true,abertura:'2024-01-15',inicioMei:i<2?'2024-02-01':null,atualizadoEm:'2026-11-15T12:00:00Z'},consultado_em:new Date().toISOString(),decisao_versao:0,criado_em:new Date().toISOString()}));
+  Object.assign(dados,estado);return {data:id,error:null};
+ }
+ if(nome==='xml_mei_confirmar_lote'){
+  let n=0;for(const i of estado.xml_mei_sincronizacao_itens)if(i.resultado==='elegivel'&&p.p_cnpjs.includes(i.cnpj)){
+   i.resultado='incluido';n++;estado.xml_mei_cadastros.push({org_id:'org-1',cnpj:i.cnpj,nome:i.nome,ativo:true,inicio_atividade:i.dados.abertura,inicio_mei:i.dados.inicioMei,fim_mei:null});
+   estado.xml_mei_acompanhamento.push({org_id:'org-1',cnpj:i.cnpj,estado:'ativo',origem:'lote',motivo:'',versao:1});
+  }Object.assign(dados,estado);return {data:{incluido:n},error:null};
+ }
+ if(nome==='xml_mei_decidir'){
+  const anterior=estado.xml_mei_acompanhamento.find((d:any)=>d.cnpj===p.p_cnpj);
+  const decisao={org_id:'org-1',cnpj:p.p_cnpj,estado:p.p_acao==='ignorar'?'ignorado':p.p_acao==='pausar'?'pausado':'ativo',origem:'manual',motivo:p.p_motivo,versao:(anterior?.versao??0)+1};
+  estado.xml_mei_acompanhamento=estado.xml_mei_acompanhamento.filter((d:any)=>d.cnpj!==p.p_cnpj).concat(decisao);
+  for(const c of estado.xml_mei_cadastros)if(c.cnpj===p.p_cnpj)c.ativo=decisao.estado==='ativo';
+  Object.assign(dados,estado);return {data:decisao,error:null};
+ }
+ throw new Error('Escrita fictícia não prevista neste teste');
+}};

@@ -1177,3 +1177,16 @@ progress.progresso-nativo::-moz-progress-bar { background: var(--carimbo); borde
 @container (max-width: 700px) {
   .tabela-adaptavel tbody td:has(.tarefa-detalhe[open]) { grid-column: 1 / -1; }
 }
+
+/* Gestão MEI: cartões legíveis também no celular e progresso nativo. */
+.mei-gestao { margin-block: 1.25rem; padding: clamp(1rem, 3vw, 1.75rem); }
+.mei-gestao h2 { margin-top: 0; }
+.mei-verificacao { border-top: 1px solid var(--linha); padding-block: 1rem; overflow-wrap: anywhere; }
+.mei-verificacao p { margin-block: .45rem; }
+.mei-verificacoes { max-height: 34rem; overflow-y: auto; scrollbar-gutter: stable; margin-block: 1rem; padding-inline: .25rem; }
+.mei-progresso { width: 100%; height: .8rem; accent-color: var(--primaria, #0b6961); }
+.mei-decisao { margin-block: .75rem; }
+.mei-decisao summary { cursor: pointer; padding-block: .5rem; }
+.mei-decisao .formulario { max-width: 36rem; }
+.mei-gestao select { max-width: 100%; }
+@media (max-width: 600px) { .mei-gestao .linha { align-items: stretch; flex-direction: column; } .mei-gestao .linha > label { width: 100%; } }
