@@ -9,6 +9,7 @@ import { verificarAlertasMei } from "@/lib/alertas-mei";
 import { contexto } from "@/lib/sessao";
 import { clienteAdmin } from "@/lib/supabase/admin";
 import { carregarMeis } from "@/lib/mei-dados";
+import { schemaMeiAusente } from "@/lib/mei-descoberta";
 import { cnpjValido } from "@/lib/documentos";
 
 export type EstadoAjuste = { erro?: string; ok?: string } | undefined;
@@ -53,10 +54,18 @@ export async function salvarCadastroMei(_: EstadoAjuste, form: FormData): Promis
   const mesValido = (m: string) => /^\d{4}-(0[1-9]|1[0-2])$/.test(m);
   if (!dataValida || abertura > hoje || !mesValido(inicio) || inicio < abertura.slice(0, 7) || inicio > hoje.slice(0, 7)
     || (fim && (!mesValido(fim) || fim < inicio))) return { erro: "Confira a data de abertura e o período de enquadramento MEI." };
-  const { error } = await clienteAdmin().from("xml_mei_cadastros").upsert({ org_id: org, cnpj, nome,
-    ativo: form.get("ativo") === "on", inicio_atividade: abertura, inicio_mei: inicio + "-01", fim_mei: fim ? fim + "-01" : null,
-    atualizado_por: user.id, atualizado_em: new Date().toISOString() }, { onConflict: "org_id,cnpj" });
-  if (error) return { erro: "Não foi possível salvar o cadastro MEI. Confira se a atualização do banco foi aplicada." };
+  const db = clienteAdmin();
+  const decisao = await db.rpc("xml_mei_decidir", { p_org: org, p_cnpj: cnpj, p_usuario: user.id,
+    p_acao: form.get("ativo") === "on" ? "salvar" : "salvar_pausado", p_abertura: abertura,
+    p_inicio: inicio + "-01", p_fim: fim ? fim + "-01" : null });
+  if (decisao.error && !schemaMeiAusente(decisao.error)) return { erro: decisao.error.message };
+  // Compatibilidade enquanto o administrador aplica a migração no banco.
+  if (decisao.error) {
+    const { error } = await db.from("xml_mei_cadastros").upsert({ org_id: org, cnpj, nome,
+      ativo: form.get("ativo") === "on", inicio_atividade: abertura, inicio_mei: inicio + "-01", fim_mei: fim ? fim + "-01" : null,
+      atualizado_por: user.id, atualizado_em: new Date().toISOString() }, { onConflict: "org_id,cnpj" });
+    if (error) return { erro: "Não foi possível salvar o cadastro MEI. Confira a atualização do banco." };
+  }
   revalidatePath("/painel/empresas"); revalidatePath("/painel/mei", "layout");
   return { ok: "Cadastro MEI salvo. O monitoramento já considera este período; os valores serão atualizados na próxima consulta." };
 }
@@ -110,12 +119,19 @@ export async function removerAjuste(form: FormData) {
 
 /** Pausa o acompanhamento, sem apagar faturamento, ajustes ou alertas anteriores. */
 export async function naoEhMei(form: FormData) {
-  const { perfil, admin } = await contexto();
+  const { perfil, admin, user, supabase } = await contexto();
   if (!admin && perfil.papel !== "gestor") return;
   const ie = String(form.get("ie") ?? "");
   const org = admin ? String(form.get("org") ?? "") : perfil.org_id ?? "";
   if (!/^(\d{9}|\d{14})$/.test(ie) || !org) return;
   const db = clienteAdmin();
+  const { data: vinculo } = ie.length === 9 ? await supabase.from("xml_empresas").select("cnpj").eq("org_id", org).eq("ie", ie).limit(1).maybeSingle() : { data: null };
+  const cnpj = ie.length === 14 ? ie : vinculo?.cnpj;
+  if (cnpj && cnpjValido(cnpj)) {
+    const r = await db.rpc("xml_mei_decidir", { p_org: org, p_cnpj: cnpj, p_usuario: user.id, p_acao: "pausar" });
+    if (r.error && !schemaMeiAusente(r.error)) throw new Error(r.error.message);
+    if (!r.error) { revalidatePath("/painel/mei", "layout"); revalidatePath("/painel/empresas"); redirect("/painel/mei"); }
+  }
   if (ie.length === 14) {
     const { error } = await db.from("xml_mei_cadastros").update({ ativo: false, atualizado_em: new Date().toISOString() })
       .eq("org_id", org).eq("cnpj", ie);

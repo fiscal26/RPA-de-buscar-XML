@@ -1,10 +1,11 @@
 import "server-only";
+import { schemaMeiAusente, type DecisaoMei } from "./mei-acompanhamento";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { type Ajuste, type AnoMei, type MesAtf } from "@/lib/mei";
 import { consolidarCarteira, type CadastroMei, type MesNfse } from "@/lib/mei-carteira";
 
 export type MeiCarteira = { org: string; ie: string; cnpj: string; aliases: string[]; nome: string;
-  cadastro?: CadastroMei; ano: AnoMei; ajustes: Ajuste[]; meses: MesAtf[] };
+  cadastro?: CadastroMei; decisao?: DecisaoMei; ano: AnoMei; ajustes: Ajuste[]; meses: MesAtf[] };
 type TarefaMei = { org_id: string; ie: string; nome: string; concluido_em: string | null;
   detalhes: { mei?: { saidas?: number | null; entradas?: number | null; cartao?: number | null; sem_movimento?: boolean; limite_ano?: number;
     mensagem?: string } } | null;
@@ -27,7 +28,7 @@ async function lerTodas<T>(q: { range: (inicio: number, fim: number) => PromiseL
  * Com `ie`, só aquele MEI. Ordem: maior faturamento no ano primeiro. `erros`: consultas que o banco recusou
  * (por exemplo, schema.sql ainda não atualizado).
  */
-export async function carregarMeis(supabase: SupabaseClient, ano: number, ie?: string): Promise<{ meis: MeiCarteira[]; erros: string[] }> {
+export async function carregarMeis(supabase: SupabaseClient, ano: number, ie?: string, mostrarPausados = false): Promise<{ meis: MeiCarteira[]; erros: string[] }> {
   const de = `${ano}-01-01`, ate = `${ano}-12-01`;
   let qMeses = supabase.from("xml_mei_meses")
     .select("org_id, ie, nome, competencia, saidas, entradas, qtd_saidas, qtd_entradas, cartao, qtd_cartao, sem_movimento, simei, inicio_atividade, itens, consultado_em")
@@ -41,12 +42,14 @@ export async function carregarMeis(supabase: SupabaseClient, ano: number, ie?: s
   let qTarefas = supabase.from("xml_tarefas").select("org_id, ie, nome, detalhes, concluido_em, xml_agendamentos!inner(competencia)")
     .contains("tipos", ["mei"]).gte("xml_agendamentos.competencia", de).lte("xml_agendamentos.competencia", ate)
     .order("concluido_em", { ascending: true }).order("id");
-  const [rMeses, rAjustes, rEmpresas, rTarefas, rCadastros, rNfse] = await Promise.all([lerTodas(qMeses), lerTodas(qAjustes), lerTodas(qEmpresas), lerTodas(qTarefas),
+  const [rMeses, rAjustes, rEmpresas, rTarefas, rCadastros, rNfse, rDecisoes] = await Promise.all([lerTodas(qMeses), lerTodas(qAjustes), lerTodas(qEmpresas), lerTodas(qTarefas),
     lerTodas(supabase.from("xml_mei_cadastros").select("org_id, cnpj, nome, ativo, inicio_atividade, inicio_mei, fim_mei").order("org_id").order("cnpj")),
     lerTodas(supabase.from("xml_mei_nfse_meses").select("org_id, cnpj, competencia, valor, quantidade, consultado_em, iniciado_em")
       .gte("competencia", de).lte("competencia", ate).order("org_id").order("cnpj").order("competencia")),
+    lerTodas(supabase.from("xml_mei_acompanhamento").select("org_id, cnpj, estado, origem, motivo, versao").order("org_id").order("cnpj")),
   ]);
   const erros = [rMeses, rAjustes, rEmpresas, rTarefas, rCadastros, rNfse].map((r) => r.error?.message).filter(Boolean) as string[];
+  if (rDecisoes.error && !schemaMeiAusente(rDecisoes.error)) erros.push(rDecisoes.error.message);
   const meses = rMeses.data, ajustes = rAjustes.data, empresas = rEmpresas.data;
 
   const chave = (o: string, i: string) => `${o}|${i}`;
@@ -94,12 +97,12 @@ export async function carregarMeis(supabase: SupabaseClient, ano: number, ie?: s
     const cnpj = (empresas ?? []).find((e) => e.org_id === g.org && e.ie === g.ie)?.cnpj;
     const explicito = (rCadastros.data ?? []).some((c) => c.org_id === g.org && c.cnpj === cnpj && c.ativo);
     const foiMei = g.meses.some((m) => m.simei === true);
-    if (!explicito && (desmarcadas.has(k) || (!foiMei && (naoMei.get(k) || g.meses.some((m) => m.simei === false))))) grupos.delete(k);
+    if (!mostrarPausados && !explicito && (desmarcadas.has(k) || (!foiMei && (naoMei.get(k) || g.meses.some((m) => m.simei === false))))) grupos.delete(k);
   }
 
   // maior faturamento primeiro
   const meis = consolidarCarteira(ano, [...grupos.values()], empresas ?? [],
-    (rCadastros.data ?? []) as CadastroMei[], (rNfse.data ?? []) as MesNfse[], (ajustes ?? []) as Ajuste[])
+    (rCadastros.data ?? []) as CadastroMei[], (rNfse.data ?? []) as MesNfse[], (ajustes ?? []) as Ajuste[], (rDecisoes.data ?? []) as DecisaoMei[], mostrarPausados)
     .filter((m) => !ie || m.aliases.includes(ie));
   return { meis, erros };
 }

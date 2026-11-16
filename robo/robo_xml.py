@@ -1121,7 +1121,7 @@ def executar_nfse(cfg: dict, t: dict, privada, sessao_falsa=None) -> Resultado:
             meses_mei.append(nfse.resumo_mei(cnpj, competencia))
             # MEI (cadastrado como MEI na SEFAZ ou que emite NFS-e como MEI) que ainda não tinha o ano: os meses de
             # janeiro até a competência saem junto, somente onde ainda não há registro no banco
-            if anteriores and (t.get("mei") or nfse.eh_mei(cnpj)):
+            if anteriores and not t.get("mei_bloqueado", False) and (t.get("mei") or nfse.eh_mei(cnpj)):
                 for mes in anteriores:
                     extra = nfse.baixar_competencia(cliente, cnpj, mes, destino, t["nome"], codigo, atualizar=False,
                                                     **opcoes)

@@ -1,4 +1,5 @@
 import "server-only";
+import { schemaMeiAusente } from "./mei-acompanhamento";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { formatarDocumento } from "@/lib/documentos";
 
@@ -7,11 +8,11 @@ type Cadastro = { org_id: string; cnpj: string };
 type Empresa = Cadastro & { nome: string };
 
 // Leituras completas e ordenadas: não perder sugestões/cadastros após o limite de resposta do banco.
-async function lerTodas<T>(consulta: { range: (de: number, ate: number) => PromiseLike<{ data: T[] | null; error: unknown }> }) {
+async function lerTodas<T>(consulta: { range: (de: number, ate: number) => PromiseLike<{ data: T[] | null; error: { code?: string } | null }> }) {
   const itens: T[] = [];
   for (let de = 0; ; de += 500) {
     const { data, error } = await consulta.range(de, de + 499);
-    if (error) return null;
+    if (error) return schemaMeiAusente(error) ? [] : null;
     itens.push(...(data ?? []));
     if (!data || data.length < 500) return itens;
   }
@@ -40,12 +41,13 @@ export async function carregarLembretesCadastroMei(supabase: SupabaseClient, pod
   const deteccoes = await lerTodas(supabase.from("xml_tarefas").select("org_id, ie, nome, concluido_em")
     .contains("detalhes", { mei_nfse: { detectado_no_xml: true } }).order("org_id").order("ie").order("id"));
   if (!deteccoes?.length) return [];
-  const [cadastros, sefaz, nfse] = await Promise.all([
+  const [cadastros, sefaz, nfse, decisoes] = await Promise.all([
     lerTodas(supabase.from("xml_mei_cadastros").select("org_id, cnpj").order("org_id").order("cnpj")),
     lerTodas(supabase.from("xml_empresas").select("org_id, cnpj, nome").order("org_id").order("id")),
     lerTodas(supabase.from("xml_nfse_empresas").select("org_id, cnpj, nome").order("org_id").order("id")),
+    lerTodas(supabase.from("xml_mei_acompanhamento").select("org_id, cnpj").order("org_id").order("cnpj")),
   ]);
   // Uma falha ao ler cadastros não pode gerar lembretes incorretos de cadastro ausente.
-  if (!cadastros || !sefaz || !nfse) return [];
-  return lembretesCadastroMei(deteccoes, cadastros, [...nfse, ...sefaz], podeCadastrar);
+  if (!cadastros || !sefaz || !nfse || !decisoes) return [];
+  return lembretesCadastroMei(deteccoes, [...cadastros, ...(decisoes ?? [])], [...nfse, ...sefaz], podeCadastrar);
 }

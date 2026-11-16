@@ -1,3 +1,4 @@
+import type { DecisaoMei } from "./mei-acompanhamento";
 import { analisarAno, type Ajuste, type MesAtf } from "./mei";
 
 export type CadastroMei = {
@@ -10,9 +11,10 @@ export type GrupoMei = { org: string; ie: string; nome: string; meses: MesAtf[];
 type Vinculo = { org_id: string; ie: string; cnpj: string; nome: string };
 
 /** Um CNPJ por escritório. Meses/ajustes do ATF continuam identificados pela IE no banco. */
-export function consolidarCarteira(ano: number, grupos: GrupoMei[], vinculos: Vinculo[], cadastros: CadastroMei[], nfse: MesNfse[], ajustes: Ajuste[]) {
+export function consolidarCarteira(ano: number, grupos: GrupoMei[], vinculos: Vinculo[], cadastros: CadastroMei[], nfse: MesNfse[], ajustes: Ajuste[], decisoes: DecisaoMei[] = [], mostrarPausados = false) {
   const chave = (org: string, doc: string) => `${org}|${doc}`;
   const porIe = new Map(vinculos.map((v) => [chave(v.org_id, v.ie), v]));
+  const decisoesPorCnpj = new Map(decisoes.map((d) => [chave(d.org_id, d.cnpj), d]));
   const cadastro = new Map(cadastros.map((c) => [chave(c.org_id, c.cnpj), c]));
   const carteira = new Map<string, GrupoMei & { cnpj: string; aliases: string[]; cadastro?: CadastroMei }>();
   function grupo(org: string, doc: string, nome: string) {
@@ -29,7 +31,7 @@ export function consolidarCarteira(ano: number, grupos: GrupoMei[], vinculos: Vi
     const alvo = grupo(g.org, g.ie, g.nome);
     alvo.meses.push(...g.meses); alvo.ajustes.push(...g.ajustes);
   }
-  for (const c of cadastros) if (c.ativo) grupo(c.org_id, c.cnpj, c.nome);
+  for (const c of cadastros) if (c.ativo || mostrarPausados) grupo(c.org_id, c.cnpj, c.nome);
   for (const m of nfse) {
     const g = carteira.get(chave(m.org_id, m.cnpj));
     if (!g) continue; // uma importação não cadastra automaticamente uma empresa como MEI
@@ -44,7 +46,9 @@ export function consolidarCarteira(ano: number, grupos: GrupoMei[], vinculos: Vi
   }
   return [...carteira.values()].filter((g) => {
     const c = g.cadastro;
-    return !c || (c.ativo && c.inicio_mei.slice(0, 4) <= String(ano) && (!c.fim_mei || c.fim_mei.slice(0, 4) >= String(ano)));
+    const decisao = decisoesPorCnpj.get(chave(g.org, g.cnpj));
+    if (!mostrarPausados && decisao && decisao.estado !== "ativo") return false;
+    return !c || ((c.ativo || mostrarPausados) && c.inicio_mei.slice(0, 4) <= String(ano) && (!c.fim_mei || c.fim_mei.slice(0, 4) >= String(ano)));
   }).map((g) => {
     const meses: MesAtf[] = [];
     for (let i = 1; i <= 12; i++) {
@@ -67,6 +71,6 @@ export function consolidarCarteira(ano: number, grupos: GrupoMei[], vinculos: Vi
     const c = g.cadastro;
     const noPeriodo = (ref: string) => !c || (ref.slice(0, 7) >= c.inicio_mei.slice(0, 7) && (!c.fim_mei || ref.slice(0, 7) <= c.fim_mei.slice(0, 7)));
     const visiveis = meses.filter((m) => noPeriodo(m.competencia));
-    return { ...g, nome: c?.nome || g.nome, meses: visiveis, ano: analisarAno(ano, visiveis, g.ajustes, c) };
+    return { ...g, decisao: decisoesPorCnpj.get(chave(g.org, g.cnpj)), nome: c?.nome || g.nome, meses: visiveis, ano: analisarAno(ano, visiveis, g.ajustes, c) };
   }).sort((a, b) => b.ano.faturamento.total - a.ano.faturamento.total || a.nome.localeCompare(b.nome));
 }

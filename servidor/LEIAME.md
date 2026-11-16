@@ -202,3 +202,14 @@ do `sudo lotivisse atualizar xml`, instale-as uma vez e reinicie:
 sudo -u lotivisse /home/lotivisse/xml/venv/bin/pip install -q -r /home/lotivisse/xml/app/servidor/requirements.txt
 sudo systemctl restart lotivisse-robo@xml
 ```
+
+## Verificação automática de cadastro MEI
+
+Após aplicar a migração MEI de 16/11/2026 no Supabase do portal XML, atualize o código e instale o serviço separado:
+
+```bash
+sudo lotivisse atualizar xml
+sudo bash /home/lotivisse/xml/app/servidor/instalar_mei.sh
+```
+
+Detalhes de ativação, compatibilidade e diagnóstico: [Cadastro e acompanhamento MEI](../web/supabase/MEI-DESCOBERTA.md).

@@ -483,3 +483,14 @@ def test_falha_ao_ler_historico_nao_consulta_api_nem_grava_zero(monkeypatch):
     robo_xml.Robo._uma_nfse(robo, {"id":"t", "cnpj":DONO, "nome":"MEI", "data_inicio":"2026-09-01", "tipos":["nfse_emitidas"]})
     assert finalizados[0].status == "erro"
     assert "mei_nfse" not in finalizados[0].detalhes
+
+
+def test_mei_pausado_nao_amplia_ano_por_indicacao_no_xml(chaves, cfg_nfse, tmp_path):
+    """A decisão do escritório prevalece sobre a marcação antiga e sobre o XML."""
+    import robo_xml
+    t = {**tarefa(chaves, ["nfse_emitidas"]), "mei": True, "mei_bloqueado": True}
+    r = robo_xml.executar_nfse(cfg_nfse, t, chaves[0], sessao_falsa=PortalFalso(_docs_mei()))
+    base = tmp_path / "destino" / "Arquivos baixados" / "7-Lotivisse"
+    assert (base / "092026").is_dir()
+    assert not (base / "072026").exists() and not (base / "022026").exists()
+    assert "meses anteriores" not in r.mensagem

@@ -61,3 +61,9 @@ test('colaborador recebe orientação para o gestor, sem link para formulário r
  const [aviso]=lembretesCadastroMei([d],[],[e],false);
  assert.match(aviso.texto,/Peça ao gestor/);assert.equal(aviso.link,'/painel/empresas');
 });
+
+test('exclusão canônica sem datas elimina o lembrete e falha de leitura não o recria',async()=>{
+ const dados={xml_tarefas:[d],xml_mei_cadastros:[],xml_empresas:[e],xml_nfse_empresas:[],xml_mei_acompanhamento:[{org_id:'a',cnpj,estado:'ignorado'}]};
+ assert.deepEqual(await carregarLembretesCadastroMei(cliente(dados)),[]);
+ assert.deepEqual(await carregarLembretesCadastroMei(cliente(dados,'xml_mei_acompanhamento')),[]);
+});

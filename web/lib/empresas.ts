@@ -2,7 +2,7 @@ export type LinhaEmpresa = {
   org_id: string;
   id: string; origem: "sefaz" | "nfse"; nome: string; fixo: boolean; cnpj: string; codigo: string;
   escritorio: string; ie?: string; servicos: string; acesso: string; acessoDetalhe: string;
-  acessoClasse: string; pendencia: boolean; mei: "ativo" | "pausado" | "ausente" | "indisponivel";
+  acessoClasse: string; pendencia: boolean; mei: "ativo" | "pausado" | "ignorado" | "ausente" | "indisponivel";
 };
 
 

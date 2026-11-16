@@ -6,6 +6,7 @@ import { nomeTipo } from "@/lib/xml";
 import ListaEmpresas from "./ListaEmpresas";
 import { agruparEmpresas, type LinhaEmpresa } from "@/lib/empresas";
 import FormCadastroMei from "../mei/FormCadastroMei";
+import { schemaMeiAusente, lerTodosMei, type DecisaoMei } from "@/lib/mei-acompanhamento";
 import type { CadastroMei } from "@/lib/mei-carteira";
 
 type Empresa = {
@@ -20,13 +21,14 @@ export default async function Empresas({ searchParams }: { searchParams: Promise
   const solicitada = (await searchParams).mei;
   const { supabase, admin, perfil } = await contexto();
   // Senhas e certificados cifrados não são lidos nesta tela.
-  const [{ data: e }, { data: a }, { data: n }, { data: c }, rMei, rSugestoes] = await Promise.all([
+  const [{ data: e }, { data: a }, { data: n }, { data: c }, rMei, rSugestoes, rDecisoes] = await Promise.all([
     supabase.from("xml_empresas").select("*, xml_acessos(login), organizacoes(nome)").order("nome"),
     supabase.from("xml_acessos").select("id, login, atualizado_em").order("login"),
     supabase.from("xml_nfse_empresas").select("id, org_id, cnpj, codigo, nome, nome_fixo, tipos, organizacoes(nome)").order("nome"),
     supabase.from("xml_nfse_certificados").select("org_id, cnpj, validade, procurador"),
     supabase.from("xml_mei_cadastros").select("org_id, cnpj, nome, ativo, inicio_atividade, inicio_mei, fim_mei"),
     supabase.from("xml_tarefas").select("org_id, ie").contains("detalhes", { mei_nfse: { detectado_no_xml: true } }).limit(10000),
+    lerTodosMei<DecisaoMei>(supabase.from("xml_mei_acompanhamento").select("org_id,cnpj,estado,origem,motivo,versao").order("org_id").order("cnpj")),
   ]);
   const empresas = (e ?? []) as unknown as Empresa[];
   const acessos = (a ?? []) as Acesso[];
@@ -38,7 +40,9 @@ export default async function Empresas({ searchParams }: { searchParams: Promise
       escritorio: admin ? x.organizacoes?.nome ?? "" : "",
       sugestao: (rSugestoes.data ?? []).some((t) => t.org_id === x.org_id && t.ie === x.cnpj) }])).values()];
   function situacaoMei(org: string, cnpj: string): LinhaEmpresa["mei"] {
-    if (rMei.error) return "indisponivel";
+    if (rMei.error || (rDecisoes.error && !schemaMeiAusente(rDecisoes.error))) return "indisponivel";
+    const decisao = rDecisoes.data.find((d) => d.org_id === org && d.cnpj === cnpj);
+    if (decisao) return decisao.estado;
     const cadastro = cadastros.find((m) => m.org_id === org && m.cnpj === cnpj);
     return cadastro ? cadastro.ativo ? "ativo" : "pausado" : "ausente";
   }
@@ -66,7 +70,7 @@ export default async function Empresas({ searchParams }: { searchParams: Promise
   return <>
     <header className="empresas-cabecalho">
       <div><h1>Empresas</h1><p className="suave">{agrupadas.length} empresas · SEFAZ e NFS-e</p></div>
-      <Link className="botao" href="/painel/agendar">Importar empresas</Link>
+      <div className="linha">{(admin || perfil.papel === "gestor") && <Link className="botao secundario" href="/painel/mei/gerenciar">Gerenciar MEIs</Link>}<Link className="botao" href="/painel/agendar">Importar empresas</Link></div>
     </header>
     <ListaEmpresas empresas={agrupadas} />
     {(admin || perfil.papel === "gestor") && <details className="empresas-painel" open={!!empresaInicial}>
@@ -90,7 +94,7 @@ export default async function Empresas({ searchParams }: { searchParams: Promise
           O acesso NFS-e usa o certificado da empresa, da matriz ou do escritório com procuração no e-CAC.
           Gerencie os certificados em <Link href="/painel/certificados">Certificados</Link>.</p>
         {!!acessos.length && <ul>{acessos.map((x) => <li key={x.id}>ATF {x.login} · senha atualizada em {dataHoraBR(x.atualizado_em)}</li>)}</ul>}
-        <p>A coluna MEI mostra o cadastro manual. Empresas detectadas pelo ATF continuam sendo acompanhadas no <Link href="/painel/mei">Monitoramento MEI</Link>.</p>
+        <p>A coluna MEI mostra a decisão de acompanhamento do escritório. Empresas detectadas pelo ATF continuam sendo acompanhadas no <Link href="/painel/mei">Monitoramento MEI</Link>.</p>
       </div>
     </details>
   </>;

@@ -2,8 +2,8 @@
 
 Depois de `npm ci`, execute `npm run test:interface`. A suíte usa o Chromium do sistema (quando existe em `/usr/bin/chromium`) ou o navegador instalado pelo Playwright (`npx playwright install chromium`). É possível indicar outro executável com `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`.
 
-O teste cria uma cópia temporária do portal, ignora arquivos `.env` e `.vercel`, substitui a sessão apenas nessa cópia e usa empresas fictícias de `fixtures/interface-session.ts.txt`. Toda gravação é recusada. O código de autenticação entregue para produção continua sendo o original; não existe modo de demonstração ou acesso sem login no aplicativo.
+O teste cria uma cópia temporária do portal, ignora arquivos `.env` e `.vercel`, substitui a sessão apenas nessa cópia e usa empresas fictícias de `fixtures/interface-session.ts.txt`. Gravações externas são recusadas. O fluxo MEI usa um backend fictício em memória, compartilhado apenas na cópia temporária, para exercitar as ações reais de criar lote, confirmar seleção e ignorar CNPJ. O código de autenticação entregue para produção continua sendo o original; não existe modo de demonstração ou acesso sem login no aplicativo.
 
-São exercitados validação e recuperação de erros, seleção por teclado, certificados desativados, prévia NFS-e, busca e paginação, detalhes por toque, tema escuro, acessibilidade automática com axe, recuperação de notificações e alternativa sem Popover/Anchor Positioning.
+São exercitados o fluxo de lote MEI e a persistência de decisões na sessão fictícia, validação e recuperação de erros, seleção por teclado, certificados desativados, prévia NFS-e, busca e paginação, detalhes por toque, tema escuro, acessibilidade automática com axe, recuperação de notificações e alternativa sem Popover/Anchor Positioning.
 
 A suíte não consulta SEFAZ, Portal Nacional nem banco de produção. Os resultados automáticos não substituem uma auditoria manual completa com leitores de tela.

@@ -1,4 +1,4 @@
-// Executa o portal em uma cópia temporária, sem credenciais e sem permitir gravações.
+// Executa uma cópia temporária sem credenciais; MEI usa escritas apenas em memória fictícia.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -29,6 +29,7 @@ async function acessivel(page) {
   }});
   fs.symlinkSync(path.join(root, 'node_modules'), path.join(ambiente, 'node_modules'), 'dir');
   fs.copyFileSync(path.join(__dirname, 'fixtures/interface-session.ts.txt'), path.join(ambiente, 'lib/sessao.ts'));
+  fs.writeFileSync(path.join(ambiente, "lib/supabase/admin.ts"), 'import { interfaceDb } from "../sessao"; export function clienteAdmin() { return interfaceDb; }');
   fs.writeFileSync(path.join(ambiente, 'middleware.ts'), 'import { NextResponse } from "next/server"; export function middleware() { return NextResponse.next(); }');
   const porta = await portaLivre();
   const url = `http://127.0.0.1:${porta}`;
@@ -49,6 +50,33 @@ async function acessivel(page) {
   const contexto = await navegador.newContext({ viewport: { width: 1440, height: 1000 }, locale: 'pt-BR', reducedMotion: 'reduce' });
   const page = await contexto.newPage();
   const erros = []; page.on('pageerror', (e) => erros.push(e.message));
+  await teste('Gestão MEI verifica lote, permite desmarcar e confirma só a seleção, sem dados reais', async () => {
+    await page.goto(`${url}/painel/mei/gerenciar`);
+    await page.getByRole('button', {name:'Trazer MEIs cadastrados', exact:true}).click();
+    await page.getByRole('progressbar',{name:'Verificação dos CNPJs'}).waitFor();
+    const selecionar=page.getByRole('checkbox',{name:'Incluir Mercado Sol no monitoramento',exact:true});await selecionar.uncheck();
+    assert.ok(await page.getByRole('button',{name:'Incluir 1 MEI selecionado'}).isEnabled());
+    await acessivel(page);
+    await page.getByRole('button',{name:'Incluir 1 MEI selecionado'}).click();
+    await page.getByText(/Empresas incluídas: 1/).waitFor();
+    const filtragem=page.getByRole('combobox',{name:'Acompanhamento',exact:true});await filtragem.selectOption('ativo');
+    assert.equal(await page.locator('#empresas-mei article').count(),1);
+    assert.ok((await page.locator('#empresas-mei article').innerText()).includes('Ateliê Ponto Fino'));
+    await page.getByRole('button',{name:'Confirmar decisão'}).count();
+    const empresa=page.locator('#empresas-mei article').first();await empresa.getByText('Alterar acompanhamento',{exact:true}).click();
+    await empresa.getByRole('combobox',{name:'Decisão',exact:true}).selectOption('ignorar');
+    await empresa.getByRole('textbox',{name:'Motivo (opcional)'}).fill('CNPJ incluído por engano');
+    await empresa.getByRole('button',{name:'Confirmar decisão'}).click();
+    await filtragem.selectOption('ignorado');await page.getByText('CNPJ incluído por engano',{exact:false}).first().waitFor();
+    await page.reload();await page.getByRole('combobox',{name:'Acompanhamento',exact:true}).selectOption('ignorado');
+    assert.equal(await page.locator('#empresas-mei article').count(),1);
+    await page.setViewportSize({width:390,height:844});await acessivel(page);
+    assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+    await page.screenshot({path:path.join(pasta,'mei-celular.png'),fullPage:true});
+    await page.setViewportSize({width:1440,height:1000});
+    await page.screenshot({path:path.join(pasta,'mei-computador.png'),fullPage:true});
+    const capturas='/tmp/xml-mei-capturas';fs.mkdirSync(capturas,{recursive:true});for(const nome of ['mei-celular.png','mei-computador.png'])fs.copyFileSync(path.join(pasta,nome),path.join(capturas,nome));
+  });
   await teste('Formulário vazio identifica os campos, preserva o foco e remove o erro após a correção', async () => {
     await page.goto(`${url}/login`);
     assert.equal(await page.locator('.validacao-resumo').count(), 0);
