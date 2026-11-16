@@ -170,7 +170,12 @@ function Campos({
       </div>
     );
   return (
-    <Formulario action={acao} className="formulario">
+    <Formulario
+      action={acao}
+      className="formulario"
+      // Respostas com erro também disparam reset de Server Actions; preserve as escolhas da tentativa.
+      onReset={(e) => e.preventDefault()}
+    >
       <input type="hidden" name="org_id" value={org} />
       <input type="hidden" name="origem" value={origem} />
       <label htmlFor="empresa-cnpj">
@@ -178,6 +183,7 @@ function Campos({
       </label>
       <div className="linha">
         <input
+          type="text"
           id="empresa-cnpj"
           name="cnpj"
           value={cnpj}
@@ -242,6 +248,7 @@ function Campos({
       )}
       <label htmlFor="empresa-nome">Nome da empresa</label>
       <input
+        type="text"
         id="empresa-nome"
         name="nome"
         value={nome}
@@ -259,6 +266,7 @@ function Campos({
       </p>
       <label htmlFor="empresa-codigo">Código no escritório (opcional)</label>
       <input
+        type="text"
         id="empresa-codigo"
         name="codigo"
         {...campo("codigo")}
@@ -271,6 +279,7 @@ function Campos({
             <label>
               Inscrição estadual da Paraíba
               <input
+                type="text"
                 name="ie"
                 {...campo("ie")}
                 inputMode="numeric"
@@ -280,29 +289,28 @@ function Campos({
             </label>
             <label>
               Código da filial (opcional)
-              <input name="filial" {...campo("filial")} maxLength={20} />
+              <input
+                type="text"
+                name="filial"
+                {...campo("filial")}
+                maxLength={20}
+              />
             </label>
           </div>
           <label htmlFor="empresa-acesso">Login já cadastrado</label>
-          <select
+          <Escolha
             id="empresa-acesso"
-            required
-            value={acesso}
-            onChange={(e) => {
-              setAcesso(e.target.value);
+            rotulo="Login já cadastrado"
+            valor={acesso}
+            aoMudar={(v) => {
+              setAcesso(v);
               setCampos((c) => ({ ...c, login: "", senha: "" }));
             }}
-          >
-            <option value="" disabled>
-              Escolha um acesso
-            </option>
-            <option value="novo">Cadastrar novo login ATF</option>
-            {acessos.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.login}
-              </option>
-            ))}
-          </select>
+            opcoes={[
+              { id: "novo", titulo: "Cadastrar novo login ATF" },
+              ...acessos.map((a) => ({ id: a.id, titulo: a.login })),
+            ]}
+          />
           <input
             type="hidden"
             name="acesso_id"
@@ -313,6 +321,7 @@ function Campos({
               <label>
                 Novo login ATF
                 <input
+                  type="text"
                   name="login"
                   {...campo("login")}
                   maxLength={60}

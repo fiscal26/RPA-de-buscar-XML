@@ -1196,3 +1196,5 @@ progress.progresso-nativo::-moz-progress-bar { background: var(--carimbo); borde
 .cadastro-servicos { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: .5rem 1rem; }
 .cadastro-individual .linha > input { flex: 1; min-width: 0; }
 @media (max-width: 600px) { .cadastro-individual .linha { flex-direction: column; align-items: stretch; } }
+.cadastro-individual fieldset { border: 1px solid var(--linha); border-radius: var(--raio); padding: 1rem; margin: 1rem 0; }
+.cadastro-individual legend { font-weight: 600; color: var(--forte); padding-inline: .35rem; }
