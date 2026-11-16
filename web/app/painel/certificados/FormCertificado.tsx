@@ -1,5 +1,7 @@
 "use client";
 
+import Formulario from "@/components/ui/Formulario";
+
 import Escolha from "@/components/ui/Escolha";
 import SeletorArquivo from "@/components/ui/SeletorArquivo";
 import { useActionState, useEffect, useRef } from "react";
@@ -13,8 +15,8 @@ export default function FormCertificado({ organizacoes }: { organizacoes?: Org[]
   const form = useRef<HTMLFormElement>(null);
   useEffect(() => { if (estado?.ok) form.current?.reset(); }, [estado]);
   return (
-    <form ref={form} action={acao} className="formulario">
-      {estado && <div className={`faixa ${estado.erro ? "erro" : "ok"}`}>{estado.erro ?? estado.ok}</div>}
+    <Formulario ref={form} action={acao} className="formulario">
+      {estado && <div className={`faixa ${estado.erro ? "erro" : "ok"}`} role={estado.erro ? "alert" : "status"}>{estado.erro ?? estado.ok}</div>}
       <div className="grade-campos">
         {organizacoes && (
           <div>
@@ -44,6 +46,6 @@ export default function FormCertificado({ organizacoes }: { organizacoes?: Org[]
         </span>
       </label>
       <button type="submit" disabled={enviando}>{enviando ? "Conferindo…" : "Salvar certificado"}</button>
-    </form>
+    </Formulario>
   );
 }

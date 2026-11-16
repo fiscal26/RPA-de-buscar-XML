@@ -1,9 +1,10 @@
 "use client";
 
 import Tabela from "@/components/ui/Tabela";
+import Paginacao from "@/components/ui/Paginacao";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useDeferredValue, useState } from "react";
 import Icone from "@/components/Icones";
 import BotaoRemover from "../empresas/BotaoRemover";
 import { dataBR, dataHoraBR, formatarDocumento, iniciais } from "@/lib/documentos";
@@ -18,15 +19,17 @@ export type LinhaTabela = MonitorLinha & {
 /** Empresas monitoradas, da última nota encontrada para trás, com filtro por nome ou CNPJ. */
 export default function TabelaMonitor({ linhas, gerencia, admin }: { linhas: LinhaTabela[]; gerencia: boolean; admin: boolean }) {
   const [filtro, setFiltro] = useState("");
-  const termo = filtro.trim().toLowerCase();
+  const [pagina, setPagina] = useState(1);
+  const termo = useDeferredValue(filtro).trim().toLowerCase();
   const digitos = termo.replace(/\D/g, "");
   const visiveis = linhas.filter((x) => !termo || x.nome.toLowerCase().includes(termo) || (digitos && x.cnpj.includes(digitos))
     || x.codigo.toLowerCase() === termo);
+  const atual = Math.min(pagina, Math.max(1, Math.ceil(visiveis.length / 25)));
   return (
     <>
       <div className="cartao-topo">
         <input type="search" className="busca-monitor" placeholder="Filtrar por nome ou CNPJ" value={filtro}
-          onChange={(e) => setFiltro(e.target.value)} aria-label="Filtrar empresas monitoradas" />
+          onChange={(e) => { setFiltro(e.target.value); setPagina(1); }} aria-label="Filtrar empresas monitoradas" />
         <span className="suave">{visiveis.length} de {linhas.length}</span>
       </div>
       <Tabela rotulo="Empresas do Monitor Fiscal">
@@ -40,7 +43,7 @@ export default function TabelaMonitor({ linhas, gerencia, admin }: { linhas: Lin
             </tr>
           </thead>
           <tbody>
-            {visiveis.map((x) => {
+            {visiveis.slice((atual - 1) * 25, atual * 25).map((x) => {
               const s = SITUACAO_MONITOR[x.status] ?? SITUACAO_MONITOR.fila;
               return (
                 <tr key={x.id} className={x.ativo ? "" : "inativo"}>
@@ -62,7 +65,7 @@ export default function TabelaMonitor({ linhas, gerencia, admin }: { linhas: Lin
                   <td>{x.ultima_nota_em ? dataHoraBR(x.ultima_nota_em) : <span className="suave">—</span>}</td>
                   <td>
                     <span className={`status ${s.classe}`}>{s.nome}</span>
-                    {x.mensagem && <small className="mensagem-monitor suave" title={x.mensagem}>{x.mensagem}</small>}
+                    {x.mensagem && <details className="tarefa-detalhe"><summary>Ver detalhe<span className="sr"> de {x.nome}</span></summary><p>{x.mensagem}</p></details>}
                   </td>
                   <td>{x.status === "processando" ? <span className="suave">agora</span> : dataHoraBR(x.proxima_consulta)}</td>
                   <td>
@@ -92,6 +95,8 @@ export default function TabelaMonitor({ linhas, gerencia, admin }: { linhas: Lin
           </tbody>
         </table>
       </Tabela>
+      {!visiveis.length && <p className="listagem-vazia" role="status">Nenhuma empresa encontrada. Tente outro nome ou CNPJ.</p>}
+      <Paginacao total={visiveis.length} pagina={atual} aoMudar={setPagina} rotulo="Paginação do Monitor Fiscal" />
     </>
   );
 }

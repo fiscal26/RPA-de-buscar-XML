@@ -1,5 +1,7 @@
 "use client";
 
+import Formulario from "@/components/ui/Formulario";
+
 import Link from "next/link";
 import { useActionState } from "react";
 import Entrada from "@/components/Entrada";
@@ -11,12 +13,12 @@ export default function EsqueciSenha() {
     <Entrada>
       <h1>Esqueci minha senha</h1>
       <p className="entrada-sub">Informe o e-mail do seu acesso. Enviamos um link para você criar uma senha nova.</p>
-      {estado && <div className={`faixa ${estado.erro ? "erro" : "ok"}`}>{estado.erro ?? estado.ok}</div>}
-      <form action={acao} className="form-entrada">
+      {estado && <div className={`faixa ${estado.erro ? "erro" : "ok"}`} role={estado.erro ? "alert" : "status"}>{estado.erro ?? estado.ok}</div>}
+      <Formulario action={acao} className="form-entrada">
         <label htmlFor="email">E-mail</label>
         <input id="email" name="email" type="email" autoComplete="username" required />
         <button type="submit" className="grande" disabled={enviando}>{enviando ? "Enviando…" : "Enviar o link"}</button>
-      </form>
+      </Formulario>
       <p className="entrada-voltar"><Link href="/login">Voltar para o login</Link></p>
     </Entrada>
   );

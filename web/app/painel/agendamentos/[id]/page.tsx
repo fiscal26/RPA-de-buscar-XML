@@ -1,11 +1,12 @@
 import ReprocessarErros from "./ReprocessarErros";
-import Tabela from "@/components/ui/Tabela";
+import GradeTarefas from "./GradeTarefas";
+import ProgressoTarefas from "@/components/ui/ProgressoTarefas";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import AutoRefresh from "@/components/AutoRefresh";
 import { contexto } from "@/lib/sessao";
-import { competenciaBR, dataHoraBR, formatarDocumento, formatarIe } from "@/lib/documentos";
-import { ORDEM_TAREFAS, SITUACAO, SITUACOES_ABERTAS, expandirTipos, nomeTipo, situacaoTarefa } from "@/lib/xml";
+import { competenciaBR, dataHoraBR } from "@/lib/documentos";
+import { ORDEM_TAREFAS, SITUACAO, SITUACOES_ABERTAS, expandirTipos, situacaoTarefa } from "@/lib/xml";
 import { cancelarAgendamento } from "../../actions";
 
 type Tarefa = {
@@ -49,7 +50,6 @@ export default async function DetalheAgendamento({ params, searchParams }: {
   const conta = (chave: string) => todas.filter((c) => c.chave === chave).length;
   const abertas = todas.filter((c) => SITUACOES_ABERTAS.includes(c.chave)).length;
   const feitas = todas.length - abertas;
-  const pct = todas.length ? Math.round((feitas / todas.length) * 100) : 0;
   const pendentes = empresas.filter((t) => t.status === "pendente").length;
   const cancelar = cancelarAgendamento.bind(null, id);
 
@@ -85,32 +85,20 @@ export default async function DetalheAgendamento({ params, searchParams }: {
       </div>
       <AutoRefresh ativo={abertas > 0} segundos={5} />
 
-      <section className="cartao progresso">
-        <div className="progresso-topo">
-          <h2 className="titulo-cartao">Progresso</h2>
-          <span className="progresso-pct">{pct}%</span>
-        </div>
-        <div className="progresso-trilho" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}
-          aria-label={`${feitas} de ${todas.length} tarefas processadas`}>
-          <span style={{ width: `${pct}%` }} />
-        </div>
-        <div className="progresso-rodape">
-          <span>{feitas} de {todas.length} tarefas processadas</span>
-          <span>{abertas ? `${abertas} em aberto` : "Tudo processado"}</span>
-        </div>
+      <ProgressoTarefas feitas={feitas} total={todas.length} abertas={abertas} erros={conta("erro")}>
         <ul className="contadores">
           {RESUMO.filter((k) => conta(k)).map((k) => (
             <li key={k}>
               {/* clicar filtra; clicar de novo limpa o filtro */}
               <Link href={filtro === k ? `/painel/agendamentos/${id}` : `/painel/agendamentos/${id}?filtro=${k}`} scroll={false}
-                className={`status ${SITUACAO[k].classe} contador ${filtro === k ? "ativo" : ""}`} aria-pressed={filtro === k}
+                className={`status ${SITUACAO[k].classe} contador ${filtro === k ? "ativo" : ""}`} aria-current={filtro === k ? "true" : undefined}
                 title={filtro === k ? "Limpar o filtro" : `Mostrar primeiro as empresas com ${SITUACAO[k].nome.toLowerCase()}`}>
                 {SITUACAO[k].nome}: {conta(k)}{filtro === k && <span aria-hidden="true"> ✕</span>}
               </Link>
             </li>
           ))}
         </ul>
-      </section>
+      </ProgressoTarefas>
 
       <section className="cartao">
         <div className="cartao-topo">
@@ -122,36 +110,11 @@ export default async function DetalheAgendamento({ params, searchParams }: {
             </span>
           )}
         </div>
-        <Tabela rotulo="Tarefas por empresa e serviço" className="grade-tarefas">
-          <table>
-            <caption className="sr">Tarefas por empresa e serviço</caption>
-            <thead>
-              <tr><th scope="col">Empresa</th>{colunas.map((c) => <th scope="col" key={c}>{nomeTipo(c)}</th>)}</tr>
-            </thead>
-            <tbody>
-              {linhas.map(({ e, celulas }) => (
-                <tr key={e.id} className={filtro ? (celulas.some((c) => c?.chave === filtro) ? "linha-filtrada" : "linha-apagada") : undefined}>
-                  <td className="grade-empresa">
-                    <b>{e.nome}</b>
-                    <span>{e.codigo && `${e.codigo}, `}{e.ie.length === 14 ? `CNPJ ${formatarDocumento(e.ie)}` : `IE ${formatarIe(e.ie)}`}</span>
-                    {e.mensagem && ["senha_invalida", "fora_do_ar", "certificado"].includes(e.status) && <span className="grade-aviso">{e.mensagem}</span>}
-                  </td>
-                  {celulas.map((c, i) => (
-                    <td key={colunas[i]}>
-                      {c && (
-                        <span className={`celula-tarefa status ${SITUACAO[c.chave]?.classe ?? "st-neutro"}${filtro === c.chave ? " destaque" : ""}`} title={c.mensagem || undefined}>
-                          {SITUACAO[c.chave]?.nome ?? c.chave}
-                        </span>
-                      )}
-                      {c?.mensagem && c.chave === "erro" && <span className="celula-motivo">{c.mensagem}</span>}
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </Tabela>
-        <p className="suave">Passe o mouse sobre uma tarefa para ver o detalhe.</p>
+        <GradeTarefas colunas={colunas} filtro={filtro} linhas={linhas.map(({ e, celulas }) => ({
+          id: e.id, nome: e.nome, codigo: e.codigo, ie: e.ie,
+          aviso: ["senha_invalida", "fora_do_ar", "certificado"].includes(e.status) ? e.mensagem : "",
+          celulas,
+        }))} />
       </section>
     </>
   );

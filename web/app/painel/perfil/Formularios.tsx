@@ -1,5 +1,7 @@
 "use client";
 
+import Formulario from "@/components/ui/Formulario";
+
 import { useActionState } from "react";
 import { salvarAlertas, salvarNome, trocarMinhaSenha, type EstadoPerfil } from "./actions";
 
@@ -11,19 +13,19 @@ function Aviso({ estado }: { estado: EstadoPerfil }) {
 export function FormNome({ nome }: { nome: string }) {
   const [estado, acao, enviando] = useActionState(salvarNome, undefined);
   return (
-    <form action={acao} className="formulario">
+    <Formulario action={acao} className="formulario">
       <Aviso estado={estado} />
       <label htmlFor="nome">Nome</label>
       <input id="nome" name="nome" type="text" defaultValue={nome} required />
       <p><button type="submit" disabled={enviando} style={{ marginTop: "1rem" }}>{enviando ? "Salvando…" : "Salvar nome"}</button></p>
-    </form>
+    </Formulario>
   );
 }
 
 export function FormSenhaPropria() {
   const [estado, acao, enviando] = useActionState(trocarMinhaSenha, undefined);
   return (
-    <form action={acao} className="formulario">
+    <Formulario action={acao} className="formulario">
       <Aviso estado={estado} />
       <label htmlFor="atual">Senha atual</label>
       <input id="atual" name="atual" type="password" autoComplete="current-password" required />
@@ -32,20 +34,20 @@ export function FormSenhaPropria() {
       <label htmlFor="repetida" style={{ marginTop: "0.9rem" }}>Repita a senha nova</label>
       <input id="repetida" name="repetida" type="password" autoComplete="new-password" minLength={8} required />
       <p><button type="submit" disabled={enviando} style={{ marginTop: "1rem" }}>{enviando ? "Trocando…" : "Trocar senha"}</button></p>
-    </form>
+    </Formulario>
   );
 }
 
 export function FormAlertas({ ligado }: { ligado: boolean }) {
   const [estado, acao, enviando] = useActionState(salvarAlertas, undefined);
   return (
-    <form action={acao} className="formulario">
+    <Formulario action={acao} className="formulario">
       <Aviso estado={estado} />
       <label className="caixa-marcar">
         <input type="checkbox" name="alertas_mei" defaultChecked={ligado} />
         Receber por e-mail os alertas de limite dos MEIs do escritório
       </label>
       <p><button type="submit" disabled={enviando} style={{ marginTop: "1rem" }}>{enviando ? "Salvando…" : "Salvar"}</button></p>
-    </form>
+    </Formulario>
   );
 }

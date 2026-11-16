@@ -1068,3 +1068,118 @@ button.perigo-cheio:hover { background: var(--erro); border-color: var(--erro); 
 .periodo-competencias .linha { gap: 0.75rem; }
 .periodo-competencias .linha > div { min-width: min(100%, 180px); flex: 0 1 220px; }
 .periodo-acompanhamento { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-bottom: 1rem; }
+
+/* Modernização progressiva: interações, validação e tabelas operacionais. */
+.rotulo-campo { font-weight: 500; margin: 1rem 0 0.3rem; }
+.validacao-resumo { margin-block: 0 1.25rem; }
+.validacao-resumo ul { margin: 0.4rem 0 0; padding-inline-start: 1.25rem; }
+.validacao-resumo a { color: inherit; }
+input:user-invalid, select:user-invalid, textarea:user-invalid,
+input[aria-invalid="true"], select[aria-invalid="true"], textarea[aria-invalid="true"] { border-color: var(--erro); background-color: var(--erro-fundo); }
+.seletor:has(input[aria-invalid="true"]) { border-color: var(--erro); background: var(--erro-fundo); }
+.conferencia-planilha:focus { outline: 2px solid var(--marca-texto); outline-offset: 6px; border-radius: var(--raio); }
+/* Camada superior nativa, com fallback no hook usePainelFlutuante. */
+.painel-flutuante { display: none; position: fixed; margin: 0; max-inline-size: calc(100vw - 24px); max-block-size: min(70dvh, 32rem); overflow: auto;
+  border: 1px solid var(--linha); background: var(--superficie); color: var(--texto); border-radius: 12px; box-shadow: 0 16px 40px -16px var(--sombra); z-index: 50; }
+.painel-flutuante:popover-open { display: block; }
+.painel-flutuante[data-fallback="aberto"] { display: block; }
+.escolha-campo [role="combobox"], .perfil-botao, .sino-botao { anchor-name: var(--ancora); }
+.escolha-lista.painel-flutuante { inline-size: 24rem; min-inline-size: min(16rem, calc(100vw - 24px)); padding: 0.35rem; }
+.perfil-menu.painel-flutuante { inline-size: 20rem; padding: 0.4rem; }
+.notificacoes-painel.painel-flutuante { inline-size: 25rem; }
+@supports (position-area: block-end) {
+  .painel-flutuante { position-anchor: var(--ancora); inset: auto; margin: 6px 0; position-area: block-end span-inline-end;
+    position-try-fallbacks: flip-block, flip-inline, flip-block flip-inline; }
+  .perfil-menu.painel-flutuante, .notificacoes-painel.painel-flutuante { position-area: block-end span-inline-start; }
+  .escolha-lista.painel-flutuante { inline-size: anchor-size(inline, 24rem); }
+}
+.escolha-opcao { display: flex; align-items: center; gap: 0.65rem; min-block-size: 44px; padding: 0.55rem 0.65rem; border-radius: 8px; cursor: pointer; }
+.escolha-opcao.foco { background: var(--carbono); outline: 2px solid var(--forte); outline-offset: -2px; }
+.escolha-opcao.atual > .icone { color: var(--carimbo); }
+.escolha-opcao[aria-disabled="true"] { opacity: 0.55; cursor: not-allowed; }
+.escolha-opcao .escolha-texto :is(b, small) { white-space: normal; overflow-wrap: anywhere; }
+.notificacoes-fechar { margin: 0.5rem 1rem 1rem; }
+.instalar-app { margin: 0; }
+.instalar-app > summary { display: flex; align-items: center; gap: 0.65rem; min-height: 44px; padding: 0.65rem; border-radius: 6px; font-weight: 400; }
+.instalar-app > summary:hover { background: var(--carbono); }
+.instalar-ajuda { padding: 0.5rem 0.65rem; font-size: 0.85rem; }
+.instalar-ajuda p { margin-bottom: 0.6rem; }
+.instalar-ajuda button { border: 1px solid var(--linha); }
+.tabela-adaptavel { container-type: inline-size; scrollbar-gutter: stable; }
+.tabela-adaptavel thead { position: sticky; inset-block-start: 0; z-index: 3; }
+.tabela-adaptavel thead th { background: var(--carbono); }
+.tabela-adaptavel tbody th[scope="row"] { text-align: start; color: var(--texto); font: inherit; padding: 1rem; border-bottom: 1px solid var(--linha); }
+.tabela-adaptavel .grade-empresa b { font-weight: 600; }
+@container painel (min-width: 701px) {
+  .tabela-adaptavel { max-block-size: min(70vh, 46rem); overflow: auto; }
+}
+@container (max-width: 700px) {
+  .tabela-adaptavel table, .tabela-adaptavel tbody { display: block; inline-size: 100%; }
+  .tabela-adaptavel thead { position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip-path: inset(50%); }
+  .tabela-adaptavel tbody tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; padding: 1rem; border-block-end: 1px solid var(--linha); }
+  .tabela-adaptavel tbody tr:last-child { border-block-end: 0; }
+  .tabela-adaptavel tbody :is(td, th[scope="row"]) { display: block; min-width: 0; padding: 0; border: 0; white-space: normal; overflow-wrap: anywhere; background: transparent; position: static; }
+  .tabela-adaptavel tbody td::before { content: attr(data-label); display: block; color: var(--suave); font-size: 0.75rem; font-weight: 500; margin-block-end: 0.35rem; }
+  .tabela-adaptavel tbody td:has(.acoes-icone) { grid-column: 1 / -1; }
+  .tabela-adaptavel tbody .grade-empresa { grid-column: 1 / -1; padding-block-end: 0.75rem; border-block-end: 1px solid var(--linha); }
+  .tabela-adaptavel tbody td[data-vazio="true"] { display: none; }
+  .tabela-adaptavel .grade-empresa b { display: block; font-family: var(--fonte-titulo); font-size: 1.05rem; color: var(--forte); }
+  .tabela-adaptavel .grade-empresa span { display: block; font-size: 0.8rem; }
+  .tabela-adaptavel .tarefa-detalhe p { min-inline-size: 0; }
+}
+@container (max-width: 260px) {
+  .tabela-adaptavel tbody tr { grid-template-columns: minmax(0, 1fr); }
+}
+.tarefa-detalhe { margin: 0; }
+.tarefa-detalhe summary { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; padding: 0.15rem 0; min-height: 32px; color: var(--tinta-2); font-size: 0.8rem; }
+:root[data-tema="escuro"] .tarefa-detalhe summary { color: var(--acao); }
+.tarefa-detalhe summary::after { content: "+"; font: 500 1rem var(--fonte-caminho); }
+.tarefa-detalhe[open] summary::after { content: "−"; }
+.tarefa-ver { font-size: 0.72rem; text-decoration: underline; text-underline-offset: 3px; }
+.tarefa-detalhe p { margin: 0.5rem 0 0; max-width: 30rem; min-inline-size: 10rem; padding: 0.65rem; border-inline-start: 3px solid var(--linha); background: var(--papel); color: var(--texto); font-size: 0.85rem; white-space: normal; overflow-wrap: anywhere; }
+.listagem-busca { margin-block-end: 1rem; }
+.listagem-busca label { margin-top: 0; font-size: 0.85rem; }
+.listagem-busca input { max-inline-size: 26rem; margin-bottom: 0; }
+.listagem-rodape, .listagem-rodape nav { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem 1rem; }
+.listagem-rodape { padding-block: 1rem; font-size: 0.85rem; color: var(--suave); }
+.listagem-vazia { padding: 1.5rem 1rem; background: var(--papel); }
+progress.progresso-nativo { appearance: none; display: block; inline-size: 100%; block-size: 12px; border: 0 solid; border-radius: 999px; overflow: clip; background: var(--carbono); }
+progress.progresso-nativo::-webkit-progress-bar { background: transparent; }
+progress.progresso-nativo::-webkit-progress-value { background: var(--carimbo); border-radius: 999px; transition: inline-size 0.25s; }
+progress.progresso-nativo::-moz-progress-bar { background: var(--carimbo); border-radius: 999px; }
+.progresso-explicacao { font-size: 0.8rem; margin: 0.6rem 0 0; }
+.esqueleto { background: var(--carbono); border-radius: var(--raio); animation: respirar 1.8s ease-in-out infinite alternate; }
+.esqueleto-titulo { inline-size: min(23rem, 70%); block-size: 2.5rem; margin-bottom: 1.5rem; }
+.esqueletos-resumo { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1rem; margin-bottom: 1rem; }
+.esqueleto-cartao { block-size: 8rem; }
+.esqueleto-linha { block-size: 2rem; margin-block: 1rem; }
+@keyframes respirar { to { opacity: 0.45; } }
+:root { view-transition-name: none; }
+.empresas-listagem { view-transition-name: empresas; }
+.grade-listagem { view-transition-name: tarefas; }
+::view-transition-group(*) { animation-duration: 0.16s; }
+#assuntos, #perguntas { content-visibility: auto; contain-intrinsic-size: auto 600px; }
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  .esqueleto { animation: none; }
+  progress.progresso-nativo::-webkit-progress-value { transition: none; }
+  .painel-flutuante { animation: none; }
+  ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation: none; }
+}
+@container painel (min-width: 701px) {
+  .tabela-monitor { min-inline-size: 80rem; }
+  .tabela-monitor .doc, .tabela-monitor td:nth-last-child(2), .tabela-monitor td:nth-last-child(4) { white-space: nowrap; }
+  .tabela-monitor .nome-empresa { min-inline-size: 12rem; }
+}
+
+/* O movimento fica no indicador, preservando o contraste do texto. */
+.st-vivo { animation: none; }
+.st-vivo::before { content: ""; display: inline-block; inline-size: 6px; block-size: 6px; border-radius: 50%; background: currentColor; margin-inline-end: 0.4rem; animation: vivo 1.4s ease-in-out infinite; }
+.grade-tarefas tr.linha-apagada { opacity: 1; }
+.grade-tarefas tr.linha-filtrada { background: var(--carimbo-fundo); }
+.tabela-adaptavel tbody th.grade-empresa { background: var(--superficie); }
+@media (prefers-reduced-motion: reduce) { .st-vivo::before { animation: none; } }
+.tabela-painel.grade-tarefas tbody th.grade-empresa { background: var(--superficie); }
+@container (max-width: 700px) {
+  .tabela-adaptavel tbody td:has(.tarefa-detalhe[open]) { grid-column: 1 / -1; }
+}
