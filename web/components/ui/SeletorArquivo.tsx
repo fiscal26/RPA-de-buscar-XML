@@ -33,7 +33,7 @@ export default function SeletorArquivo({ nome, aceita, obrigatorio, titulo, dica
         <b>{arquivo ? arquivo.name : titulo}</b>
         <small>{arquivo ? `${tamanho(arquivo.size)} · clique para trocar` : dica ?? "Clique para escolher ou arraste o arquivo para cá"}</small>
       </span>
-      <input ref={campo} id={id} type="file" name={nome} accept={aceita} required={obrigatorio}
+      <input ref={campo} id={id} type="file" name={nome} accept={aceita} required={obrigatorio} aria-label={titulo}
         onChange={(e) => setArquivo(e.target.files?.[0] ?? null)} />
     </label>
   );

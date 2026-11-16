@@ -1,5 +1,7 @@
 "use client";
 
+import Formulario from "@/components/ui/Formulario";
+
 import Escolha from "@/components/ui/Escolha";
 import { useActionState, useEffect, useRef } from "react";
 import { adicionarAjuste } from "../actions";
@@ -13,7 +15,7 @@ export default function FormAjuste({ org, ie, ano, mesPadrao }: { org: string; i
     if (estado?.ok) form.current?.reset();
   }, [estado]);
   return (
-    <form ref={form} action={acao} className="form-ajuste">
+    <Formulario ref={form} action={acao} className="form-ajuste">
       <input type="hidden" name="org" value={org} />
       <input type="hidden" name="ie" value={ie} />
       {estado && <div className={`faixa ${estado.erro ? "erro" : "ok"}`}>{estado.erro ?? estado.ok}</div>}
@@ -34,6 +36,6 @@ export default function FormAjuste({ org, ie, ano, mesPadrao }: { org: string; i
         </label>
         <button type="submit" disabled={enviando}>{enviando ? "Salvando…" : "Incluir"}</button>
       </div>
-    </form>
+    </Formulario>
   );
 }

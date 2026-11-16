@@ -1,5 +1,7 @@
 "use client";
 
+import Formulario from "@/components/ui/Formulario";
+
 import BotaoConfirmar from "@/components/ui/BotaoConfirmar";
 import Escolha from "@/components/ui/Escolha";
 import Icone from "@/components/Icones";
@@ -32,7 +34,7 @@ function Aviso({ estado }: { estado: EstadoEquipe }) {
 export function FormEscritorio() {
   const [estado, acao, enviando] = useActionState(criarEscritorio, undefined);
   return (
-    <form action={acao} className="formulario">
+    <Formulario action={acao} className="formulario">
       <Aviso estado={estado} />
       <div className="grade-campos">
         <div><label htmlFor="esc-nome">Escritório</label><input id="esc-nome" name="escritorio" type="text" required /></div>
@@ -42,14 +44,14 @@ export function FormEscritorio() {
         <div><label htmlFor="esc-senha">Senha provisória (opcional)</label><CampoSenha id="esc-senha" opcional /></div>
       </div>
       <button type="submit" disabled={enviando}>{enviando ? "Criando…" : "Criar escritório e gestor"}</button>
-    </form>
+    </Formulario>
   );
 }
 
 export function FormPessoa({ organizacoes }: { organizacoes?: Org[] }) {
   const [estado, acao, enviando] = useActionState(criarPessoa, undefined);
   return (
-    <form action={acao} className="formulario">
+    <Formulario action={acao} className="formulario">
       <Aviso estado={estado} />
       <div className="grade-campos">
         {organizacoes && (
@@ -72,19 +74,19 @@ export function FormPessoa({ organizacoes }: { organizacoes?: Org[] }) {
         <div><label htmlFor="p-senha">Senha provisória (opcional)</label><CampoSenha id="p-senha" opcional /></div>
       </div>
       <button type="submit" disabled={enviando}>{enviando ? "Criando…" : organizacoes ? "Criar acesso" : "Criar acesso do colaborador"}</button>
-    </form>
+    </Formulario>
   );
 }
 
 export function FormSenha({ id }: { id: string }) {
   const [estado, acao, enviando] = useActionState(trocarSenha, undefined);
   return (
-    <form action={acao} className="formulario compacto-senha">
+    <Formulario action={acao} className="formulario compacto-senha">
       <input type="hidden" name="id" value={id} />
       <CampoSenha id={`senha-${id}`} />
       <button type="submit" className="pequeno" disabled={enviando}>{enviando ? "Salvando…" : "Definir senha"}</button>
       <Aviso estado={estado} />
-    </form>
+    </Formulario>
   );
 }
 
@@ -92,7 +94,7 @@ export function FormSenha({ id }: { id: string }) {
 export function ExcluirPessoa({ id, nome }: { id: string; nome: string }) {
   const [estado, acao, enviando] = useActionState(excluirPessoa, undefined);
   return (
-    <form action={acao}>
+    <Formulario action={acao}>
       <input type="hidden" name="id" value={id} />
       <BotaoConfirmar className="perigo botao-icone" desativado={enviando} rotulo={`Excluir o acesso de ${nome}`}
         dica={enviando ? "Excluindo…" : "Excluir"} titulo={`Excluir o acesso de ${nome}?`}
@@ -100,7 +102,7 @@ export function ExcluirPessoa({ id, nome }: { id: string; nome: string }) {
         <Icone nome="lixeira" tamanho={18} />
       </BotaoConfirmar>
       {estado?.erro && <span className="erro-texto">{estado.erro}</span>}
-    </form>
+    </Formulario>
   );
 }
 
@@ -109,7 +111,7 @@ export function ExcluirEscritorio({ id, nome }: { id: string; nome: string }) {
   const [estado, acao, enviando] = useActionState(excluirEscritorio, undefined);
   const campo = useRef<HTMLInputElement>(null);
   return (
-    <form action={acao} onSubmit={(e) => {
+    <Formulario action={acao} onSubmit={(e) => {
       const digitado = prompt(`Excluir o escritório ${nome} de vez? Saem as pessoas, as empresas, os logins do ATF, os agendamentos `
         + `e o Monitoramento MEI. Os arquivos já salvos no PC do robô ficam.\n\nPara confirmar, digite o nome do escritório:`);
       if (!digitado) { e.preventDefault(); return; }
@@ -122,6 +124,6 @@ export function ExcluirEscritorio({ id, nome }: { id: string; nome: string }) {
         <Icone nome="lixeira" tamanho={18} />
       </button>
       {estado?.erro && <span className="erro-texto">{estado.erro}</span>}
-    </form>
+    </Formulario>
   );
 }

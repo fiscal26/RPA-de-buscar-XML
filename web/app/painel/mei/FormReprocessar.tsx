@@ -1,5 +1,7 @@
 "use client";
 
+import Formulario from "@/components/ui/Formulario";
+
 import PeriodoCompetencias from "@/components/ui/PeriodoCompetencias";
 import { competenciaBR } from "@/lib/documentos";
 import Link from "next/link";
@@ -9,7 +11,7 @@ import { reprocessarMei } from "./actions";
 export default function FormReprocessar({ org, documento, competencia }: { org: string; documento: string; competencia: string }) {
   const [estado, acao, pendente] = useActionState(reprocessarMei, undefined);
   return (
-    <form action={acao}>
+    <Formulario action={acao}>
       <input type="hidden" name="org" value={org} /><input type="hidden" name="documento" value={documento} />
       <div className="linha">
         <PeriodoCompetencias competencia={competencia} minimo="2018-01" />
@@ -21,6 +23,6 @@ export default function FormReprocessar({ org, documento, competencia }: { org: 
         <p>{estado.erro || estado.ok}</p>
         {estado.consultas?.map((c) => <p key={c.id}><Link href={`/painel/agendamentos/${c.id}`}>Acompanhar {competenciaBR(c.competencia)} · {c.origem === "nfse" ? "NFS-e" : "SEFAZ"}</Link></p>)}
       </div>}
-    </form>
+    </Formulario>
   );
 }

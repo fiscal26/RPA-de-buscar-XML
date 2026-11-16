@@ -12,7 +12,8 @@
     "test:periodo": "node --test tests/periodo.test.cjs tests/periodo-db.test.cjs",
     "test:sefaz:db": "node --test tests/sefaz-reprocessar-db.test.cjs",
     "test:mei:db": "node --test tests/mei-db.test.cjs tests/mei-historico-db.test.cjs",
-    "test:cnpja": "node --test tests/cnpja.test.cjs tests/cnpja-db.test.cjs"
+    "test:cnpja": "node --test tests/cnpja.test.cjs tests/cnpja-db.test.cjs",
+    "test:interface": "node tests/interface.browser.cjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.7",
@@ -26,7 +27,9 @@
     "write-excel-file": "4.1.1"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.14.0",
     "@electric-sql/pglite": "0.5.16",
+    "@playwright/test": "^1.65.1",
     "@types/node": "^22",
     "@types/node-forge": "^1.3.11",
     "@types/react": "^19.3.0",

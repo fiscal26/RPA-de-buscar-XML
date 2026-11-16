@@ -1,5 +1,7 @@
 "use client";
 
+import Formulario from "@/components/ui/Formulario";
+
 import { useActionState, useEffect, useState, useTransition } from "react";
 import Escolha from "@/components/ui/Escolha";
 import { dataBR, dataHoraBR, formatarDocumento } from "@/lib/documentos";
@@ -46,7 +48,7 @@ function CamposMei({ empresa, cadastro }: { empresa: Empresa; cadastro?: Cadastr
     catch { setConsulta({ erro: "Não foi possível concluir a consulta. Seus campos foram preservados; tente novamente ou preencha manualmente." }); }
   });
   return (
-    <form action={acao}>
+    <Formulario action={acao}>
       {empresa.sugestao && !cadastro && <p className="faixa alerta">Uma NFS-e importada informa enquadramento MEI.
         Confira o período antes de cadastrar: uma nota antiga não comprova o enquadramento atual.</p>}
       <div className="linha" style={{ marginTop: "1rem" }}>
@@ -89,6 +91,6 @@ function CamposMei({ empresa, cadastro }: { empresa: Empresa; cadastro?: Cadastr
         Desmarcar pausa o acompanhamento e preserva o histórico. Para encerrar o enquadramento e manter os anos anteriores visíveis, informe o último mês.</p>
       <button disabled={pendente || consultando}>{pendente ? "Salvando…" : "Salvar cadastro MEI"}</button>
       {estado && <p className={`faixa ${estado.erro ? "erro" : "ok"}`} role="status">{estado.erro || estado.ok}</p>}
-    </form>
+    </Formulario>
   );
 }

@@ -1,5 +1,7 @@
 "use client";
 
+import Formulario from "@/components/ui/Formulario";
+
 import { useActionState, useState } from "react";
 import { renomearEmpresa } from "../actions";
 
@@ -20,13 +22,13 @@ export default function Renomear({ id, nome, fixo, origem = "sefaz" }: { id: str
     );
   }
   return (
-    <form action={acao} className="renomear-form">
+    <Formulario action={acao} className="renomear-form">
       <input type="hidden" name="id" value={id} />
       <input type="hidden" name="origem" value={origem} />
       <input name="nome" type="text" defaultValue={nome} maxLength={60} required autoFocus aria-label="Nome da empresa" />
       <button type="submit" className="pequeno" disabled={enviando}>{enviando ? "Salvando…" : "Salvar"}</button>
       <button type="button" className="secundario pequeno" onClick={() => setEditando(false)}>Cancelar</button>
       {estado?.erro && <span className="erro-texto">{estado.erro}</span>}
-    </form>
+    </Formulario>
   );
 }

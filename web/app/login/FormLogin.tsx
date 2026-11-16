@@ -1,5 +1,7 @@
 "use client";
 
+import Formulario from "@/components/ui/Formulario";
+
 import Link from "next/link";
 import { useActionState, useState } from "react";
 import Icone from "@/components/Icones";
@@ -21,15 +23,15 @@ export function CampoSenha({ id, nome, autoComplete, minLength }: { id: string; 
 export default function FormLogin() {
   const [estado, acao, enviando] = useActionState(entrar, undefined);
   return (
-    <form action={acao} className="form-entrada"
+    <Formulario action={acao} className="form-entrada"
       onSubmit={() => { try { localStorage.setItem(CHAVE_ATIVIDADE, String(Date.now())); } catch {} }}>
-      {estado?.erro && <div className="faixa erro">{estado.erro}</div>}
+      {estado?.erro && <div className="faixa erro" role="alert">{estado.erro}</div>}
       <label htmlFor="email">E-mail</label>
       <input id="email" name="email" type="email" autoComplete="username" required />
       <label htmlFor="senha">Senha</label>
       <CampoSenha id="senha" nome="senha" autoComplete="current-password" />
       <Link href="/esqueci-senha" className="link-esqueci">Esqueci minha senha</Link>
       <button type="submit" className="grande" disabled={enviando}>{enviando ? "Entrando…" : "Entrar"}</button>
-    </form>
+    </Formulario>
   );
 }

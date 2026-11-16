@@ -1,5 +1,7 @@
 "use client";
 
+import Formulario from "@/components/ui/Formulario";
+
 import { useActionState, useEffect, useState } from "react";
 import { formatarDocumento, iniciais } from "@/lib/documentos";
 import Escolha from "@/components/ui/Escolha";
@@ -36,9 +38,9 @@ export default function AdicionarMonitor({ empresas, organizacoes }: { empresas:
         {aberto ? "Fechar" : "+ Adicionar ao monitoramento"}
       </button>
       {aberto && (
-        <form action={acao} className="cartao painel-adicionar">
+        <Formulario action={acao} className="cartao painel-adicionar">
           <h2 className="titulo-cartao">Adicionar ao monitoramento</h2>
-          {estado?.erro && <div className="faixa erro">{estado.erro}</div>}
+          {estado?.erro && <div className="faixa erro" role="alert">{estado.erro}</div>}
           {organizacoes && (
             <>
               <label htmlFor="mon-org">Organização</label>
@@ -80,7 +82,7 @@ export default function AdicionarMonitor({ empresas, organizacoes }: { empresas:
           </label>
           <p className="suave">Cada empresa precisa do certificado A1 dela (ou da matriz) em Certificados.</p>
           <button type="submit" disabled={enviando || !marcadas.size}>{enviando ? "Incluindo…" : `Incluir ${marcadas.size || ""} no monitoramento`}</button>
-        </form>
+        </Formulario>
       )}
     </div>
   );

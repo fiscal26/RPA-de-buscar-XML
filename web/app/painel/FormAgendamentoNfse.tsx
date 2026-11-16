@@ -1,5 +1,7 @@
 "use client";
 
+import Formulario from "@/components/ui/Formulario";
+
 import PeriodoCompetencias from "@/components/ui/PeriodoCompetencias";
 import Tabela from "@/components/ui/Tabela";
 
@@ -7,7 +9,7 @@ import Escolha from "@/components/ui/Escolha";
 import Segmentado from "@/components/ui/Segmentado";
 import SeletorArquivo from "@/components/ui/SeletorArquivo";
 import Link from "next/link";
-import { useActionState, useState, useTransition } from "react";
+import { useActionState, useEffect, useRef, useState, useTransition } from "react";
 import { competenciaBR, dataHoraBR, formatarDocumento, iniciais } from "@/lib/documentos";
 import { TIPOS_NFSE, nomeTipo } from "@/lib/xml";
 import { confirmarAgendamentoNfse, prepararAgendamentoNfse, type PreviaNfse, type SituacaoCertificado } from "./actions-nfse";
@@ -28,7 +30,11 @@ export default function FormAgendamentoNfse({ organizacoes, competencia, empresa
   organizacoes?: OrgOpcao[]; competencia: string; empresas: EmpresaOpcao[]; certificados: CertificadoOpcao[];
 }) {
   const [previa, ler, lendo] = useActionState(prepararAgendamentoNfse, undefined);
+  const conferencia = useRef<HTMLDivElement>(null);
+  useEffect(() => { if (previa?.itens && !previa.erro) conferencia.current?.focus(); }, [previa]);
   const [resultado, setResultado] = useState<PreviaNfse | null>(null);
+  const sucesso = useRef<HTMLDivElement>(null);
+  useEffect(() => { if (resultado?.ok) sucesso.current?.focus(); }, [resultado?.ok]);
   const [enviando, iniciar] = useTransition();
   const [quando, setQuando] = useState<"agora" | "agendar">("agora");
   const [fonte, setFonte] = useState<"planilha" | "cadastro">("planilha");
@@ -55,8 +61,8 @@ export default function FormAgendamentoNfse({ organizacoes, competencia, empresa
 
   if (resultado?.ok) {
     return (
-      <div>
-        <div className="faixa ok">{resultado.ok} O robô salva as notas e o relatório na pasta configurada no computador dele.</div>
+      <div ref={sucesso} tabIndex={-1}>
+        <div className="faixa ok" role="status">{resultado.ok} O robô salva as notas e o relatório na pasta configurada no computador dele.</div>
         <div className="periodo-acompanhamento">{(resultado.agendamentoIds ?? [resultado.agendamentoId!]).map((id, i) =>
           <Link className="botao secundario" key={id} href={`/painel/agendamentos/${id}`}>Acompanhar {resultado.competenciasAgendadas?.[i] ? competenciaBR(resultado.competenciasAgendadas[i]) : `competência ${i + 1}`}</Link>)}</div>{" "}
         <button className="secundario" onClick={() => location.reload()}>Novo agendamento</button>
@@ -69,10 +75,10 @@ export default function FormAgendamentoNfse({ organizacoes, competencia, empresa
 
   return (
     <>
-      <form action={ler}>
-        {previa?.erro && <div className="faixa erro">{previa.erro}</div>}
+      <Formulario action={ler}>
+        {previa?.erro && <div className="faixa erro" role="alert">{previa.erro}</div>}
         {previa?.erro && !!previa.erros?.length && (
-          <div className="faixa erro"><ul>{previa.erros.slice(0, 50).map((e) => <li key={e}>{e}</li>)}</ul></div>
+          <div className="faixa erro" role="alert"><ul>{previa.erros.slice(0, 50).map((e) => <li key={e}>{e}</li>)}</ul></div>
         )}
         {organizacoes && (
           <>
@@ -81,7 +87,7 @@ export default function FormAgendamentoNfse({ organizacoes, competencia, empresa
               opcoes={organizacoes.map((o) => ({ id: o.id, titulo: o.nome }))} />
           </>
         )}
-        <label>Empresas</label>
+        <p className="rotulo-campo">Empresas</p>
         <Segmentado nome="fonte" rotulo="Empresas" valor={fonte} aoMudar={setFonte}
           opcoes={[{ id: "planilha", texto: "As de uma planilha" }, { id: "cadastro", texto: "Escolher entre as cadastradas" }]} />
         {fonte === "planilha" ? (
@@ -136,20 +142,22 @@ export default function FormAgendamentoNfse({ organizacoes, competencia, empresa
 
         <PeriodoCompetencias competencia={competencia} minimo="2023-01" />
 
-        <label>Quando executar</label>
+        <p className="rotulo-campo">Quando executar</p>
         <Segmentado nome="quando" rotulo="Quando executar" valor={quando} aoMudar={setQuando}
           opcoes={[{ id: "agora", texto: "Assim que possível" }, { id: "agendar", texto: "Em data e hora marcadas" }]} />
         {quando === "agendar" && (
           <>
-            <input name="executar_em" type="datetime-local" required style={{ maxWidth: 260 }} />
-            <p className="suave">Horário de Brasília.</p>
+            <label htmlFor="nfse-executar">Data e hora de início</label>
+            <input id="nfse-executar" name="executar_em" type="datetime-local" required aria-describedby="nfse-horario" style={{ maxWidth: 260 }} />
+            <p id="nfse-horario" className="suave">Horário de Brasília.</p>
           </>
         )}
-        <p><button type="submit" disabled={lendo}>{lendo ? "Lendo…" : "Ler planilha"}</button></p>
-      </form>
+        <p className="form-envio"><button type="submit" disabled={lendo}>{lendo ? "Lendo…" : "Ler planilha"}</button></p>
+        <span className="sr" role="status">{lendo ? "Lendo e conferindo as empresas. Aguarde." : ""}</span>
+      </Formulario>
 
       {previa?.itens && !previa.erro && (
-        <div style={{ marginTop: "1.5rem" }}>
+        <div ref={conferencia} tabIndex={-1} className="conferencia-planilha" style={{ marginTop: "1.5rem" }}>
           <h2>{previa.nomeArquivo === "Empresas cadastradas" ? "Confira as empresas escolhidas" : `Confira a planilha ${previa.nomeArquivo}`}</h2>
           <p>
             <b>{previa.itens.length}</b> {previa.itens.length === 1 ? "empresa" : "empresas"} · período <b>{competenciaBR(previa.competencia)}{previa.competenciaFinal && previa.competenciaFinal !== previa.competencia && ` a ${competenciaBR(previa.competenciaFinal)}`}</b> ·{" "}
@@ -161,13 +169,13 @@ export default function FormAgendamentoNfse({ organizacoes, competencia, empresa
             {novas > 0 && ` · ${novas} ${novas === 1 ? "empresa nova" : "empresas novas"} no cadastro`}
           </p>
           {!!previa.erros?.length && (
-            <div className="faixa erro">
+            <div className="faixa erro" role="alert">
               <b>{previa.erros.length === 1 ? "1 linha ignorada:" : `${previa.erros.length} linhas ignoradas:`}</b>
               <ul>{previa.erros.slice(0, 50).map((e) => <li key={e}>{e}</li>)}</ul>
             </div>
           )}
           {!!previa.avisos?.length && (
-            <div className="faixa alerta"><ul>{previa.avisos.slice(0, 50).map((e) => <li key={e}>{e}</li>)}</ul></div>
+            <div className="faixa alerta" role="status"><ul>{previa.avisos.slice(0, 50).map((e) => <li key={e}>{e}</li>)}</ul></div>
           )}
           <details>
             <summary>Ver empresas</summary>
@@ -187,7 +195,7 @@ export default function FormAgendamentoNfse({ organizacoes, competencia, empresa
               </table>
             </Tabela>
           </details>
-          {resultado?.erro && <div className="faixa erro" style={{ marginTop: "1rem" }}>{resultado.erro}</div>}
+          {resultado?.erro && <div className="faixa erro" role="alert" style={{ marginTop: "1rem" }}>{resultado.erro}</div>}
           <p><button onClick={confirmar} disabled={enviando}>{enviando ? "Agendando…" : "Confirmar agendamento"}</button></p>
         </div>
       )}
