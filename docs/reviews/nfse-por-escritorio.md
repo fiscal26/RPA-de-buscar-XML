@@ -56,6 +56,29 @@ e Monitor Fiscal terão integração própria nas próximas etapas.
 Relatar defeitos por gravidade, com cenário, arquivo/linha, consequência e evidência.
 Distinguir aceite do código, publicação quando autorizada e ativação operacional.
 
+## Correção após a revisão de `2193e54`
+
+O P1 identificado na revisão foi reproduzido nos dois sentidos: consultar apenas
+recebidas esvaziava o lote de emitidas e consultar apenas emitidas esvaziava o de
+recebidas. A publicação agora ignora a direção desmarcada, preservando seu lote.
+Uma direção selecionada continua publicando um lote vazio quando o cancelamento
+da última nota zera o mês. Não houve alteração no SQL ou nas regras de retenções.
+
+As duas regressões de consulta parcial falharam antes da correção. Após o ajuste,
+passaram os 46 casos de `test_nfse.py` e `test_nfse_contexto.py`, incluindo preservação
+integral dos lotes desmarcados, quantidades retornadas, faturamento de R$ 11.000,00
+e cancelamento que zera o lote nos dois sentidos. Os ensaios usam dados fictícios.
+
+```powershell
+.\.venv\Scripts\python.exe -B -m pytest -q --tb=short -p no:cacheprovider --basetemp $base robo/tests/test_nfse.py robo/tests/test_nfse_contexto.py
+```
+
+Para a nova revisão, comparar a correção com `2193e54` e conferir especialmente
+essa distinção entre direção desmarcada e direção consultada sem notas. As
+evidências anteriores da suíte completa e do banco permanecem registradas abaixo;
+essas suítes não foram repetidas nesta correção localizada. A publicação continua
+dependendo de revisão e autorização; os limites de ativação permanecem os mesmos.
+
 ## Validação e limites operacionais
 
 Na rodada de implementação, passaram 137 testes Python sem navegador, 57 testes

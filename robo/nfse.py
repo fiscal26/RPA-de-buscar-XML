@@ -624,7 +624,13 @@ def baixar_competencia(cliente: ClienteADN, contexto: ContextoArmazenamento, com
         res.emitidas = [n for n, _ in emitidas]
         res.recebidas = [n for n, _ in recebidas]
         # todas as notas do mês num XML só, no envelope ABRASF (o que a importação da Domínio lê)
-        for lista, sub in ((emitidas, PASTA_EMITIDAS), (recebidas, PASTA_RECEBIDAS)):
+        for lista, sub, selecionada in (
+            (emitidas, PASTA_EMITIDAS, com_emitidas),
+            (recebidas, PASTA_RECEBIDAS, com_recebidas),
+        ):
+            # Desmarcar uma direção preserva seu lote; não confirma ausência de notas.
+            if not selecionada:
+                continue
             arquivo = arquivo_validado(pasta_mes, f"{sub} {competencia[5:7] + competencia[:4]}.xml")
             if lista or arquivo.exists():
                 # Um cancelamento pode zerar o mês. O lote publicado precisa refletir o estado atual.

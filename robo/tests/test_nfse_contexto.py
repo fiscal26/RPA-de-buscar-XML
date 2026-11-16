@@ -14,7 +14,7 @@ import nfse
 import robo_xml
 from armazenamento import abrir_empresa, area_do_contexto
 from test_nfse import (ORG, C1, C2, DONO, CLIENTE, PortalFalso, Resposta,
-                       chaves, contexto, evento_xml, nota_xml, tarefa)
+                       chaves, contexto, documentos_exemplo, evento_xml, nota_xml, tarefa)
 
 OUTRA_ORG = "6d12ae21-e996-4f5d-925a-d844a32399e4"
 
@@ -244,14 +244,45 @@ def test_indicacao_mei_no_cache_de_um_escritorio_nao_amplia_o_outro(cfg, chaves)
     assert not b["detectado_no_xml"] and len(b["meses"]) == 1
 
 
-def test_cancelamento_que_zera_mes_atualiza_lote_e_faturamento(cfg, chaves):
+@pytest.mark.parametrize("servico_preservado, pasta_preservada, servico_consultado, quantidade", [
+    ("nfse_emitidas", nfse.PASTA_EMITIDAS, "nfse_recebidas", 2),
+    ("nfse_recebidas", nfse.PASTA_RECEBIDAS, "nfse_emitidas", 1),
+])
+def test_consulta_parcial_preserva_lote_da_direcao_desmarcada(
+    cfg, chaves, servico_preservado, pasta_preservada, servico_consultado, quantidade,
+):
     import xml.etree.ElementTree as ET
 
-    t = tarefa(chaves, ["nfse_emitidas", "nfse_retencoes"])
-    r = robo_xml.executar_nfse(cfg, t, chaves[0], sessao_falsa=PortalFalso([documento()]))
+    t = tarefa(chaves, ["nfse_emitidas", "nfse_recebidas"])
+    r = robo_xml.executar_nfse(cfg, t, chaves[0], sessao_falsa=PortalFalso(documentos_exemplo()))
+    assert r.status == "concluido" and r.qtd_xml == 3
+    lote = Path(cfg["pastas"]["destino"]) / r.pasta / "092026" / f"{pasta_preservada} 092026.xml"
+    anterior = lote.read_bytes()
+    assert len(ET.fromstring(anterior).findall('.//{http://www.abrasf.org.br/nfse.xsd}CompNfse')) == quantidade
+
+    t = tarefa(chaves, [servico_consultado])
+    r = robo_xml.executar_nfse(cfg, t, chaves[0], sessao_falsa=PortalFalso([]))
+    assert r.status == "concluido" and r.qtd_xml == 3 - quantidade
+    assert servico_preservado not in r.detalhes
+    assert r.detalhes["mei_nfse"]["meses"][0]["valor"] == 11000
+    assert lote.read_bytes() == anterior
+
+
+@pytest.mark.parametrize("servico, subpasta, prestador, tomador", [
+    ("nfse_emitidas", nfse.PASTA_EMITIDAS, DONO, CLIENTE),
+    ("nfse_recebidas", nfse.PASTA_RECEBIDAS, CLIENTE, DONO),
+])
+def test_cancelamento_que_zera_mes_atualiza_lote_e_faturamento(cfg, chaves, servico, subpasta, prestador, tomador):
+    import xml.etree.ElementTree as ET
+
+    t = tarefa(chaves, [servico, "nfse_retencoes"])
+    xml = nota_xml(C1, "1", prestador, tomador, "Cliente", 100)
+    r = robo_xml.executar_nfse(cfg, t, chaves[0], sessao_falsa=PortalFalso([(1, "NFSE", C1, xml)]))
     pasta = Path(cfg["pastas"]["destino"]) / r.pasta / "092026"
-    lote = pasta / "NFS-e Emitidas 092026.xml"
+    lote = pasta / f"{subpasta} 092026.xml"
+    assert r.status == "concluido" and r.qtd_xml == 1
     assert b"<CompNfse>" in lote.read_bytes()
     r = robo_xml.executar_nfse(cfg, t, chaves[0], sessao_falsa=PortalFalso([(2, "EVENTO", C1, evento_xml(C1))]))
     assert r.status == "sem_notas" and r.detalhes["mei_nfse"]["meses"][0]["valor"] == 0
+    assert r.detalhes[servico]["situacao"] == "sem_movimento"
     assert not ET.fromstring(lote.read_bytes()).findall('.//{http://www.abrasf.org.br/nfse.xsd}CompNfse')
