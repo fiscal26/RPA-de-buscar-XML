@@ -1,6 +1,6 @@
 # Modernização da interface do LotiVisse XML
 
-Proposta para revisão visual antes da aprovação e do merge. Base: `main` em `b981af0`.
+Melhorias aprovadas após a comparação visual, com instalação como aplicativo excluída a pedido da usuária. Base: `main` em `b981af0`.
 
 ## O que muda para o escritório
 
@@ -13,13 +13,12 @@ Proposta para revisão visual antes da aprovação e do merge. Base: `main` em `
 - Progresso em `<progress>`, conclusão anunciada sem mover o foco e explicação de que uma tarefa processada pode ter terminado com erro.
 - Atualização automática pausada com a aba escondida ou sem internet, com atualização ao retornar.
 - Espaços de carregamento reservados, transições breves nos filtros/paginação e renderização adiada de seções inferiores da página pública. Preferência por menos movimento respeitada.
-- Manifesto, ícones e atalhos para instalar o portal como aplicativo quando o navegador permitir. O convite depende de ação da pessoa. O portal continua exigindo internet e nenhum cache offline de documentos foi criado.
 
 ## Verificação
 
 - `npm run build`: compilação de produção e verificação de tipos.
 - `node --test tests/*.test.cjs`: 81 testes existentes de regras e banco local.
-- `npm run test:interface`: suíte de navegador em uma cópia temporária, sem credenciais, com sessão e empresas fictícias e toda gravação recusada. Inclui teclado, validação, prévia NFS-e, busca, paginação, celular, tema escuro, axe, manifesto, convite de instalação simulado, recuperação de avisos e alternativa sem Popover/Anchor Positioning. Instruções em `web/tests/INTERFACE.md`.
+- `npm run test:interface`: suíte de navegador em uma cópia temporária, sem credenciais, com sessão e empresas fictícias e toda gravação recusada. Inclui teclado, validação, prévia NFS-e, busca, paginação, celular, tema escuro, axe, recuperação de avisos e alternativa sem Popover/Anchor Positioning. Instruções em `web/tests/INTERFACE.md`.
 - Capturas de antes/depois em 1440 × 1000 e 390 × 844 com os mesmos dados fictícios. A versão original foi preservada antes das alterações.
 
 Os testes de interface não consultam a SEFAZ, o Portal Nacional ou o banco de produção. Não houve migração de banco nem alteração no robô. As verificações automáticas de acessibilidade não equivalem a uma auditoria manual completa com leitores de tela. Não há promessa de redução do tempo de resposta dos serviços fiscais.
@@ -34,6 +33,5 @@ Consultei os guias publicados do projeto [Modern Web Guidance](https://github.co
 - **`progress`**: usei o elemento nativo e uma região de status para a conclusão ("Announce completion without stealing focus"). As regras de pintura de Chrome/WebKit e Firefox permanecem separadas.
 - **`same-document-transitions`**: usei transições somente em mudanças locais de listagem; sem API ou com movimento reduzido, a atualização é imediata ("DO respect user preferences for reduced motion").
 - **`defer-rendering-heavy-content`**: limitei o adiamento a seções inferiores da apresentação pública e reservei tamanho ("MUST pair content-visibility: auto with contain-intrinsic-size"). O conteúdo inicial continua sendo renderizado normalmente.
-- **`install-web-app`**: mantive identidade estável no manifesto, convite somente quando há suporte e instruções alternativas ("Installation is always completed through browser-controlled consent UI").
 
 A revisão de React considerou os guias `vercel:react-best-practices` e `vercel:verification`: componentes sem dependências de interface adicionais em produção, efeitos com limpeza e verificações do fluxo completo de prévia em ambiente isolado.

@@ -124,33 +124,12 @@ async function acessivel(page) {
   await teste('Tema escuro mantém a leitura e o menu fecha com Escape', async () => {
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.locator('.perfil-botao').click();
+    assert.equal(await page.getByText('Usar como aplicativo', { exact: true }).count(), 0);
     await page.getByRole('button', { name: /Tema escuro/ }).click();
     assert.equal(await page.locator('html').getAttribute('data-tema'), 'escuro');
     await page.keyboard.press('Escape');
     assert.equal(await page.locator('.perfil-botao').getAttribute('aria-expanded'), 'false');
     await acessivel(page);
-  });
-  await teste('Manifesto e ícones oferecem instalação sem guardar dados fiscais offline', async () => {
-    const resposta = await fetch(`${url}/manifest.webmanifest`); assert.equal(resposta.status, 200);
-    const manifest = await resposta.json(); assert.equal(manifest.start_url, '/painel'); assert.equal(manifest.id, '/');
-    for (const icon of manifest.icons) assert.equal((await fetch(url + icon.src)).status, 200);
-    assert.equal(await page.evaluate(async () => (await navigator.serviceWorker.getRegistrations()).length), 0);
-  });
-  await teste('Instalação só solicita consentimento após clique e aceita cancelamento', async () => {
-    await page.evaluate(() => {
-      window.__instalacoesTeste = 0;
-      const evento = new Event('beforeinstallprompt', { cancelable: true });
-      Object.defineProperty(evento, 'prompt', { value: async () => { window.__instalacoesTeste++; } });
-      Object.defineProperty(evento, 'userChoice', { value: Promise.resolve({ outcome: 'dismissed' }) });
-      window.dispatchEvent(evento);
-    });
-    await page.locator('.perfil-botao').click();
-    await page.getByText('Usar como aplicativo', { exact: true }).click();
-    assert.equal(await page.evaluate(() => window.__instalacoesTeste), 0);
-    await page.getByRole('button', { name: 'Instalar LotiVisse', exact: true }).click();
-    await page.getByText('Você pode continuar usando o portal pelo navegador.', { exact: true }).waitFor();
-    assert.equal(await page.evaluate(() => window.__instalacoesTeste), 1);
-    await page.keyboard.press('Escape');
   });
   await teste('Falha de notificações mostra erro e permite tentar novamente', async () => {
     await page.route('**/api/notificacoes', (route) => route.fulfill({ status: 503, body: '{}' }));

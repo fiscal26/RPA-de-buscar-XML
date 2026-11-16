@@ -1099,12 +1099,6 @@ input[aria-invalid="true"], select[aria-invalid="true"], textarea[aria-invalid="
 .escolha-opcao[aria-disabled="true"] { opacity: 0.55; cursor: not-allowed; }
 .escolha-opcao .escolha-texto :is(b, small) { white-space: normal; overflow-wrap: anywhere; }
 .notificacoes-fechar { margin: 0.5rem 1rem 1rem; }
-.instalar-app { margin: 0; }
-.instalar-app > summary { display: flex; align-items: center; gap: 0.65rem; min-height: 44px; padding: 0.65rem; border-radius: 6px; font-weight: 400; }
-.instalar-app > summary:hover { background: var(--carbono); }
-.instalar-ajuda { padding: 0.5rem 0.65rem; font-size: 0.85rem; }
-.instalar-ajuda p { margin-bottom: 0.6rem; }
-.instalar-ajuda button { border: 1px solid var(--linha); }
 .tabela-adaptavel { container-type: inline-size; scrollbar-gutter: stable; }
 .tabela-adaptavel thead { position: sticky; inset-block-start: 0; z-index: 3; }
 .tabela-adaptavel thead th { background: var(--carbono); }

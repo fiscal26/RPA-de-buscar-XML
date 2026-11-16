@@ -4,6 +4,6 @@ Depois de `npm ci`, execute `npm run test:interface`. A suíte usa o Chromium do
 
 O teste cria uma cópia temporária do portal, ignora arquivos `.env` e `.vercel`, substitui a sessão apenas nessa cópia e usa empresas fictícias de `fixtures/interface-session.ts.txt`. Toda gravação é recusada. O código de autenticação entregue para produção continua sendo o original; não existe modo de demonstração ou acesso sem login no aplicativo.
 
-São exercitados validação e recuperação de erros, seleção por teclado, certificados desativados, prévia NFS-e, busca e paginação, detalhes por toque, tema escuro, acessibilidade automática com axe, manifestação de instalação e alternativa sem Popover/Anchor Positioning. O convite de instalação é simulado: nenhum aplicativo é instalado pelo teste.
+São exercitados validação e recuperação de erros, seleção por teclado, certificados desativados, prévia NFS-e, busca e paginação, detalhes por toque, tema escuro, acessibilidade automática com axe, recuperação de notificações e alternativa sem Popover/Anchor Positioning.
 
 A suíte não consulta SEFAZ, Portal Nacional nem banco de produção. Os resultados automáticos não substituem uma auditoria manual completa com leitores de tela.
