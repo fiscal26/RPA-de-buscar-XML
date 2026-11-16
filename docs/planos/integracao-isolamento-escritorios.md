@@ -44,13 +44,22 @@ Adaptar as regressões da referência em `test_armazenamento.py`, `test_isolamen
 
 ## Caminhos: decisão anterior à implementação
 
-Adotar a árvore isolada da referência para novas gravações, preservando **MMAAAA** na pasta mensal lida pela Domínio. Não transportar o diretório mensal AAAA-MM da referência. Datas/contratos do banco e nomes de arquivos/serviços mantêm os formatos atuais.
+Adotar a árvore isolada da referência para novas competências, usando **MMAAAA** na pasta mensal lida pela Domínio. Competências existentes continuam acessíveis no caminho original, inclusive quando usam AAAA-MM; não renomear nem criar uma segunda pasta para normalizar o formato. Datas/contratos do banco e nomes de arquivos/serviços mantêm os formatos atuais.
+
+Resolver a competência pela identidade completa e pelo mês antes de ler ou gravar:
+
+- Se existir somente AAAA-MM, manter o caminho original para acesso e reprocessamento.
+- Se existir somente MMAAAA, reutilizar esse caminho.
+- Se nenhum dos formatos existir, criar a nova competência em MMAAAA.
+- Se os dois formatos existirem para a mesma identidade e mês, indicar conflito para conferência e interromper a operação dessa competência antes de gravar, consolidar ou publicar seus arquivos. Não escolher um formato silenciosamente, somar resultados ou importar ambos na Domínio. Os arquivos originais permanecem acessíveis para conferência.
+
+O acesso a caminhos anteriores exige associação comprovada com a identidade; nome da pasta sozinho não comprova escritório/empresa. Registrar caminhos existentes no inventário sem importar ou mover arquivos automaticamente.
 
 ```text
 <destino>/Arquivos por empresa v2/
   portal/org_<uuid>--<rotulo_inicial>/<origem>/<documento>--<rotulo_inicial>/
     empresa.json
-    <MMAAAA>/<servicos e arquivos finais>
+    <MMAAAA>/<servicos e arquivos finais de novas competencias>
     Dossiê MEI/<historico e planilha anual>
   local/<contexto persistente>/...
   _cache/<origem>/<contexto>/<documento>/...
@@ -59,7 +68,7 @@ Adotar a árvore isolada da referência para novas gravações, preservando **MM
 
 O documento inclui tipo/número (`cnpj_...` ou `ie_...`), com identificadores completos. NFS-e usa `nfse_nacional`; ATF usa `sefaz_pb`. Monitor terá origem própria, validada na etapa correspondente, sem reutilizar a identidade de origem/cache da NFS-e. Rótulos físicos iniciais permanecem estáveis após renomeações; metadados guardam os nomes atuais. Devolver ao painel caminho relativo à raiz configurada, incluindo o contexto.
 
-**Domínio:** manter XML mensal ABRASF, XMLs individuais e MMAAAA. A nova raiz precisa ser cadastrada na importação; não presumir compatibilidade automática com o endereço antigo. Registrar o mapa entre raiz local, pasta recebida do Drive e raiz configurada na Domínio. Homologar um mês e uma nota cancelada/reprocessada, conferindo importação e totais.
+**Domínio:** manter XML mensal ABRASF e XMLs individuais; usar MMAAAA nas competências novas e considerar os caminhos originais das existentes na configuração de importação, inclusive AAAA-MM. Inventariar as raízes já usadas e registrar o mapa por identidade/competência entre caminho local, pasta recebida do Drive e caminho configurado na Domínio. Cadastrar a nova raiz sem perder o acesso aos meses anteriores; não presumir compatibilidade automática nem importar os dois formatos de um mês em conflito. Homologar competência existente, competência nova, conflito entre formatos e nota cancelada/reprocessada, conferindo importação e totais.
 
 **Drive:** publicar somente documentos finais, por pasta estável de escritório identificada pelo UUID. Mapear explicitamente a subárvore `portal/org_<uuid>--<rotulo_inicial>/` para a pasta compartilhada desse escritório, conferindo permissões e escritórios homônimos. Não copiar toda a raiz: cache, metadados internos, JSON de histórico, temporários, travas, certificados e diagnósticos ficam fora. O atual `servidor/drive.sh` copia a raiz inteira e exclui apenas `_diagnostico/**`; adaptá-lo antes da ativação. Preservar cópia sem exclusão no destino, intervalo de 10 minutos e janelas atuais (mínimo 2 minutos; máximo 35 dias), verificando os efeitos na retomada.
 
@@ -72,6 +81,7 @@ Para cada cenário, registrar tarefa/escritório, retirada da fila, consulta sim
 3. Execuções simultâneas da mesma identidade e de identidades diferentes; dois consumidores independentes disputando a fila. Conferir titularidade, arquivos, cache e painel.
 4. ATF: resposta atrasada, mesma caixa/login entre escritórios, mensagens antigas, anexo ilegível e ausência explícita de notas. Reserva persistente da caixa e trava de escrita têm finalidades distintas.
 5. Monitor: resumo antes do XML, ciência recusada/desligada, cancelamento e retomada sem avanço indevido do marcador de distribuição. Não aplicar à API do Monitor a política de caixa ATF.
+6. Caminhos mensais: somente AAAA-MM existente, somente MMAAAA existente, mês novo e ambos para a mesma identidade/mês (inclusive pastas vazias ou conteúdo igual). Comprovar acesso/reprocessamento no caminho original, criação nova em MMAAAA e conflito explícito sem escrita/publicação/importação duplicada; o mesmo mês em identidades diferentes não constitui conflito.
 
 Executar testes pertinentes de Python, portal e SQL por etapa; conferir tipos e build quando houver mudança web. Incluir chamadas HTTP às funções do banco e dois consumidores independentes em homologação. Codex 2 deve emitir pareceres separados para código, publicação e ativação, com evidências e lacunas explícitas.
 
