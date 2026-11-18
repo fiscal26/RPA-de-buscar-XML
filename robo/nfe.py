@@ -37,6 +37,8 @@ _ACAO_EVENTO = "http://www.portalfiscal.inf.br/nfe/wsdl/NFeRecepcaoEvento4/nfeRe
 PASTA_RECEBIDAS = "NF-e Recebidas"
 CANCELAMENTO = "110111"
 CIENCIA = "210210"
+LIMITE_CONSULTAS_PONTUAIS = 20  # consChNFe e consNSU compartilham a cota por hora
+ESPERA_SEFAZ_MINUTOS = 61
 _FUSO = timezone(timedelta(hours=-3))
 
 
@@ -291,17 +293,24 @@ class ClienteNfe:
         eventos = "".join(self.assinador(evento_ciencia(self.cnpj, c, self.ambiente)).decode() for c in chaves)
         corpo = (f'<nfeDadosMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeRecepcaoEvento4">'
                  f'<envEvento xmlns="{NS}" versao="1.00"><idLote>{int(time.time())}</idLote>{eventos}</envEvento></nfeDadosMsg>')
-        raiz = ET.fromstring(self._post(EVENTO[self.ambiente], _ACAO_EVENTO, corpo))
+        resposta = self._post(EVENTO[self.ambiente], _ACAO_EVENTO, corpo)
+        try:
+            raiz = ET.fromstring(resposta)
+        except ET.ParseError as e:
+            raise ErroSefaz("resposta ilegível do serviço de manifestação da SEFAZ") from e
+        lote = _achar(raiz, "retEnvEvento")
+        if lote is None:
+            falha = _txt(raiz, "Text") or _txt(raiz, "faultstring") or "resposta sem retorno"
+            raise ErroSefaz(f"manifestação não aceita: {falha}")
         saida = {}
         self.motivos_ciencia = {}
-        for ret in raiz.iter():
+        for ret in lote.iter():
             if _local(ret.tag) == "retEvento":
                 saida[_txt(ret, "chNFe")] = _txt(ret, "cStat")
                 self.motivos_ciencia[_txt(ret, "chNFe")] = _txt(ret, "xMotivo")
         if not saida:
-            lote = _achar(raiz, "retEnvEvento")
-            raise ErroSefaz("manifestação não aceita: " + (f"{_txt(lote, 'cStat')} {_txt(lote, 'xMotivo')}" if lote is not None
-                                                            else "resposta sem retorno"))
+            detalhe = f"{_txt(lote, 'cStat')} {_txt(lote, 'xMotivo')}".strip()
+            raise ErroSefaz(f"manifestação não aceita: {detalhe or 'resposta sem retorno'}")
         return saida
 
 
@@ -414,32 +423,44 @@ class ResultadoMonitor:
 
 def monitorar(cliente: ClienteNfe, ult_nsu: int, destino, nome: str, codigo: str = "", ciencia: bool = True,
               pendentes: list[dict] | None = None, pdf: bool = True, max_consultas: int = 60,
-              max_por_chave: int = 50) -> ResultadoMonitor:
+              max_por_chave: int = LIMITE_CONSULTAS_PONTUAIS) -> ResultadoMonitor:
     """Uma rodada do Monitor Fiscal para uma empresa: baixa tudo o que é novo desde ult_nsu, manifesta a ciência
     nas notas que vieram só em resumo e busca o XML completo delas (as que ficaram para depois chegam na próxima)."""
     cnpj = cliente.cnpj
     res = ResultadoMonitor(ult_nsu=ult_nsu)
     resumos: dict[str, Nota] = {}
+    aviso_nsu = ""
+    pendentes = pendentes or []
     for _ in range(max_consultas):
         r = cliente.distribuicao(res.ult_nsu)
-        if r.cstat == "656":  # consumo indevido: o Ambiente Nacional bloqueia por 1 hora
-            res.espera_minutos = 61
-            res.aviso = f"o Ambiente Nacional pediu para esperar 1 hora ({r.motivo})"
-            break
+        if r.cstat == "656":
+            _avisar_bloqueio(res, r)
+            if not res.ult_nsu and r.ult_nsu > 0:
+                # A NT permite usar o último NSU informado na rejeição quando o cliente ainda não conhece o cursor.
+                res.ult_nsu, res.max_nsu = r.ult_nsu, max(r.ult_nsu, r.max_nsu)
+                res.aviso += f". Próxima consulta a partir do NSU {r.ult_nsu} informado pela SEFAZ"
+            elif r.ult_nsu > res.ult_nsu:
+                res.aviso += (f". NSU local {res.ult_nsu}, NSU da SEFAZ {r.ult_nsu}. "
+                              "Confira se outro sistema consulta o mesmo CNPJ")
+            res.resumos = _contar_resumos(res, pendentes)
+            return res
         if r.cstat not in ("137", "138"):
             raise ErroSefaz(f"{r.cstat} {r.motivo}".strip() or "resposta sem situação")
         res.max_nsu = max(res.max_nsu, r.max_nsu)
         res.ult_nsu = max(res.ult_nsu, r.ult_nsu)
         for doc in r.documentos:
             _guardar_documento(doc, res, resumos, destino, nome, cnpj, codigo, pdf)
+        if r.cstat == "137" and not res.ult_nsu and not res.notas:
+            aviso_nsu = ("O Ambiente Nacional ainda não retornou documentos para este CNPJ (137). "
+                         "No primeiro acesso, a distribuição começa a gerar NSU a partir da consulta")
         if r.cstat == "137" or res.ult_nsu >= res.max_nsu:
-            res.espera_minutos = res.espera_minutos or 0
             break
     # notas que só vieram em resumo (nesta rodada ou antes): ciência e XML completo pela chave
-    pendentes = pendentes or []
     a_manifestar = [c for c, n in resumos.items() if n.situacao == "autorizada"]
-    a_manifestar += [p["chave"] for p in pendentes if not p.get("manifestada") and p["chave"] not in resumos]
-    ja_manifestadas = [p["chave"] for p in pendentes if p.get("manifestada")]
+    ja_manifestadas = dict.fromkeys(p["chave"] for p in pendentes if p.get("manifestada"))
+    a_manifestar += [p["chave"] for p in pendentes if not p.get("manifestada") and p["chave"] not in res.notas]
+    a_manifestar = list(dict.fromkeys(c for c in a_manifestar if c not in ja_manifestadas))
+    buscar_xml = list(ja_manifestadas)
     recusadas: dict[str, str] = {}
     if not ciencia and a_manifestar:
         res.aviso = (f"ciência automática desligada: {len(a_manifestar)} nota(s) ficam só no resumo "
@@ -457,7 +478,7 @@ def monitorar(cliente: ClienteNfe, ult_nsu: int, destino, nome: str, codigo: str
                 if cstat in CIENCIA_ACEITA:
                     res.nota(chave).manifestada = True
                     res.manifestadas += 1
-                    ja_manifestadas.append(chave)
+                    buscar_xml.append(chave)
                 else:  # a SEFAZ recusou: o motivo vai para a mensagem do Monitor (antes ficava em silêncio)
                     recusadas[chave] = f"{cstat} {motivos.get(chave, '')}".strip()
         if recusadas:
@@ -465,27 +486,42 @@ def monitorar(cliente: ClienteNfe, ult_nsu: int, destino, nome: str, codigo: str
             res.aviso = res.aviso or f"ciência recusada pela SEFAZ em {len(recusadas)} nota(s): {exemplo}"
         if res.manifestadas:
             cliente.dormir(3)  # o XML completo fica disponível logo depois da ciência
-    for chave in ja_manifestadas[:max_por_chave]:
-        if res.notas.get(chave) and res.notas[chave].completa:
-            continue
+    por_chave = [c for c in dict.fromkeys(buscar_xml)
+                 if c not in res.notas or (not res.notas[c].completa and res.notas[c].situacao == "autorizada")]
+    for chave in por_chave[:max(0, min(max_por_chave, LIMITE_CONSULTAS_PONTUAIS))]:
         try:
             r = cliente.por_chave(chave)
         except ErroSefaz as e:
             res.aviso = res.aviso or f"XML completo fica para a próxima consulta: {e}"
             break
         if r.cstat == "656":
-            res.espera_minutos = 61
+            _avisar_bloqueio(res, r)
             break
+        if r.cstat not in ("137", "138"):
+            aviso = f"consulta do XML pela chave recusada pela SEFAZ: {r.cstat} {r.motivo}".strip()
+            res.aviso = res.aviso or aviso
+            log.warning("   %s (NF-e final %s)", aviso, chave[-8:])
+            continue
         for doc in r.documentos:
             _guardar_documento(doc, res, resumos, destino, nome, cnpj, codigo, pdf)
-    sem_xml = {c for c, n in res.notas.items() if not n.completa and n.situacao == "autorizada"}
-    sem_xml |= {p["chave"] for p in pendentes if not (res.notas.get(p["chave"]) and res.notas[p["chave"]].completa)}
-    res.resumos = len(sem_xml)
+    res.resumos = _contar_resumos(res, pendentes)
     # ciência registrada agora e o XML ainda não liberado: a SEFAZ costuma soltar em minutos; tenta de novo em 1 hora
     # (só depois de uma ciência nova, para não ficar consultando de hora em hora uma nota que não sai)
     if res.manifestadas and any(not n.completa for n in res.notas.values() if n.manifestada) and not res.espera_minutos:
-        res.espera_minutos = 61
+        res.espera_minutos = ESPERA_SEFAZ_MINUTOS
+    res.aviso = res.aviso or aviso_nsu
     return res
+
+
+def _avisar_bloqueio(res: ResultadoMonitor, retorno: Retorno) -> None:
+    res.espera_minutos = ESPERA_SEFAZ_MINUTOS
+    detalhe = f"656 {retorno.motivo}".strip()
+    res.aviso = f"o Ambiente Nacional pediu para esperar 1 hora ({detalhe})"
+
+
+def _contar_resumos(res: ResultadoMonitor, pendentes: list[dict]) -> int:
+    sem_xml = {c for c, n in res.notas.items() if not n.completa and n.situacao == "autorizada"}
+    return len(sem_xml | {p["chave"] for p in pendentes if p["chave"] not in res.notas})
 
 
 def _guardar_documento(doc: Documento, res: ResultadoMonitor, resumos: dict, destino, nome, cnpj, codigo, pdf):

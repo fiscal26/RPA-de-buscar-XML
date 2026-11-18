@@ -98,6 +98,36 @@ def test_consumo_indevido_espera_uma_hora(tmp_path):
     assert r.espera_minutos == 61 and "1 hora" in r.aviso and r.ult_nsu == 7
 
 
+def test_consulta_inicial_vazia_explica_o_inicio_da_distribuicao(tmp_path):
+    amb = AmbienteFalso({0: ret_dist("137", 0, 0)})
+    r = nfe.monitorar(_cliente(amb), 0, tmp_path, "Padaria")
+    assert not r.notas and len(amb.pedidos) == 1
+    assert "137" in r.aviso and "primeiro acesso" in r.aviso
+
+
+def test_retorno_656_recupera_nsu_inicial_e_interrompe_a_rodada(tmp_path, certificado):
+    pfx, _, _ = certificado
+    antiga = chave(6, aamm="2610")
+    xml = proc_nfe(6, emissao="2026-10-15T10:00:00-03:00")
+    amb = AmbienteFalso({0: ret_dist("656", 32, 33, motivo="Use o ultNSU nas solicitacoes subsequentes"),
+                         32: ret_dist("138", 33, 33, [doczip(33, "procNFe_v4.00.xsd", xml)])})
+    pendentes = [{"chave": chave(5), "manifestada": True}, {"chave": antiga, "manifestada": False}]
+    r = nfe.monitorar(_cliente(amb, pfx), 0, tmp_path, "Padaria", pendentes=pendentes)
+    assert (r.ult_nsu, r.max_nsu, r.espera_minutos, r.resumos) == (32, 33, 61, 2)
+    assert "NSU 32 informado pela SEFAZ" in r.aviso and len(amb.pedidos) == 1
+
+    r = nfe.monitorar(_cliente(amb, pfx), r.ult_nsu, tmp_path, "Padaria", pendentes=pendentes, pdf=False)
+    assert r.ult_nsu == 33 and r.notas[antiga].completa and not amb.eventos
+    assert (tmp_path / "Arquivos baixados" / "Padaria" / "102026" / nfe.PASTA_RECEBIDAS / f"{antiga}.xml").read_bytes() == xml
+
+
+def test_retorno_656_nao_pula_nsu_local_conhecido(tmp_path):
+    amb = AmbienteFalso({7: ret_dist("656", 32, 33)})
+    r = nfe.monitorar(_cliente(amb), 7, tmp_path, "Padaria")
+    assert r.ult_nsu == 7 and r.espera_minutos == 61
+    assert "NSU local 7, NSU da SEFAZ 32" in r.aviso
+
+
 def test_erro_do_ambiente_nacional_para_a_rodada(tmp_path):
     amb = AmbienteFalso({0: ret_dist("589", 0, 0, motivo="Rejeicao: NSU informado superior ao maior NSU")})
     with pytest.raises(nfe.ErroSefaz, match="589"):
@@ -282,6 +312,37 @@ def test_ciencia_recusada_aparece_na_mensagem(tmp_path, certificado):
     assert len(amb.eventos) == 1 and r.manifestadas == 0
     assert "recusada" in r.aviso and "2 nota(s)" in r.aviso and "999 Motivo 999" in r.aviso
     assert r.resumos == 2
+
+
+def test_resposta_ilegivel_da_ciencia_preserva_resumo_e_nsu(tmp_path, certificado, monkeypatch):
+    pfx, _, _ = certificado
+    amb = AmbienteFalso({0: ret_dist("138", 1, 1, [doczip(1, "resNFe_v1.01.xsd", res_nfe(2))])})
+    post = amb.post
+    monkeypatch.setattr(amb, "post", lambda url, **kw: Resposta(b"Servico indisponivel")
+                        if "RecepcaoEvento" in url else post(url, **kw))
+    r = nfe.monitorar(_cliente(amb, pfx), 0, tmp_path, "Padaria")
+    assert r.ult_nsu == 1 and r.resumos == 1 and not r.notas[chave(2)].completa
+    assert "resposta ilegível" in r.aviso
+
+
+def test_consulta_por_chave_respeita_cota_e_pula_notas_ja_baixadas(tmp_path):
+    amb = AmbienteFalso({0: ret_dist("138", 1, 1, [doczip(1, "procNFe_v4.00.xsd", proc_nfe(1))])})
+    pendentes = [{"chave": chave(i), "manifestada": True} for i in range(1, 23)]
+    nfe.monitorar(_cliente(amb), 0, tmp_path, "Padaria", pendentes=pendentes, pdf=False, max_por_chave=50)
+    consultadas = [c for _, corpo in amb.pedidos for c in re.findall(r"<chNFe>(\d{44})</chNFe>", corpo)]
+    assert consultadas == [chave(i) for i in range(2, 22)]
+
+
+def test_consulta_por_chave_mostra_fim_do_prazo_e_continua(tmp_path, monkeypatch):
+    amb = AmbienteFalso({}, por_chave={chave(6): proc_nfe(6)})
+    cliente = _cliente(amb)
+    por_chave = cliente.por_chave
+    monkeypatch.setattr(cliente, "por_chave", lambda c: nfe.Retorno(cstat="632", motivo="Solicitação fora de prazo")
+                        if c == chave(5) else por_chave(c))
+    r = nfe.monitorar(cliente, 40, tmp_path, "Padaria", pendentes=[
+        {"chave": chave(5), "manifestada": True}, {"chave": chave(6), "manifestada": True}], pdf=False)
+    assert "632 Solicitação fora de prazo" in r.aviso and r.resumos == 1
+    assert r.notas[chave(6)].completa
 
 
 def test_manifestacao_final_anterior_libera_o_xml(tmp_path, certificado):
