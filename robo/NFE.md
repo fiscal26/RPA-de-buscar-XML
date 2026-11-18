@@ -23,7 +23,7 @@ Homologação: `hom1.nfe.fazenda.gov.br` (opção `monitor_nfe.ambiente` = `"2"`
   pontuais por NSU de outros sistemas para o mesmo CNPJ.
 - **Resumo e XML completo**: a nota destinada chega primeiro como resumo (`resNFe`). Com a ciência ligada para a
   empresa, o robô registra a **Ciência da Operação** e busca o XML completo pela chave. Se houver atraso na liberação,
-  a nota continua como pendente. A ciência automática segue o prazo legal de 10 dias contados da autorização da NF-e.
+  a nota continua como pendente. O prazo legal para a ciência é de 10 dias contados da autorização da NF-e.
 - **Cancelamento**: o evento 110111 marca a nota como cancelada no portal e fica salvo em `Eventos/`.
 - **ICP-Brasil**: os servidores da SEFAZ usam certificados da ICP-Brasil, que não vêm no sistema. O robô baixa o
   pacote oficial do ITI (`acraiz.icpbrasil.gov.br`) e guarda em `chaves/icp-brasil.pem`, renovando a cada 30 dias.
@@ -39,8 +39,8 @@ Homologação: `hom1.nfe.fazenda.gov.br` (opção `monitor_nfe.ambiente` = `"2"`
   O Monitor usa a consulta por chave para notas que já conhece. Para um documento que não chegou ao Monitor,
   use o Portal Nacional com a chave ou obtenha o XML com o emitente.
 
-[NT 2014.002 · Distribuição de DF-e](https://www.nfe.fazenda.gov.br/portal/exibirArquivo.aspx?AspxAutoDetectCookieSupport=1&conteudo=P0U3lU1Fe40%3D) ·
-[NT 2020.001 · Manifestação do destinatário](https://www.nfe.fazenda.gov.br/portal/exibirArquivo.aspx?AspxAutoDetectCookieSupport=1&conteudo=+WTd7iuD21s%3D)
+[NT 2014.002 v1.40 · Distribuição de DF-e](https://www.nfe.fazenda.gov.br/portal/exibirArquivo.aspx?conteudo=uWO2d%2FgTuWg%3D) ·
+[NT 2020.001 v1.60 · Manifestação do destinatário](https://www.nfe.fazenda.gov.br/portal/exibirArquivo.aspx?AspxAutoDetectCookieSupport=1&conteudo=+WTd7iuD21s%3D)
 
 ## Onde ficam os arquivos
 `<destino>/<Escritório>/Arquivos baixados/<ID>-<Nome>/<MMAAAA>/NF-e Recebidas/<chave>.xml` e `<chave>.pdf` (DANFE
