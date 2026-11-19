@@ -177,7 +177,7 @@ async function acessivel(page) {
     const detalhe = page.locator('summary[aria-label^="NF-e Entrada: Erro"]');
     await detalhe.click(); assert.ok(await page.getByText(/O ATF não entregou o XML em Minhas Mensagens/).isVisible());
   });
-  await teste('Tabelas funcionam no celular, sem transbordamento, e passam nos critérios automáticos de acessibilidade', async () => {
+  await teste('Totais do Monitor Fiscal acompanham o filtro e a tabela funciona no celular', async () => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.getByRole('searchbox', { name: 'Buscar empresa nesta execução' }).fill('');
     await page.waitForFunction(() => document.querySelectorAll('.grade-tarefas tbody tr').length === 25);
@@ -185,10 +185,43 @@ async function acessivel(page) {
     await acessivel(page);
     await page.goto(`${url}/painel/monitor`);
     assert.equal(await page.locator('.tabela-monitor tbody tr').count(), 25);
-    await page.getByRole('searchbox', { name: 'Filtrar empresas monitoradas' }).fill('Mercado Sol');
+    const filtro = page.getByRole('searchbox', { name: 'Filtrar empresas monitoradas' });
+    const total = (nome) => page.locator('.monitor-numeros .numero-cartao').filter({ hasText: nome }).locator('.valor');
+    assert.equal(await total('Notas encontradas').innerText(), '98');
+    await filtro.fill('Mercado Sol');
     await page.waitForFunction(() => document.querySelectorAll('.tabela-monitor tbody tr').length === 1);
+    assert.equal(await total('Notas encontradas').innerText(), '5');
+    assert.equal(await total('Notas no mês').innerText(), '3');
+    assert.equal((await total('Compras no mês').innerText()).replace(/\s+/g, ' '), 'R$ 10.119,00');
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     await acessivel(page);
+    await filtro.fill('Empresa Exemplo');
+    await page.getByText('26 de 32', { exact: true }).waitFor();
+    assert.equal(await total('Notas encontradas').innerText(), '78');
+    await page.getByRole('button', { name: 'Próxima', exact: true }).click();
+    assert.equal(await page.locator('.tabela-monitor tbody tr').count(), 1);
+    assert.equal(await total('Notas encontradas').innerText(), '78');
+    await filtro.fill('Pesquisa sem resultado');
+    await page.getByText('Nenhuma empresa encontrada.', { exact: false }).waitFor();
+    assert.equal(await total('Notas encontradas').innerText(), '0');
+    assert.equal(await total('Notas no mês').innerText(), '0');
+    await filtro.fill('');
+    await page.getByText('32 de 32', { exact: true }).waitFor();
+    assert.equal(await total('Notas encontradas').innerText(), '98');
+  });
+  await teste('Reprocessamento MEI mostra as fontes cadastradas e as fontes que entraram na fila', async () => {
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    for (const [empresa, fontes] of [['MEI de serviços', 'NFS-e'], ['MEI de comércio', 'SEFAZ'], ['MEI misto', 'NFS-e e SEFAZ']]) {
+      await page.goto(`${url}/painel/mei`);
+      await page.getByText(empresa, { exact: true }).click();
+      const fontesDoCadastro = page.getByText('Fontes do reprocessamento', { exact: false });
+      assert.equal(await fontesDoCadastro.locator('strong').innerText(), fontes);
+      await page.getByLabel('Mês inicial', { exact: true }).fill('2024-01');
+      await page.getByLabel('Mês final', { exact: true }).fill('2024-01');
+      await page.getByRole('button', { name: 'Reprocessar período' }).click();
+      const fontesDaFila = page.getByText('Fontes na fila', { exact: false });
+      assert.equal(await fontesDaFila.locator('strong').innerText(), fontes);
+    }
   });
   await teste('Tema escuro mantém a leitura e o menu fecha com Escape', async () => {
     await page.setViewportSize({ width: 1440, height: 1000 });
