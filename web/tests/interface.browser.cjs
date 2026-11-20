@@ -206,7 +206,7 @@ async function acessivel(page) {
     assert.equal(await total('Notas encontradas').innerText(), '0');
     assert.equal(await total('Notas no mês').innerText(), '0');
     await filtro.fill('65.264.879/0001-74');
-    await page.getByText('Empresa além do limite', { exact: true }).waitFor();
+    await page.getByRole('link', { name: 'Notas de Empresa além do limite', exact: true }).waitFor();
     assert.equal(await total('Notas encontradas').innerText(), '1');
     assert.equal(await total('Notas no mês').innerText(), '1');
     assert.equal((await total('Compras no mês').innerText()).replace(/\s+/g, ' '), 'R$ 275,25');
