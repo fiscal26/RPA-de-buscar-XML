@@ -6,6 +6,18 @@ export type MonitorLinha = {
   organizacoes?: { nome: string } | null;
 };
 
+export type ResumoNotasMonitor = { notasEncontradas: number; notasMes: number; comprasMes: number };
+
+export function somarNotasMonitor(empresas: ResumoNotasMonitor[]): ResumoNotasMonitor {
+  const resumo = { notasEncontradas: 0, notasMes: 0, comprasMes: 0 };
+  for (const empresa of empresas) {
+    resumo.notasEncontradas += empresa.notasEncontradas;
+    resumo.notasMes += empresa.notasMes;
+    resumo.comprasMes += empresa.comprasMes;
+  }
+  return resumo;
+}
+
 export const SITUACAO_MONITOR: Record<string, { nome: string; classe: string }> = {
   fila: { nome: "Na fila", classe: "st-neutro" },
   processando: { nome: "Consultando", classe: "st-fila st-vivo" },

@@ -9,10 +9,16 @@ const tarefas=empresas.map((e,i)=>({...e,empresa_id:e.id,agendamento_id:ags[0].i
 const certs=empresas.slice(0,12).map((e,i)=>({id:`cert-${i}`,org_id:e.org_id,cnpj:e.cnpj,nome:e.nome,procurador:i===0,validade:i===3?'2026-10-01T00:00:00Z':'2027-10-01T00:00:00Z'}));
 const monitores=empresas.slice(0,32).map((e,i)=>({...e,ciencia:true,ativo:true,status:i===1?'erro':'ok',mensagem:i===1?'O Ambiente Nacional está temporariamente indisponível. Uma nova consulta será realizada no horário programado.':'Consulta concluída. XML e DANFE organizados na pasta da empresa.',proxima_consulta:'2026-11-16T14:00:00Z',ultima_consulta:'2026-11-15T14:00:00Z',ultima_nota_em:'2026-11-15T13:45:00Z'}));
 const dados:Record<string,any[]>={organizacoes:orgs,xml_empresas:empresas,xml_nfse_empresas:empresas.slice(0,12).map(e=>({...e,tipos:['nfse_emitidas','nfse_recebidas']})),xml_agendamentos:ags,xml_tarefas:tarefas,xml_acessos:[{id:'acesso-1',org_id:'org-1',login:'contador.exemplo',atualizado_em:'2026-11-13T12:00:00Z'}],xml_nfse_certificados:certs,xml_robos:[{id:'Robô XML',ultimo_sinal:new Date().toISOString()}],xml_nfe_monitor:monitores,xml_nfe_notas:empresas.slice(0,32).flatMap(e=>Array.from({length:3},(_,i)=>({org_id:e.org_id,cnpj:e.cnpj,valor:3200+i*173,situacao:'autorizada',emissao:'2026-11-12T12:00:00Z',encontrada_em:'2026-11-15T14:00:00Z'}))),xml_mei_cadastros:[]};
+const fontesMei = [
+  { nome: 'MEI de serviços', origens: ['nfse'] },
+  { nome: 'MEI de comércio', origens: ['sefaz'] },
+  { nome: 'MEI misto', origens: ['nfse', 'sefaz'] },
+] as const;
 function consulta(tabela:string) {
  if(estadoGlobal.__meiInterface)Object.assign(dados,estadoGlobal.__meiInterface);
  let linhas=[...(dados[tabela]??[])],unica=false,novo:any=null;
- const q:any={select:()=>q,order:()=>q,eq:(k:string,v:unknown)=>{linhas=linhas.filter(x=>x[k]===v);return q},neq:(k:string,v:unknown)=>{linhas=linhas.filter(x=>x[k]!==v);return q},in:(k:string,v:unknown[])=>{linhas=linhas.filter(x=>v.includes(x[k]));return q},limit:(n:number)=>{linhas=linhas.slice(0,n);return q},range:(a:number,b:number)=>{linhas=linhas.slice(a,b+1);return q},gte:()=>q,lte:()=>q,not:()=>q,is:()=>q,contains:()=>{linhas=[];return q},maybeSingle:()=>{unica=true;return q},single:()=>{unica=true;return q},then:(resolve:any,reject:any)=>{if(novo){if(!['xml_empresas','xml_nfse_empresas','xml_acessos'].includes(tabela))throw Error('Escrita fictícia não prevista');const chave=tabela==='xml_empresas'?'ie':tabela==='xml_nfse_empresas'?'cnpj':'login';if((dados[tabela]??[]).some((e:any)=>e.org_id===novo.org_id&&e[chave]===novo[chave]))return Promise.resolve({data:null,error:{code:'23505',message:'Duplicado'}}).then(resolve,reject);const registro={...novo,id:'individual-'+Date.now(),organizacoes:{nome:orgs[0].nome},xml_acessos:{login:'contador.exemplo'}};dados[tabela]??=[];dados[tabela].push(registro);linhas=[registro];novo=null;}return Promise.resolve({data:unica?linhas[0]??null:linhas,error:null,count:linhas.length}).then(resolve,reject)},insert:(r:any)=>{novo=r;return q},update:()=>{throw Error('Comparação: escrita desativada')},delete:()=>{throw Error('Comparação: escrita desativada')},upsert:()=>{throw Error('Comparação: escrita desativada')}};return q;
+ let intervalo: [number, number] | undefined;
+ const q:any={select:()=>q,order:()=>q,eq:(k:string,v:unknown)=>{linhas=linhas.filter(x=>x[k]===v);return q},neq:(k:string,v:unknown)=>{linhas=linhas.filter(x=>x[k]!==v);return q},in:(k:string,v:unknown[])=>{linhas=linhas.filter(x=>v.includes(x[k]));return q},limit:(n:number)=>{linhas=linhas.slice(0,n);return q},range:(a:number,b:number)=>{intervalo=[a,b];return q},gte:()=>q,lte:()=>q,not:()=>q,is:()=>q,contains:()=>{linhas=[];return q},maybeSingle:()=>{unica=true;return q},single:()=>{unica=true;return q},then:(resolve:any,reject:any)=>{if(novo){if(!['xml_empresas','xml_nfse_empresas','xml_acessos'].includes(tabela))throw Error('Escrita fictícia não prevista');const chave=tabela==='xml_empresas'?'ie':tabela==='xml_nfse_empresas'?'cnpj':'login';if((dados[tabela]??[]).some((e:any)=>e.org_id===novo.org_id&&e[chave]===novo[chave]))return Promise.resolve({data:null,error:{code:'23505',message:'Duplicado'}}).then(resolve,reject);const registro={...novo,id:'individual-'+Date.now(),organizacoes:{nome:orgs[0].nome},xml_acessos:{login:'contador.exemplo'}};dados[tabela]??=[];dados[tabela].push(registro);linhas=[registro];novo=null;}const pagina=intervalo?linhas.slice(intervalo[0],intervalo[1]+1):linhas;return Promise.resolve({data:unica?pagina[0]??null:tabela==='xml_nfe_monitor'?pagina.slice(0,1000):pagina,error:null,count:linhas.length}).then(resolve,reject)},insert:(r:any)=>{novo=r;return q},update:()=>{throw Error('Comparação: escrita desativada')},delete:()=>{throw Error('Comparação: escrita desativada')},upsert:()=>{throw Error('Comparação: escrita desativada')}};return q;
 }
 export async function contexto() {const perfil={id:'usuario-exemplo',org_id:'org-1',nome:'Marina Oliveira',email:'marina@example.invalid',papel:'admin' as const,ativo:true};return {supabase:interfaceDb as unknown as SupabaseClient,user:{id:perfil.id},perfil,org:orgs[0],admin:true};}
 export type Perfil={id:string;org_id:string|null;nome:string;email:string;papel:'admin'|'gestor'|'usuario';ativo:boolean};
@@ -22,12 +28,49 @@ export type Organizacao={id:string;nome:string;ativo:boolean};
 const estadoGlobal=globalThis as unknown as {__meiInterface?:Record<string,any[]>};
 if(estadoGlobal.__meiInterface) Object.assign(dados,estadoGlobal.__meiInterface);
 else {
+ const hoje = new Date().toISOString();
+ for (const nota of dados.xml_nfe_notas) nota.emissao = hoje;
+ const mercado = dados.xml_nfe_notas.find((n) => n.cnpj === empresas[1].cnpj);
+ dados.xml_nfe_notas.push({ ...mercado, emissao: '2024-01-01T12:00:00Z' }, { ...mercado, situacao: 'cancelada' });
+ const modeloMonitor = dados.xml_nfe_monitor[0];
+ for (let i = 0; i < 968; i++) {
+   dados.xml_nfe_monitor.push({ ...modeloMonitor, id: `monitor-extra-${i}`, nome: `Monitor adicional ${i}`,
+     cnpj: `90000000${String(i).padStart(4, '0')}00` });
+ }
+ const cnpjAlemDoLimite = '65264879000174';
+ dados.xml_nfe_monitor.push({ ...modeloMonitor, id: 'monitor-alem-do-limite', nome: 'Empresa além do limite', cnpj: cnpjAlemDoLimite });
+ dados.xml_nfe_notas.push({ ...mercado, cnpj: cnpjAlemDoLimite, valor: 275.25 });
+ for (const [i, caso] of fontesMei.entries()) {
+   const empresa = { ...empresas[0], id: `mei-reprocessar-${i}`, org_id: orgs[i + 1].id, cnpj: cnpj(800 + i), nome: caso.nome };
+   for (const origem of caso.origens) dados[origem === 'nfse' ? 'xml_nfse_empresas' : 'xml_empresas'].push(empresa);
+   dados.xml_mei_cadastros.push({ ...empresa, ativo: true, inicio_atividade: '2024-01-01', inicio_mei: '2024-01-01', fim_mei: null });
+ }
  dados.xml_mei_worker=[{ultimo_sinal:new Date().toISOString()}];
  dados.xml_mei_acompanhamento=[];dados.xml_mei_sincronizacoes=[];dados.xml_mei_sincronizacao_itens=[];
  estadoGlobal.__meiInterface=dados;
 }
 export const interfaceDb={from:consulta,async rpc(nome:string,p:Record<string,any>) {
  const estado=estadoGlobal.__meiInterface!;
+ if (nome === 'xml_nfe_resumo_monitor') {
+   const porEmpresa = new Map();
+   for (const nota of estado.xml_nfe_notas) {
+     const chave = `${nota.org_id}:${nota.cnpj}`;
+     const resumo = porEmpresa.get(chave) ?? { org_id: nota.org_id, cnpj: nota.cnpj, notasEncontradas: 0, notasMes: 0, comprasMes: 0 };
+     resumo.notasEncontradas++;
+     if (nota.situacao === 'autorizada' && nota.emissao >= p.p_inicio && nota.emissao < p.p_fim) {
+       resumo.notasMes++;
+       resumo.comprasMes += nota.valor;
+     }
+     porEmpresa.set(chave, resumo);
+   }
+   return { data: [...porEmpresa.values()], error: null };
+ }
+ if (nome === 'xml_mei_reprocessar_periodo') {
+   const consultas = ['nfse', 'sefaz'].flatMap((origem) => estado[origem === 'nfse' ? 'xml_nfse_empresas' : 'xml_empresas']
+     .filter((e) => e.org_id === p.p_org && e.cnpj === p.p_documento)
+     .map(() => ({ id: `reprocessamento-${origem}`, competencia: p.p_inicio, origem })));
+   return { data: { agendamentos: consultas.map((c) => c.id), existente: false, consultas }, error: null };
+ }
  if(nome==='xml_agendar_periodo'){const id='agendamento-individual';estado.xml_agendamentos.push({id,org_id:p.p_org,competencia:p.p_inicio,origem:p.p_origem,nome_arquivo:p.p_nome,total:p.p_empresas.length});return {data:[id],error:null};}
  if(nome==='xml_cnpja_reservar')return {data:p.p_cnpj==='37335118000180'?{status:'cache',dados:{cnpj:p.p_cnpj,razaoSocial:'Prestadora Sugerida',nomeFantasia:null,mei:true,abertura:'2024-01-15',inicioMei:'2024-02-01',atualizadoEm:null},consultado_em:new Date().toISOString()}:{status:'aguardar',segundos:13},error:null};
  if(nome==='xml_mei_enfileirar'){

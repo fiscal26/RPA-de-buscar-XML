@@ -9,7 +9,7 @@ import { alternarCiencia } from "../actions";
 type Nota = {
   chave: string; numero: string; serie: string; emitente_cnpj: string; emitente_nome: string; emitente_uf: string;
   valor: number | null; emissao: string | null; situacao: string; completa: boolean; manifestada_em: string | null;
-  pdf: boolean; encontrada_em: string;
+  pdf: boolean; encontrada_em: string; xml_fora_prazo?: boolean;
 };
 
 const competencia = (iso: string | null) => (iso ? `${iso.slice(5, 7)}${iso.slice(0, 4)}` : "");
@@ -25,7 +25,7 @@ export default async function HistoricoMonitor({ params, searchParams }: {
     .select("id, org_id, cnpj, nome, codigo, status, mensagem, ultima_consulta, proxima_consulta, ciencia").eq("id", id).maybeSingle();
   if (!m) notFound();
   let consulta = supabase.from("xml_nfe_notas")
-    .select("chave, numero, serie, emitente_cnpj, emitente_nome, emitente_uf, valor, emissao, situacao, completa, manifestada_em, pdf, encontrada_em")
+    .select()
     .eq("org_id", m.org_id).eq("cnpj", m.cnpj).order("emissao", { ascending: false, nullsFirst: false }).limit(1000);
   if (mes && /^\d{4}-\d{2}$/.test(mes)) {
     const [a, b] = mes.split("-").map(Number);
@@ -94,6 +94,7 @@ export default async function HistoricoMonitor({ params, searchParams }: {
                       <td>
                         {x.completa
                           ? <span className="status st-ok">XML{x.pdf ? " e PDF" : ""}</span>
+                          : x.xml_fora_prazo ? <span className="status st-alerta">Prazo de download encerrado</span>
                           : <span className="status st-alerta" title={x.manifestada_em ? "Ciência registrada; o XML chega na próxima consulta"
                               : m.ciencia ? "A ciência ainda não foi aceita: veja a mensagem da última consulta" : "Ciência automática desligada"}>
                               {x.manifestada_em ? "Aguardando XML" : "Só resumo"}

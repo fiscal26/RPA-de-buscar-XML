@@ -17,7 +17,7 @@ def chave(numero: int, emit: str = EMIT, uf: str = "26", aamm: str = "2611") -> 
 
 
 def proc_nfe(numero: int, valor: float = 150.0, dest: str = DEST, emissao: str = "2026-11-05T10:00:00-03:00") -> bytes:
-    ch = chave(numero)
+    ch = chave(numero, aamm=emissao[2:4] + emissao[5:7])
     return f"""<?xml version="1.0" encoding="UTF-8"?><nfeProc xmlns="{NS}" versao="4.00"><NFe xmlns="{NS}">
 <infNFe Id="NFe{ch}" versao="4.00"><ide><cUF>26</cUF><cNF>{numero:08d}</cNF><natOp>VENDA DE MERCADORIA</natOp><mod>55</mod>
 <serie>1</serie><nNF>{numero}</nNF><dhEmi>{emissao}</dhEmi><tpNF>1</tpNF><idDest>2</idDest><cMunFG>2611606</cMunFG>
