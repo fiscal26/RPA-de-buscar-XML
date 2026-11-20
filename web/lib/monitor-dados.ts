@@ -1,9 +1,22 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { ResumoNotasMonitor } from "./monitor";
+import type { MonitorLinha, ResumoNotasMonitor } from "./monitor";
 
 type Nota = { org_id: string; cnpj: string; emissao: string | null; situacao: string; valor: number | null };
 type ResumoEmpresa = ResumoNotasMonitor & { org_id: string; cnpj: string };
+
+export async function carregarEmpresasMonitor(supabase: SupabaseClient): Promise<MonitorLinha[]> {
+  const consulta = supabase.from("xml_nfe_monitor")
+    .select("id, org_id, cnpj, nome, codigo, ciencia, ativo, status, mensagem, proxima_consulta, ultima_consulta, ultima_nota_em, organizacoes(nome)")
+    .order("ultima_nota_em", { ascending: false, nullsFirst: false }).order("nome").order("id");
+  const empresas: MonitorLinha[] = [];
+  for (;;) {
+    const { data, error } = await consulta.range(empresas.length, empresas.length + 499);
+    if (error) throw new Error(`Empresas do Monitor Fiscal: ${error.message}`);
+    if (!data?.length) return empresas;
+    empresas.push(...data as unknown as MonitorLinha[]);
+  }
+}
 
 export async function carregarResumoMonitor(supabase: SupabaseClient, agora = new Date()) {
   const [ano, mes] = agora.toLocaleDateString("sv-SE", { timeZone: "America/Sao_Paulo" }).split("-").map(Number);

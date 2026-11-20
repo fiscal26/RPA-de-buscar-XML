@@ -187,7 +187,7 @@ async function acessivel(page) {
     assert.equal(await page.locator('.tabela-monitor tbody tr').count(), 25);
     const filtro = page.getByRole('searchbox', { name: 'Filtrar empresas monitoradas' });
     const total = (nome) => page.locator('.monitor-numeros .numero-cartao').filter({ hasText: nome }).locator('.valor');
-    assert.equal(await total('Notas encontradas').innerText(), '98');
+    assert.equal(await total('Notas encontradas').innerText(), '99');
     await filtro.fill('Mercado Sol');
     await page.waitForFunction(() => document.querySelectorAll('.tabela-monitor tbody tr').length === 1);
     assert.equal(await total('Notas encontradas').innerText(), '5');
@@ -196,7 +196,7 @@ async function acessivel(page) {
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     await acessivel(page);
     await filtro.fill('Empresa Exemplo');
-    await page.getByText('26 de 32', { exact: true }).waitFor();
+    await page.getByText('26 de 1001', { exact: true }).waitFor();
     assert.equal(await total('Notas encontradas').innerText(), '78');
     await page.getByRole('button', { name: 'Próxima', exact: true }).click();
     assert.equal(await page.locator('.tabela-monitor tbody tr').count(), 1);
@@ -205,9 +205,14 @@ async function acessivel(page) {
     await page.getByText('Nenhuma empresa encontrada.', { exact: false }).waitFor();
     assert.equal(await total('Notas encontradas').innerText(), '0');
     assert.equal(await total('Notas no mês').innerText(), '0');
+    await filtro.fill('65.264.879/0001-74');
+    await page.getByText('Empresa além do limite', { exact: true }).waitFor();
+    assert.equal(await total('Notas encontradas').innerText(), '1');
+    assert.equal(await total('Notas no mês').innerText(), '1');
+    assert.equal((await total('Compras no mês').innerText()).replace(/\s+/g, ' '), 'R$ 275,25');
     await filtro.fill('');
-    await page.getByText('32 de 32', { exact: true }).waitFor();
-    assert.equal(await total('Notas encontradas').innerText(), '98');
+    await page.getByText('1001 de 1001', { exact: true }).waitFor();
+    assert.equal(await total('Notas encontradas').innerText(), '99');
   });
   await teste('Reprocessamento MEI mostra as fontes cadastradas e as fontes que entraram na fila', async () => {
     await page.setViewportSize({ width: 1440, height: 1000 });

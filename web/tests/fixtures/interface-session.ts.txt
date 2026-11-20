@@ -17,7 +17,7 @@ const fontesMei = [
 function consulta(tabela:string) {
  if(estadoGlobal.__meiInterface)Object.assign(dados,estadoGlobal.__meiInterface);
  let linhas=[...(dados[tabela]??[])],unica=false,novo:any=null;
- const q:any={select:()=>q,order:()=>q,eq:(k:string,v:unknown)=>{linhas=linhas.filter(x=>x[k]===v);return q},neq:(k:string,v:unknown)=>{linhas=linhas.filter(x=>x[k]!==v);return q},in:(k:string,v:unknown[])=>{linhas=linhas.filter(x=>v.includes(x[k]));return q},limit:(n:number)=>{linhas=linhas.slice(0,n);return q},range:(a:number,b:number)=>{linhas=linhas.slice(a,b+1);return q},gte:()=>q,lte:()=>q,not:()=>q,is:()=>q,contains:()=>{linhas=[];return q},maybeSingle:()=>{unica=true;return q},single:()=>{unica=true;return q},then:(resolve:any,reject:any)=>{if(novo){if(!['xml_empresas','xml_nfse_empresas','xml_acessos'].includes(tabela))throw Error('Escrita fictícia não prevista');const chave=tabela==='xml_empresas'?'ie':tabela==='xml_nfse_empresas'?'cnpj':'login';if((dados[tabela]??[]).some((e:any)=>e.org_id===novo.org_id&&e[chave]===novo[chave]))return Promise.resolve({data:null,error:{code:'23505',message:'Duplicado'}}).then(resolve,reject);const registro={...novo,id:'individual-'+Date.now(),organizacoes:{nome:orgs[0].nome},xml_acessos:{login:'contador.exemplo'}};dados[tabela]??=[];dados[tabela].push(registro);linhas=[registro];novo=null;}return Promise.resolve({data:unica?linhas[0]??null:linhas,error:null,count:linhas.length}).then(resolve,reject)},insert:(r:any)=>{novo=r;return q},update:()=>{throw Error('Comparação: escrita desativada')},delete:()=>{throw Error('Comparação: escrita desativada')},upsert:()=>{throw Error('Comparação: escrita desativada')}};return q;
+ const q:any={select:()=>q,order:()=>q,eq:(k:string,v:unknown)=>{linhas=linhas.filter(x=>x[k]===v);return q},neq:(k:string,v:unknown)=>{linhas=linhas.filter(x=>x[k]!==v);return q},in:(k:string,v:unknown[])=>{linhas=linhas.filter(x=>v.includes(x[k]));return q},limit:(n:number)=>{linhas=linhas.slice(0,n);return q},range:(a:number,b:number)=>{linhas=linhas.slice(a,b+1);return q},gte:()=>q,lte:()=>q,not:()=>q,is:()=>q,contains:()=>{linhas=[];return q},maybeSingle:()=>{unica=true;return q},single:()=>{unica=true;return q},then:(resolve:any,reject:any)=>{if(novo){if(!['xml_empresas','xml_nfse_empresas','xml_acessos'].includes(tabela))throw Error('Escrita fictícia não prevista');const chave=tabela==='xml_empresas'?'ie':tabela==='xml_nfse_empresas'?'cnpj':'login';if((dados[tabela]??[]).some((e:any)=>e.org_id===novo.org_id&&e[chave]===novo[chave]))return Promise.resolve({data:null,error:{code:'23505',message:'Duplicado'}}).then(resolve,reject);const registro={...novo,id:'individual-'+Date.now(),organizacoes:{nome:orgs[0].nome},xml_acessos:{login:'contador.exemplo'}};dados[tabela]??=[];dados[tabela].push(registro);linhas=[registro];novo=null;}return Promise.resolve({data:unica?linhas[0]??null:tabela==='xml_nfe_monitor'?linhas.slice(0,1000):linhas,error:null,count:linhas.length}).then(resolve,reject)},insert:(r:any)=>{novo=r;return q},update:()=>{throw Error('Comparação: escrita desativada')},delete:()=>{throw Error('Comparação: escrita desativada')},upsert:()=>{throw Error('Comparação: escrita desativada')}};return q;
 }
 export async function contexto() {const perfil={id:'usuario-exemplo',org_id:'org-1',nome:'Marina Oliveira',email:'marina@example.invalid',papel:'admin' as const,ativo:true};return {supabase:interfaceDb as unknown as SupabaseClient,user:{id:perfil.id},perfil,org:orgs[0],admin:true};}
 export type Perfil={id:string;org_id:string|null;nome:string;email:string;papel:'admin'|'gestor'|'usuario';ativo:boolean};
@@ -31,6 +31,14 @@ else {
  for (const nota of dados.xml_nfe_notas) nota.emissao = hoje;
  const mercado = dados.xml_nfe_notas.find((n) => n.cnpj === empresas[1].cnpj);
  dados.xml_nfe_notas.push({ ...mercado, emissao: '2024-01-01T12:00:00Z' }, { ...mercado, situacao: 'cancelada' });
+ const modeloMonitor = dados.xml_nfe_monitor[0];
+ for (let i = 0; i < 968; i++) {
+   dados.xml_nfe_monitor.push({ ...modeloMonitor, id: `monitor-extra-${i}`, nome: `Monitor adicional ${i}`,
+     cnpj: `90000000${String(i).padStart(4, '0')}00` });
+ }
+ const cnpjAlemDoLimite = '65264879000174';
+ dados.xml_nfe_monitor.push({ ...modeloMonitor, id: 'monitor-alem-do-limite', nome: 'Empresa além do limite', cnpj: cnpjAlemDoLimite });
+ dados.xml_nfe_notas.push({ ...mercado, cnpj: cnpjAlemDoLimite, valor: 275.25 });
  for (const [i, caso] of fontesMei.entries()) {
    const empresa = { ...empresas[0], id: `mei-reprocessar-${i}`, org_id: orgs[i + 1].id, cnpj: cnpj(800 + i), nome: caso.nome };
    for (const origem of caso.origens) dados[origem === 'nfse' ? 'xml_nfse_empresas' : 'xml_empresas'].push(empresa);

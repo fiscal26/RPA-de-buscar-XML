@@ -39,6 +39,7 @@ CANCELAMENTO = "110111"
 CIENCIA = "210210"
 LIMITE_CONSULTAS_PONTUAIS = 20  # consChNFe e consNSU compartilham a cota por hora
 ESPERA_SEFAZ_MINUTOS = 61
+XML_FORA_PRAZO = "632"
 _FUSO = timezone(timedelta(hours=-3))
 
 
@@ -104,11 +105,15 @@ class Nota:
     completa: bool = False
     manifestada: bool = False
     pdf: bool = False
+    xml_consultado: bool = False
+    xml_fora_prazo: bool = False
 
     def para_portal(self) -> dict:
         d = {k: getattr(self, k) for k in ("chave", "numero", "serie", "emitente_cnpj", "emitente_nome", "emitente_uf",
                                            "valor", "situacao", "completa", "manifestada", "pdf")}
         d["emissao"] = self.emissao or None
+        if self.xml_consultado:
+            d.update(xml_consultado=True, xml_fora_prazo=self.xml_fora_prazo)
         return d
 
 
@@ -255,17 +260,18 @@ class ClienteNfe:
         self.dormir = dormir
         self.assinador = assinador  # função(xml) -> xml assinado (o A1 só vive na memória)
 
-    def _post(self, url: str, acao: str, corpo: str) -> bytes:
+    def _post(self, url: str, acao: str, corpo: str, tentativas: int = 3) -> bytes:
         cab = {"Content-Type": f'application/soap+xml; charset=utf-8; action="{acao}"'}
-        for tentativa in range(3):
+        for tentativa in range(tentativas):
             try:
                 r = self.sessao.post(url, data=_envelope(corpo), headers=cab, timeout=90)
             except Exception as e:  # rede, TLS
-                if tentativa == 2:
+                if tentativa == tentativas - 1:
                     raise ErroSefaz(f"sem contato com o Ambiente Nacional da NF-e: {e}") from e
                 self.dormir(5 * (tentativa + 1))
                 continue
-            if r.status_code >= 500 and tentativa < 2 and b"retDistDFeInt" not in r.content and b"retEnvEvento" not in r.content:
+            if (r.status_code >= 500 and tentativa < tentativas - 1
+                    and b"retDistDFeInt" not in r.content and b"retEnvEvento" not in r.content):
                 self.dormir(5 * (tentativa + 1))
                 continue
             if r.status_code == 403:
@@ -273,17 +279,18 @@ class ClienteNfe:
             return r.content
         raise ErroSefaz("o Ambiente Nacional da NF-e não respondeu")
 
-    def _dist(self, pedido: str) -> Retorno:
+    def _dist(self, pedido: str, tentativas: int = 3) -> Retorno:
         corpo = (f'<nfeDistDFeInteresse xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeDistribuicaoDFe"><nfeDadosMsg>'
                  f'<distDFeInt xmlns="{NS}" versao="1.01"><tpAmb>{self.ambiente}</tpAmb><cUFAutor>{self.uf}</cUFAutor>'
                  f"<CNPJ>{self.cnpj}</CNPJ>{pedido}</distDFeInt></nfeDadosMsg></nfeDistDFeInteresse>")
-        return ler_retorno(self._post(DISTRIBUICAO[self.ambiente], _ACAO_DIST, corpo))
+        return ler_retorno(self._post(DISTRIBUICAO[self.ambiente], _ACAO_DIST, corpo, tentativas))
 
     def distribuicao(self, ult_nsu: int) -> Retorno:
         return self._dist(f"<distNSU><ultNSU>{ult_nsu:015d}</ultNSU></distNSU>")
 
     def por_chave(self, chave: str) -> Retorno:
-        return self._dist(f"<consChNFe><chNFe>{chave}</chNFe></consChNFe>")
+        # Um timeout pode ocorrer após a SEFAZ receber a consulta e contabilizá-la na cota.
+        return self._dist(f"<consChNFe><chNFe>{chave}</chNFe></consChNFe>", tentativas=1)
 
     def ciencia(self, chaves: list[str]) -> dict[str, str]:
         """Ciência da Operação (até 20 por lote). Devolve chave -> cStat (135/136 registrado, 573 já existia)."""
@@ -488,12 +495,17 @@ def monitorar(cliente: ClienteNfe, ult_nsu: int, destino, nome: str, codigo: str
             cliente.dormir(3)  # o XML completo fica disponível logo depois da ciência
     por_chave = [c for c in dict.fromkeys(buscar_xml)
                  if c not in res.notas or (not res.notas[c].completa and res.notas[c].situacao == "autorizada")]
-    for chave in por_chave[:max(0, min(max_por_chave, LIMITE_CONSULTAS_PONTUAIS))]:
+    limite = max(0, min(max_por_chave, LIMITE_CONSULTAS_PONTUAIS))
+    tentativas_xml: dict[str, str] = {}
+    for chave in por_chave[:limite]:
+        tentativas_xml[chave] = ""
         try:
             r = cliente.por_chave(chave)
         except ErroSefaz as e:
             res.aviso = res.aviso or f"XML completo fica para a próxima consulta: {e}"
+            res.espera_minutos = ESPERA_SEFAZ_MINUTOS
             break
+        tentativas_xml[chave] = r.cstat
         if r.cstat == "656":
             _avisar_bloqueio(res, r)
             break
@@ -504,11 +516,18 @@ def monitorar(cliente: ClienteNfe, ult_nsu: int, destino, nome: str, codigo: str
             continue
         for doc in r.documentos:
             _guardar_documento(doc, res, resumos, destino, nome, cnpj, codigo, pdf)
+    for chave, cstat in tentativas_xml.items():
+        nota = res.nota(chave)
+        nota.xml_consultado = True
+        nota.xml_fora_prazo = cstat == XML_FORA_PRAZO
+    if limite and len(por_chave) > limite:
+        res.espera_minutos = ESPERA_SEFAZ_MINUTOS
     res.resumos = _contar_resumos(res, pendentes)
     # ciência registrada agora e o XML ainda não liberado: a SEFAZ costuma soltar em minutos; tenta de novo em 1 hora
     # (só depois de uma ciência nova, para não ficar consultando de hora em hora uma nota que não sai)
-    if res.manifestadas and any(not n.completa for n in res.notas.values() if n.manifestada) and not res.espera_minutos:
-        res.espera_minutos = ESPERA_SEFAZ_MINUTOS
+    if res.manifestadas and not res.espera_minutos:
+        if any(n.manifestada and not n.completa and not n.xml_fora_prazo for n in res.notas.values()):
+            res.espera_minutos = ESPERA_SEFAZ_MINUTOS
     res.aviso = res.aviso or aviso_nsu
     return res
 
@@ -520,7 +539,7 @@ def _avisar_bloqueio(res: ResultadoMonitor, retorno: Retorno) -> None:
 
 
 def _contar_resumos(res: ResultadoMonitor, pendentes: list[dict]) -> int:
-    sem_xml = {c for c, n in res.notas.items() if not n.completa and n.situacao == "autorizada"}
+    sem_xml = {c for c, n in res.notas.items() if not n.completa and not n.xml_fora_prazo and n.situacao == "autorizada"}
     return len(sem_xml | {p["chave"] for p in pendentes if p["chave"] not in res.notas})
 
 

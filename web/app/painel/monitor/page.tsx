@@ -2,8 +2,8 @@ import Link from "next/link";
 import { contexto } from "@/lib/sessao";
 import { empresasComCnpj } from "@/lib/cadastro-nfse";
 import { situacaoValidade } from "@/lib/nfse";
-import { horaBR, somarNotasMonitor, type MonitorLinha } from "@/lib/monitor";
-import { carregarResumoMonitor } from "@/lib/monitor-dados";
+import { horaBR, somarNotasMonitor } from "@/lib/monitor";
+import { carregarEmpresasMonitor, carregarResumoMonitor } from "@/lib/monitor-dados";
 import AdicionarMonitor from "./AdicionarMonitor";
 import HorarioMonitor from "./HorarioMonitor";
 import TabelaMonitor, { type LinhaTabela } from "./TabelaMonitor";
@@ -13,10 +13,8 @@ type Cert = { org_id: string; cnpj: string; validade: string | null };
 export default async function MonitorFiscal() {
   const { supabase, perfil, admin } = await contexto();
   const gerencia = admin || perfil.papel === "gestor";
-  const [{ data: m }, { data: c }, porEmpresa, cadastro, organizacoes] = await Promise.all([
-    supabase.from("xml_nfe_monitor")
-      .select("id, org_id, cnpj, nome, codigo, ciencia, ativo, status, mensagem, proxima_consulta, ultima_consulta, ultima_nota_em, organizacoes(nome)")
-      .order("ultima_nota_em", { ascending: false, nullsFirst: false }).order("nome"),
+  const [monitores, { data: c }, porEmpresa, cadastro, organizacoes] = await Promise.all([
+    carregarEmpresasMonitor(supabase),
     supabase.from("xml_nfse_certificados").select("org_id, cnpj, validade"),
     carregarResumoMonitor(supabase),
     gerencia ? empresasComCnpj(supabase) : Promise.resolve([]),
@@ -27,7 +25,6 @@ export default async function MonitorFiscal() {
   // o administrador sem escritório próprio configura todos os escritórios de uma vez
   const configOrg = minhaOrg ?? (admin ? orgs[0] : undefined);
   const hora = horaBR(configOrg?.monitor_hora);
-  const monitores = (m ?? []) as unknown as MonitorLinha[];
   const certificados = (c ?? []) as Cert[];
   const linhas: LinhaTabela[] = monitores.map((x) => {
     // o Ambiente Nacional só entrega ao próprio CNPJ ou à mesma raiz (matriz/filial): a procuração não vale aqui

@@ -586,6 +586,9 @@ create table if not exists public.xml_nfe_notas (
   primary key (org_id, chave)
 );
 create index if not exists xml_nfe_notas_empresa_idx on public.xml_nfe_notas (org_id, cnpj, emissao desc);
+alter table public.xml_nfe_notas
+  add column if not exists xml_consultado_em timestamptz,
+  add column if not exists xml_fora_prazo boolean not null default false;
 
 -- Horário da consulta diária, escolhido pelo escritório (padrão 11h, horário de Brasília)
 alter table public.organizacoes add column if not exists monitor_hora time not null default '11:00';
@@ -644,11 +647,16 @@ begin
 
   return query
   select m.id, m.cnpj, m.nome, m.codigo, m.ciencia, m.ultimo_nsu, o.nome, c.cnpj, c.pfx_cifrado, c.senha_cifrada,
-         coalesce((select jsonb_agg(jsonb_build_object('chave', n.chave, 'manifestada', n.manifestada_em is not null))
-                     from (select n.chave, n.manifestada_em from public.xml_nfe_notas n
-                            where n.org_id = m.org_id and n.cnpj = m.cnpj and not n.completa and n.situacao = 'autorizada'
-                              and n.encontrada_em > now() - interval '90 days'
-                            order by n.encontrada_em desc limit 100) n), '[]'::jsonb)
+         coalesce((select jsonb_agg(jsonb_build_object('chave', n.chave, 'manifestada', f.manifestada)
+                                    order by n.xml_consultado_em nulls first, n.encontrada_em desc, n.chave)
+                     from (values (true), (false)) f(manifestada)
+                     cross join lateral (
+                       select n.chave, n.xml_consultado_em, n.encontrada_em from public.xml_nfe_notas n
+                        where n.org_id = m.org_id and n.cnpj = m.cnpj and not n.completa and n.situacao = 'autorizada'
+                          and not n.xml_fora_prazo and (n.manifestada_em is not null) = f.manifestada
+                          and n.encontrada_em > now() - interval '90 days'
+                        order by n.xml_consultado_em nulls first, n.encontrada_em desc, n.chave limit 100
+                     ) n), '[]'::jsonb)
     from public.xml_nfe_monitor m
     join public.organizacoes o on o.id = m.org_id
     cross join lateral (
@@ -676,15 +684,17 @@ begin
   with dados as (
     select n.* from jsonb_to_recordset(coalesce(p_notas, '[]'::jsonb)) as n(
       chave text, numero text, serie text, emitente_cnpj text, emitente_nome text, emitente_uf text,
-      valor numeric, emissao timestamptz, situacao text, completa boolean, manifestada boolean, pdf boolean)
+      valor numeric, emissao timestamptz, situacao text, completa boolean, manifestada boolean, pdf boolean,
+      xml_consultado boolean, xml_fora_prazo boolean)
      where n.chave ~ '^[0-9]{44}$'
   ), gravadas as (
     insert into public.xml_nfe_notas as t (org_id, chave, cnpj, numero, serie, emitente_cnpj, emitente_nome, emitente_uf,
-                                           valor, emissao, situacao, completa, manifestada_em, pdf)
+                                           valor, emissao, situacao, completa, manifestada_em, pdf, xml_consultado_em, xml_fora_prazo)
     select m.org_id, d.chave, m.cnpj, coalesce(d.numero, ''), coalesce(d.serie, ''), coalesce(d.emitente_cnpj, ''),
            coalesce(d.emitente_nome, ''), coalesce(d.emitente_uf, ''), d.valor, d.emissao,
            case when d.situacao in ('autorizada', 'cancelada', 'denegada') then d.situacao else 'autorizada' end,
-           coalesce(d.completa, false), case when d.manifestada then now() end, coalesce(d.pdf, false)
+           coalesce(d.completa, false), case when d.manifestada then now() end, coalesce(d.pdf, false),
+           case when d.xml_consultado then now() end, coalesce(d.xml_fora_prazo, false)
       from dados d
     on conflict (org_id, chave) do update set
       numero        = coalesce(nullif(excluded.numero, ''), t.numero),
@@ -699,7 +709,9 @@ begin
                            when excluded.situacao = 'denegada' then 'denegada' else t.situacao end,
       completa      = t.completa or excluded.completa,
       manifestada_em = coalesce(t.manifestada_em, excluded.manifestada_em),
-      pdf           = t.pdf or excluded.pdf
+      pdf           = t.pdf or excluded.pdf,
+      xml_consultado_em = greatest(t.xml_consultado_em, excluded.xml_consultado_em),
+      xml_fora_prazo = t.xml_fora_prazo or excluded.xml_fora_prazo
     returning (xmax = 0) as nova
   )
   select count(*) filter (where nova) into v_novas from gravadas;
@@ -1651,10 +1663,24 @@ grant execute on function public.xml_mei_nome(uuid,text),public.xml_mei_autoriza
 revoke all on function public.xml_mei_pode_consultar(uuid,text,date) from public,anon;
 grant execute on function public.xml_mei_pode_consultar(uuid,text,date) to authenticated,service_role;
 
+-- Identifica a NFS-e já pendente que cobre a competência do Dossiê MEI.
+create or replace function public.xml_mei_nfse_pendente(p_org uuid, p_nfse uuid, p_competencia date, p_executar_em timestamptz)
+returns uuid language sql stable security invoker set search_path = '' as $$
+  select a.id from public.xml_tarefas t join public.xml_agendamentos a on a.id = t.agendamento_id and a.org_id = t.org_id
+    where t.org_id = p_org and t.nfse_empresa_id = p_nfse and a.origem = 'nfse'
+      and 'nfse_emitidas' = any(t.tipos) and t.status in ('pendente', 'processando')
+      and a.competencia >= p_competencia and a.competencia < (date_trunc('year', p_competencia::timestamp) + interval '1 year')::date
+      and a.executar_em <= p_executar_em
+    order by a.competencia, a.executar_em, a.id limit 1
+$$;
+revoke all on function public.xml_mei_nfse_pendente(uuid, uuid, date, timestamptz) from public, anon, authenticated;
+grant execute on function public.xml_mei_nfse_pendente(uuid, uuid, date, timestamptz) to service_role;
+
 create or replace function public.xml_mei_reprocessar(p_org uuid, p_documento text, p_competencia date)
 returns jsonb language plpgsql security definer set search_path = public as $$
 declare
   v_cnpj text; v_empresa record; v_nfse record; v_ag uuid; v_ids uuid[] := '{}'; v_ativo uuid; v_criados integer := 0;
+  v_complemento uuid;
 begin
   if not coalesce(public.sou_admin() or (p_org = public.minha_org() and public.meu_papel() = 'gestor'), false) then
     raise exception 'Somente gestor ou administrador pode reprocessar';
@@ -1715,6 +1741,15 @@ begin
     v_ids := array_append(v_ids, v_ag); v_criados := v_criados + 1;
   end loop;
   if cardinality(v_ids) = 0 then raise exception 'Cadastre a empresa na NFS-e ou na SEFAZ antes de reprocessar'; end if;
+  if v_nfse.id is null then
+    -- A inserção da tarefa SEFAZ pode ter criado o cadastro e agendado NFS-e pelo trigger.
+    select public.xml_mei_nfse_pendente(p_org, n.id, p_competencia, a.executar_em) into v_complemento
+      from public.xml_nfse_empresas n
+      join public.xml_agendamentos a on a.org_id = n.org_id and a.id = any(v_ids) and a.origem = 'sefaz'
+      where n.org_id = p_org and n.cnpj = v_cnpj
+      order by a.executar_em desc, a.id limit 1;
+    if v_complemento is not null then v_ids := array_append(v_ids, v_complemento); end if;
+  end if;
   return jsonb_build_object('agendamentos', v_ids, 'existente', v_criados = 0);
 end $$;
 
@@ -1746,13 +1781,7 @@ begin
     values (new.org_id, v_empresa.cnpj, v_empresa.nome, v_empresa.codigo, array['nfse_emitidas'])
     on conflict (org_id, cnpj) do nothing;
   select id into v_nfse from public.xml_nfse_empresas where org_id = new.org_id and cnpj = v_empresa.cnpj;
-  if exists (
-    select 1 from public.xml_tarefas t join public.xml_agendamentos a on a.id = t.agendamento_id
-      where t.org_id = new.org_id and t.nfse_empresa_id = v_nfse and a.origem = 'nfse'
-        and 'nfse_emitidas' = any(t.tipos) and t.status in ('pendente', 'processando')
-        and a.competencia >= v_ag.competencia and date_trunc('year', a.competencia) = date_trunc('year', v_ag.competencia)
-        and a.executar_em <= v_ag.executar_em
-  ) then return new; end if;
+  if public.xml_mei_nfse_pendente(new.org_id, v_nfse, v_ag.competencia, v_ag.executar_em) is not null then return new; end if;
 
   insert into public.xml_agendamentos(org_id, criado_por, competencia, executar_em, total, origem, nome_arquivo)
     values (new.org_id, v_ag.criado_por, v_ag.competencia, v_ag.executar_em, 1, 'nfse', 'Complemento NFS-e do MEI (ATF)') returning id into v_novo;

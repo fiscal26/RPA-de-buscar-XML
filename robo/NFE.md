@@ -20,7 +20,8 @@ Homologação: `hom1.nfe.fazenda.gov.br` (opção `monitor_nfe.ambiente` = `"2"`
   robô ainda não tem NSU salvo e a SEFAZ informa o último NSU do CNPJ, a próxima rodada parte desse número.
   Se já existe um NSU salvo, o robô preserva o cursor e avisa quando a SEFAZ informa um NSU maior.
 - **Consultas pela chave**: o robô faz até 20 por rodada. A SEFAZ compartilha essa cota por hora com consultas
-  pontuais por NSU de outros sistemas para o mesmo CNPJ.
+  pontuais por NSU de outros sistemas para o mesmo CNPJ. A fila prioriza chaves nunca consultadas e depois as
+  tentativas mais antigas. A rejeição 632 encerra as consultas pela chave e mantém o resumo no histórico.
 - **Resumo e XML completo**: a nota destinada chega primeiro como resumo (`resNFe`). Com a ciência ligada para a
   empresa, o robô registra a **Ciência da Operação** e busca o XML completo pela chave. Se houver atraso na liberação,
   a nota continua como pendente. O prazo legal para a ciência é de 10 dias contados da autorização da NF-e.

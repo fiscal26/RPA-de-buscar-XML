@@ -341,8 +341,54 @@ def test_consulta_por_chave_mostra_fim_do_prazo_e_continua(tmp_path, monkeypatch
                         if c == chave(5) else por_chave(c))
     r = nfe.monitorar(cliente, 40, tmp_path, "Padaria", pendentes=[
         {"chave": chave(5), "manifestada": True}, {"chave": chave(6), "manifestada": True}], pdf=False)
-    assert "632 Solicitação fora de prazo" in r.aviso and r.resumos == 1
+    assert "632 Solicitação fora de prazo" in r.aviso and r.resumos == 0
+    assert r.notas[chave(5)].para_portal()["xml_fora_prazo"]
     assert r.notas[chave(6)].completa
+
+
+@pytest.mark.parametrize("retorno", ["632", "137", "timeout"])
+def test_fila_por_chave_avanca_entre_rodadas_sem_ultrapassar_cota(tmp_path, monkeypatch, retorno):
+    amb = AmbienteFalso({}, por_chave={chave(21): proc_nfe(21)})
+    post = amb.post
+    chamadas = []
+
+    def responder(url, data, headers, timeout):
+        pedido = re.search(rb"<chNFe>(\d{44})</chNFe>", data)
+        if pedido:
+            c = pedido[1].decode()
+            chamadas.append(c)
+            if c != chave(21) and retorno == "632":
+                return Resposta(ret_dist("632", 0, 0, motivo="Solicitação fora de prazo"))
+            if retorno == "timeout" and c == chave(1):
+                raise TimeoutError("Resposta interrompida")
+        return post(url, data, headers, timeout)
+
+    monkeypatch.setattr(amb, "post", responder)
+    fila = {chave(i): {"chave": chave(i), "manifestada": True} for i in range(1, 22)}
+    nunca_consultada = -1
+    tentadas = {}
+    ordem = list(fila)
+    rodadas = []
+    for rodada in range(3):
+        pendentes = [fila[c] for c in ordem if c in fila]
+        chamadas.clear()
+        r = nfe.monitorar(_cliente(amb), 40, tmp_path, "Padaria", pendentes=pendentes, pdf=False, max_por_chave=50)
+        rodadas.append(chamadas.copy())
+        for nota in r.notas.values():
+            dados = nota.para_portal()
+            if dados.get("xml_consultado"):
+                tentadas[nota.chave] = rodada
+            if nota.completa or dados.get("xml_fora_prazo"):
+                fila.pop(nota.chave)
+        ordem.sort(key=lambda c: tentadas.get(c, nunca_consultada))
+        assert len(chamadas) <= nfe.LIMITE_CONSULTAS_PONTUAIS
+
+    assert chave(21) not in rodadas[0] and chave(21) in rodadas[1]
+    assert chave(21) not in fila
+    if retorno == "632":
+        assert rodadas == [[chave(i) for i in range(1, 21)], [chave(21)], []]
+    if retorno == "timeout":
+        assert rodadas[0] == [chave(1)]  # uma única chamada HTTP mesmo se a resposta se perder
 
 
 def test_manifestacao_final_anterior_libera_o_xml(tmp_path, certificado):
