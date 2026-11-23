@@ -15,6 +15,7 @@ test('períodos de agendamento e reprocessamento MEI são atômicos', async(t)=>
  grant usage on schema auth to authenticated; grant execute on function auth.uid() to authenticated;`);
  await db.exec(fs.readFileSync(path.join(__dirname,'../supabase/schema.sql'),'utf8'));
  await db.exec(fs.readFileSync(path.join(__dirname,'../supabase/migrations/20261115004207_agendamentos_periodo.sql'),'utf8'));
+ await db.exec(fs.readFileSync(path.join(__dirname,'../supabase/migrations/20261120033220_mei_reprocessamento_complemento.sql'),'utf8'));
  await db.exec(`insert into auth.users values ('${user}'); insert into organizacoes(id,nome) values ('${org}','A'),('${outro}','B');
  insert into perfis(id,org_id,nome,email,papel) values ('${user}','${org}','Gestor','a@example.test','gestor');
  select set_config('test.uid','${user}',false);
@@ -54,6 +55,28 @@ test('períodos de agendamento e reprocessamento MEI são atômicos', async(t)=>
  const r=await reprocessar('2026-04-01','2026-06-01');assert.equal(r.agendamentos.length,6);assert.equal(r.existente,false);assert.equal(r.consultas.length,6);assert.deepEqual([...new Set(r.consultas.map(c=>c.origem))].sort(),['nfse','sefaz']);
  const outra=await reprocessar('2026-04-01','2026-06-01');assert.equal(outra.existente,true);assert.deepEqual(outra.agendamentos,r.agendamentos);
  await db.exec('reset role');
+ });
+ await t.test('MEI cadastrado só na SEFAZ retorna o ID do complemento NFS-e gerado pelo trigger', async () => {
+   const soSefaz = '65264879000174';
+   const mes = '2026-06-01';
+   await q(`insert into xml_empresas(org_id,ie,cnpj,nome,acesso_id,tipos)
+     select $1,'162345678',$2,'MEI comércio',id,array['mei'] from xml_acessos where org_id=$1`, [org, soSefaz]);
+   await q(`insert into xml_mei_cadastros(org_id,cnpj,nome,inicio_atividade,inicio_mei)
+     values($1,$2,'MEI comércio','2025-01-01','2025-01-01')`, [org, soSefaz]);
+   assert.deepEqual(await q('select id from xml_nfse_empresas where org_id=$1 and cnpj=$2', [org, soSefaz]), []);
+   const enviar = async () => (await q('select xml_mei_reprocessar_periodo($1,$2,$3,$3) as r', [org, soSefaz, mes]))[0].r;
+
+   await db.exec('set role authenticated');
+   const r = await enviar();
+   const repetido = await enviar();
+   await db.exec('reset role');
+   assert.equal(r.existente, false);
+   assert.equal(repetido.existente, true);
+   assert.deepEqual(repetido.consultas, r.consultas);
+   assert.deepEqual(r.consultas.map(c => [c.competencia, c.origem]), [[mes, 'nfse'], [mes, 'sefaz']]);
+   const [nfse] = await q('select nome_arquivo from xml_agendamentos where id=$1', [r.consultas[0].id]);
+   assert.equal(nfse.nome_arquivo, 'Complemento NFS-e do MEI (ATF)');
+   assert.ok(r.agendamentos.includes(r.consultas[0].id));
  });
  await t.test('MEI fora do enquadramento no último mês desfaz os anteriores',async()=>{
  await db.exec(`update xml_mei_cadastros set fim_mei='2025-12-01'`);const antes=await total();

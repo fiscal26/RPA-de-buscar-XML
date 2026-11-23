@@ -41,6 +41,15 @@ export default function FormAgendamento({ organizacoes, competencia, empresas = 
     iniciar(async () => setResultado(await confirmarAgendamento(previa)));
   }
 
+  function alternarEmpresa(id: string, marcada: boolean) {
+    setMarcadas((anteriores) => {
+      const selecao = new Set(anteriores);
+      if (marcada) selecao.add(id);
+      else selecao.delete(id);
+      return selecao;
+    });
+  }
+
   if (resultado?.ok) {
     return (
       <div ref={sucesso} tabIndex={-1}>
@@ -65,12 +74,49 @@ export default function FormAgendamento({ organizacoes, competencia, empresas = 
         {organizacoes && (
           <>
             <label htmlFor="org_id">Organização</label>
-<Escolha id="org_id" nome="org_id" rotulo="Organização" placeholder="Escolha a organização…"
+            <Escolha id="org_id" nome="org_id" rotulo="Organização" placeholder="Escolha a organização…"
               valor={org} aoMudar={(v)=>{setOrg(v);setMarcadas(new Set());}} opcoes={organizacoes.map((o) => ({ id: o.id, titulo: o.nome }))} />
           </>
         )}
-        <p className="rotulo-campo">Empresas</p><Segmentado nome="fonte" rotulo="Empresas" valor={fonte} aoMudar={setFonte} opcoes={[{id:"planilha",texto:"As de uma planilha"},{id:"cadastro",texto:"Escolher entre as cadastradas"}]} />
-        {fonte === "planilha" ? <><label htmlFor="arquivo">Planilha das empresas</label><SeletorArquivo id="arquivo" nome="arquivo" aceita=".xlsx,.xlsm,.csv" obrigatorio titulo="Escolher a planilha (.xlsx ou .csv)" /></> : organizacoes&&!org ? <p className="suave">Escolha a organização para ver as empresas cadastradas.</p> : !daOrg.length ? <p className="suave">Nenhuma empresa SEFAZ cadastrada. <Link href="/painel/empresas/nova?origem=sefaz">Cadastrar empresa</Link></p> : <div className="selecao-empresas"><div className="selecao-topo"><label className="selecionar-todas"><input type="checkbox" checked={todas} onChange={()=>setMarcadas(todas?new Set():new Set(disponiveis.map((e)=>e.id)))} />Selecionar todas com acesso ATF</label><input type="search" aria-label="Procurar empresa SEFAZ" placeholder="Nome, código, CNPJ ou IE" value={filtro} onChange={(e)=>setFiltro(e.target.value)} /></div><div className="lista-empresas" role="group" aria-label="Empresas SEFAZ cadastradas">{daOrg.map((e)=><label key={e.id} hidden={!visivel(e)}><input type="checkbox" name="empresas" value={e.id} disabled={!e.acesso_id} checked={marcadas.has(e.id)} onChange={(ev)=>setMarcadas((m)=>{const n=new Set(m);if(ev.target.checked)n.add(e.id);else n.delete(e.id);return n;})} /><span className="nome-empresa">{e.nome}{!e.acesso_id&&<small> · falta login ATF</small>}</span><span className="doc suave">IE {formatarIe(e.ie)}</span></label>)}</div><p className="suave">{marcadas.size} selecionadas. Serão usados os serviços e logins já salvos no cadastro.</p></div>}
+        <p className="rotulo-campo">Empresas</p>
+        <Segmentado nome="fonte" rotulo="Empresas" valor={fonte} aoMudar={setFonte}
+          opcoes={[{ id: "planilha", texto: "As de uma planilha" }, { id: "cadastro", texto: "Escolher entre as cadastradas" }]} />
+        {fonte === "planilha" ? (
+          <>
+            <label htmlFor="arquivo">Planilha das empresas</label>
+            <SeletorArquivo id="arquivo" nome="arquivo" aceita=".xlsx,.xlsm,.csv" obrigatorio titulo="Escolher a planilha (.xlsx ou .csv)" />
+          </>
+        ) : organizacoes && !org ? (
+          <p className="suave">Escolha a organização para ver as empresas cadastradas.</p>
+        ) : !daOrg.length ? (
+          <p className="suave">Nenhuma empresa SEFAZ cadastrada. <Link href="/painel/empresas/nova?origem=sefaz">Cadastrar empresa</Link></p>
+        ) : (
+          <div className="selecao-empresas">
+            <div className="selecao-topo">
+              <label className="selecionar-todas">
+                <input type="checkbox" checked={todas} disabled={!disponiveis.length}
+                  onChange={() => setMarcadas(todas ? new Set() : new Set(disponiveis.map((e) => e.id)))} />
+                Selecionar todas com acesso ATF
+              </label>
+              <input type="search" aria-label="Procurar empresa SEFAZ" placeholder="Nome, código, CNPJ ou IE"
+                value={filtro} onChange={(e) => setFiltro(e.target.value)} />
+            </div>
+            <div className="lista-empresas" role="group" aria-label="Empresas SEFAZ cadastradas">
+              {daOrg.map((e) => (
+                <label key={e.id} hidden={!visivel(e)}>
+                  <input type="checkbox" name="empresas" value={e.id} disabled={!e.acesso_id}
+                    checked={marcadas.has(e.id)} onChange={(ev) => alternarEmpresa(e.id, ev.target.checked)} />
+                  <span className="empresa-selecao-dados">
+                    <span className="nome-empresa">{e.nome}{!e.acesso_id && <small className="suave"> · falta login ATF</small>}</span>
+                    <span className="doc suave">IE {formatarIe(e.ie)}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+            <p className="suave selecao-rodape"><span role="status">{marcadas.size} {marcadas.size === 1 ? "selecionada" : "selecionadas"}.</span>{" "}
+              Serão usados os serviços e logins já salvos no cadastro.</p>
+          </div>
+        )}
 
         <PeriodoCompetencias competencia={competencia} minimo="2006-01" />
 
