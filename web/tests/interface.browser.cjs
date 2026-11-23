@@ -118,6 +118,40 @@ async function acessivel(page) {
     await page.getByRole('button',{name:'Confirmar agendamento',exact:true}).click();await page.getByRole('link',{name:/Acompanhar/}).first().waitFor();
     await page.setViewportSize({width:1440,height:1000});
   });
+  await teste('Listas de empresas do agendamento mantêm nome e documento legíveis ao buscar e marcar', async () => {
+    for (const [origem, grupo, busca] of [
+      ['sefaz', 'Empresas SEFAZ cadastradas', 'Procurar empresa SEFAZ'],
+      ['nfse', 'Empresas cadastradas', 'Procurar empresa'],
+    ]) {
+      await page.goto(`${url}/painel/agendar?origem=${origem}&fonte=cadastro&org=org-1`);
+      const lista = page.getByRole('group', { name: grupo, exact: true });
+      const buscar = page.getByRole('searchbox', { name: busca, exact: true });
+      await buscar.fill('Restaurante Sabor da Terra');
+      const empresa = lista.getByRole('checkbox', { name: /Restaurante Sabor da Terra/ });
+      await empresa.waitFor();
+      for (const width of [1329, 960, 390]) {
+        await page.setViewportSize({ width, height: 900 });
+        const medidas = await empresa.evaluate((checkbox) => {
+          const linha = checkbox.closest('label');
+          const nome = linha.querySelector('.nome-empresa').getBoundingClientRect();
+          const documento = linha.querySelector('.doc').getBoundingClientRect();
+          const limite = linha.getBoundingClientRect();
+          return { largura: nome.width, separado: nome.right <= documento.left || nome.bottom <= documento.top,
+            contido: documento.right <= limite.right && nome.right <= limite.right };
+        });
+        assert.ok(medidas.largura > 120 && medidas.separado && medidas.contido, `${origem}, ${width}px: ${JSON.stringify(medidas)}`);
+      }
+      await buscar.press('Tab');
+      assert.ok(await empresa.evaluate((el) => el === document.activeElement));
+      await empresa.press('Space');
+      assert.ok(await empresa.isChecked());
+      await buscar.fill('Mercado Sol');
+      await lista.getByRole('checkbox', { name: /Mercado Sol/ }).waitFor();
+      assert.equal(await lista.locator('input:checked').count(), 1);
+      await acessivel(page);
+    }
+    await page.setViewportSize({ width: 1440, height: 1000 });
+  });
   await teste('Formulário vazio identifica os campos, preserva o foco e remove o erro após a correção', async () => {
     await page.goto(`${url}/login`);
     assert.equal(await page.locator('.validacao-resumo').count(), 0);
