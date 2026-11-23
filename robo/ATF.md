@@ -1,6 +1,6 @@
 # ATF/MEI por escritório
 
-Esta integração depende da entrega NFS-e aprovada em `b9d19db`. Sua revisão de
+Esta integração depende da NFS-e corrigida em `2af5bde`. Sua revisão de
 código é separada da autorização para publicar e ativar as instalações.
 
 ## Identidade, pastas e comandos
@@ -96,12 +96,15 @@ aceitando chamadas de versões anteriores durante a transição.
 
 ## Banco e retomada
 
-A migração `20261116110000_atf_mei_por_contexto.sql` acrescenta/atualiza
-`xml_pegar_lote_v2`, `xml_mei_registrar_v2` e `xml_mei_registrar_contexto`, mantendo
-suas assinaturas da referência anterior. Os contratos antigos e a fila NFS-e ficam
-preservados. O SQL mantém as regras atuais de acompanhamento MEI pausado e os
-gatilhos de complemento NFS-e e reprocessamento. Não aplicar a migração operacional
-antes da homologação e autorização correspondentes.
+A migração `20261116110000_atf_mei_por_contexto.sql` cria os contratos por
+escritório. Depois da migração de reserva da NFS-e, aplique
+`20261123181000_reserva_tarefas_atf.sql`. O robô usa `xml_atf_reservar_lote`
+e renova as tarefas em andamento e as que aguardam Minhas Mensagens.
+Progresso, conclusão e a gravação MEI exigem a tentativa vigente.
+O reenvio de históricos usa `xml_mei_registrar_contexto`.
+O SQL preserva contratos anteriores, a fila NFS-e e os gatilhos de complemento
+NFS-e e reprocessamento. A aplicação operacional aguarda homologação e autorização.
+Pause versões anteriores de ATF e NFS-e que consomem o mesmo banco antes da troca.
 
 As funções usam as permissões do proprietário (`SECURITY DEFINER`) para trabalhar
 nas tabelas protegidas; somente `service_role` pode chamá-las. A fila reserva as
@@ -110,8 +113,9 @@ sessão (`SKIP LOCKED`). O ensaio local não comprova disputa entre conexões re
 
 Ao pausar, registre IDs das tarefas, organização, IE, período, login e marcador da
 caixa, sem guardar senha/chave no registro. Não devolver tudo para pendente nem
-apagar `_caixas_atf` em lote. A fila pode retomar ATF após 90 minutos; isso não prova
-que uma resposta anterior desapareceu nem libera sua reserva.
+apagar `_caixas_atf` em lote. A fila pode retomar ATF após 90 minutos sem renovação.
+A reserva física da caixa continua até a conferência. Anexos que chegaram
+depois da perda da tentativa ficam na área interna da rodada para conferência.
 
 Após interrupção, confira os documentos, a caixa e as tarefas com uma versão
 compatível com essas funções. Se houver reserva pendente, faça a conferência do

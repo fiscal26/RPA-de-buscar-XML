@@ -33,6 +33,7 @@ import socket
 import sys
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -108,9 +109,16 @@ class Trabalho:
     codigo: str = ""
     contexto: ContextoArmazenamento = field(kw_only=True)
     execucao_id: str = field(default_factory=lambda: str(uuid4()))
+    renovar_reserva: Callable[[], bool] | None = field(default=None, kw_only=True, repr=False)
+    reserva_perdida: bool = field(default=False, init=False)
 
     def __post_init__(self):
         self.tipos = arquivos.expandir_tipos(self.tipos)  # "cte" = CT-e Remetente + CT-e Destinatario
+
+    def confirmar_reserva(self) -> bool:
+        if self.renovar_reserva is not None and not self.reserva_perdida:
+            self.reserva_perdida = not self.renovar_reserva()
+        return not self.reserva_perdida
 
     @property
     def rotulo(self) -> str:
@@ -175,11 +183,13 @@ class Executor:
         for chave, envio in list(envios.items()):
             ie, tipo = chave
             t = por_ie.get(ie)
-            if t is None:
+            if t is None or not t.confirmar_reserva():
                 continue
             nome = arquivos.TIPOS.get(tipo, tipo)
             if envio.duvidoso:
                 self._progresso(t, tipo, "andamento", "conferindo no ATF (consulta em HTML)")
+                if t.reserva_perdida:
+                    continue
                 n = com_sessao(atf.conferir_html, tipo, ie, t.inicio, t.fim, nome)
             elif envio.ok and envio.notas_html and envio.atrasada and not envio.confirmada:
                 n = envio.notas_html  # o HTML já mostrou notas, mas o XML recebeu um "Nenhum registro": pede de novo
@@ -191,7 +201,7 @@ class Executor:
                 envio.sem_notas = True
             else:
                 envio.sem_notas = False
-                if not envio.confirmada:  # a consulta em XML pode não ter sido aceita: pede de novo
+                if not envio.confirmada and t.confirmar_reserva():
                     log.info("   %s IE %s: %d nota(s) no HTML; pedindo o XML de novo", nome, ie, n)
                     novo = com_sessao(atf.solicitar, tipo, ie, t.inicio, t.fim, nome)
                     atf.esperar_respostas_atrasadas(0)  # o HTML já respondeu: um alerta atrasado não vale mais
@@ -248,6 +258,9 @@ class Executor:
                 falhas[i] = Resultado("erro", "Identidade SEFAZ-PB incompatível com a tarefa.")
             else:
                 try:
+                    if not t.confirmar_reserva():
+                        falhas[i] = Resultado("erro", "Reserva da tarefa ATF encerrada.")
+                        continue
                     with self._pasta_empresa(t) as pasta:
                         # Recusa competências ambíguas antes de enviar consultas ou publicar documentos.
                         if any(tipo != "mei" for tipo in t.tipos):
@@ -302,6 +315,8 @@ class Executor:
         for t in trabalhos:
             log.info("%s — %s", t.rotulo, ", ".join(arquivos.TIPOS.get(x, x) for x in t.tipos))
             for tipo in t.tipos:
+                if tipo in TIPO_TELA and not t.confirmar_reserva():
+                    break
                 if tipo in TIPO_TELA and atf.bloqueada(t.ie):  # o login não tem acesso: pula o resto da empresa
                     envios[(t.ie, tipo)] = Envio(ie=t.ie, tipo=tipo, ok=False, resposta=sem_permissao(atf.bloqueada(t.ie)))
                     self._progresso(t, tipo, "erro", envios[(t.ie, tipo)].resposta)
@@ -309,6 +324,8 @@ class Executor:
                 if tipo in TIPO_TELA:
                     nome = arquivos.TIPOS.get(tipo, tipo)
                     self._progresso(t, tipo, "andamento", "consultando no ATF")
+                    if t.reserva_perdida:
+                        break
                     # primeiro em HTML (responde na hora): sem notas, nem pede o XML
                     n = com_sessao(atf.conferir_html, tipo, t.ie, t.inicio, t.fim, nome) if html_antes else None
                     if atf.bloqueada(t.ie):  # a consulta em HTML já mostrou que o login não tem acesso
@@ -320,6 +337,8 @@ class Executor:
                                                      resposta="Nenhum registro (consulta em HTML)")
                         self._progresso(t, tipo, "sem_movimento", "sem notas no período (consulta em HTML)")
                         continue
+                    if not t.confirmar_reserva():
+                        break
                     envio = envios[(t.ie, tipo)] = com_sessao(atf.solicitar, tipo, t.ie, t.inicio, t.fim, nome)
                     envio.notas_html = n
                     if atf.bloqueada(t.ie):
@@ -335,6 +354,8 @@ class Executor:
         emissoes: dict[tuple[str, str], object] = {}
         for t in trabalhos:
             for tipo in t.tipos:
+                if tipo in SERVICOS and not t.confirmar_reserva():
+                    break
                 if tipo in SERVICOS and atf.bloqueada(t.ie):
                     e = emissoes[(t.ie, tipo)] = Emissao(ie=t.ie, tipo=tipo, ok=False, resposta=sem_permissao(atf.bloqueada(t.ie)))
                     self._progresso(t, tipo, **situacao_emissao(e))
@@ -350,7 +371,12 @@ class Executor:
                             self._progresso(t, tipo, "erro", str(erro))
                             continue
                     self._progresso(t, tipo, "andamento", "fazendo no ATF")
+                    if t.reserva_perdida:
+                        break
                     e = emissoes[(t.ie, tipo)] = com_sessao(atf.emitir, tipo, t.ie, t.inicio, t.fim, nome, **extra)
+                    if not t.confirmar_reserva():
+                        self._guardar_para_conferencia(t, e.arquivos)
+                        break
                     if e.arquivos:
                         with self._pasta_empresa(t) as pasta:
                             arquivos.salvar_documentos(e.arquivos, pasta, tipo, f"{t.inicio:%Y-%m}")
@@ -433,7 +459,8 @@ class Executor:
             recolha.ignorados = []  # já salvos em _sem_empresa
             self.pendencias.append(Pendencia(trabalhos, t0.senha, envios, emissoes, esperadas, desde, relevante,
                                              alvos, recolha, marcador, anteriores))
-        elif marcador and completas and not recolha.incertas and all(e.ok for e in envios.values()):
+        elif (marcador and completas and not recolha.incertas and all(e.ok for e in envios.values())
+              and not any(t.reserva_perdida for t in trabalhos)):
             marcador.unlink()
         return resultados
 
@@ -518,12 +545,20 @@ class Executor:
         if salvar_empresas:
             for t in trabalhos:
                 for tipo in t.tipos:
-                    if por_destino.get((t.ie, tipo)):
-                        self._salvar_originais(t, tipo, por_destino[(t.ie, tipo)])
+                    baixados = por_destino.get((t.ie, tipo))
+                    if baixados:
+                        if t.confirmar_reserva():
+                            self._salvar_originais(t, tipo, baixados)
+                        else:
+                            self._guardar_para_conferencia(t, baixados)
         return por_destino
 
     def _resultado(self, t: Trabalho, envios, por_destino, recolha: Recolha, completas: bool,
                    emissoes: dict | None = None, final: bool = True) -> Resultado:
+        if not t.confirmar_reserva():
+            for tipo in t.tipos:
+                self._guardar_para_conferencia(t, por_destino.get((t.ie, tipo), []))
+            return Resultado("erro", "Reserva ATF encerrada. Confira os anexos e a caixa da rodada.")
         detalhes: dict = {}
         sem_notas, faltando, falhas, partes = [], [], [], []
         exige_conferencia = False
@@ -569,6 +604,8 @@ class Executor:
                     falhas.append(f"{nome}: {e.resposta or 'o ATF não devolveu o arquivo'}")
                 continue
             envio = envios.get((t.ie, tipo))
+            if envio is None:
+                continue
             baixados = por_destino.get((t.ie, tipo), [])
             r = self._salvar_originais(t, tipo, baixados) if baixados else None
             vazio = r is None
@@ -664,6 +701,10 @@ class Executor:
 
     def _area(self, t: Trabalho, area: str) -> Path:
         return area_do_contexto(self.cfg["pastas"]["destino"], area, *t.escopo, t.execucao_id)
+
+    def _guardar_para_conferencia(self, t: Trabalho, baixados):
+        if baixados:
+            arquivos.salvar_nao_identificados(baixados, self._area(t, "_nao_identificados"))
 
 
     def _diagnostico(self, t: Trabalho) -> Diagnostico:
@@ -842,8 +883,9 @@ class Portal:
         r = requests.request(metodo, f"{self.url}{caminho}", headers=cab, timeout=self.timeout, **kw)
         if r.status_code == 404 and caminho in (
             "/rest/v1/rpc/xml_nfse_reservar_lote", "/rest/v1/rpc/xml_atualizar_tarefa_reservada",
-            "/rest/v1/rpc/xml_devolver_tarefa_reservada", "/rest/v1/rpc/xml_pegar_lote_v2",
-            "/rest/v1/rpc/xml_mei_registrar_v2", "/rest/v1/rpc/xml_mei_registrar_contexto",
+            "/rest/v1/rpc/xml_devolver_tarefa_reservada", "/rest/v1/rpc/xml_atf_reservar_lote",
+            "/rest/v1/rpc/xml_renovar_reservas_atf", "/rest/v1/rpc/xml_mei_registrar_tarefa_reservada",
+            "/rest/v1/rpc/xml_mei_registrar_contexto",
         ):
             raise ContratoPortalIndisponivel(f"Função {caminho.rsplit('/', 1)[-1]} indisponível. Confira o banco e a migração de integração.")
         if r.status_code >= 400:
@@ -852,7 +894,7 @@ class Portal:
 
     def pegar_lote(self, robo: str, login_aberto: str, maximo: int) -> list[dict]:
         """Tarefas liberadas de UM login (de preferência o que já está aberto no ATF)."""
-        return self._r("POST", "/rest/v1/rpc/xml_pegar_lote_v2",
+        return self._r("POST", "/rest/v1/rpc/xml_atf_reservar_lote",
                        json={"p_robo": robo, "p_login": login_aberto, "p_max": maximo}).json() or []
 
     def pegar_lote_nfse(self, robo: str, maximo: int) -> list[dict]:
@@ -871,9 +913,6 @@ class Portal:
             "and": f"(competencia.gte.{ano}-01-01,competencia.lte.{competencia[:7]}-01)"}).json()
         return [m["competencia"][:7] for m in meses]
 
-    def atualizar_tarefa(self, tid: str, campos: dict):
-        self._r("PATCH", f"/rest/v1/xml_tarefas?id=eq.{tid}", json=campos, headers={"Prefer": "return=minimal"})
-
     def atualizar_tarefa_reservada(self, tarefa: dict, campos: dict) -> bool:
         if not tarefa.get("tentativa_id"):
             raise ReservaTarefaPerdida("A fila não informou o identificador da tentativa.")
@@ -881,6 +920,9 @@ class Portal:
             "p_tarefa": tarefa["id"], "p_tentativa": tarefa["tentativa_id"], "p_campos": campos,
         })
         return resposta.json() is True
+
+    def renovar_reservas_atf(self, tentativas: list[str]):
+        self._r("POST", "/rest/v1/rpc/xml_renovar_reservas_atf", json={"p_tentativas": tentativas})
 
     def devolver_tarefa_reservada(self, tarefa: dict) -> bool:
         resposta = self._r("POST", "/rest/v1/rpc/xml_devolver_tarefa_reservada", json={
@@ -918,14 +960,16 @@ class Portal:
                 headers={"Prefer": "resolution=merge-duplicates,return=minimal"})
 
 
-    def registrar_mei_tarefa(self, tarefa: str, contexto: ContextoArmazenamento, meses: dict,
-                            inicio_atividade: str | None):
+    def registrar_mei_tarefa(self, tarefa: dict, contexto: ContextoArmazenamento, meses: dict,
+                            inicio_atividade: str | None) -> int | None:
         if (contexto.tipo_contexto, contexto.origem, contexto.tipo_documento) != ("portal", "sefaz_pb", "ie"):
             raise IdentidadeArmazenamentoInvalida("Só uma tarefa SEFAZ do portal pode enviar MEI.")
-        self._r("POST", "/rest/v1/rpc/xml_mei_registrar_v2", json={
-            "p_tarefa": tarefa, "p_org": contexto.contexto_id, "p_ie": contexto.documento,
+        resposta = self._r("POST", "/rest/v1/rpc/xml_mei_registrar_tarefa_reservada", json={
+            "p_tarefa": tarefa["id"], "p_tentativa": tarefa["tentativa_id"],
+            "p_org": contexto.contexto_id, "p_ie": contexto.documento,
             "p_meses": meses, "p_inicio_atividade": inicio_atividade,
         })
+        return None if resposta.status_code == 204 else resposta.json()
 
 
     def registrar_mei_contexto(self, org: str, ie: str, meses: dict, inicio_atividade: str | None) -> int:
@@ -951,7 +995,7 @@ class Robo:
         self.executor = Executor(cfg, p["segundos_assistido"])
         self.executor.ao_progresso = self._andamento
         self.executor.ao_mei = self._mei
-        self.em_curso: dict[int, tuple[str, dict]] = {}  # trabalho -> (id da tarefa, detalhes por serviço)
+        self.em_curso: dict[int, tuple[dict, dict]] = {}  # trabalho -> (tarefa reservada, detalhes por serviço)
         self.tarefas_atuais: list[dict] = []
         self.aguardando: dict[int, dict] = {}  # trabalho -> tarefa à espera da última leitura das mensagens
         self.ultimo_sinal = 0.0
@@ -1039,6 +1083,7 @@ class Robo:
         while not self.parar:
             try:
                 self._sinal(forcar=True)
+                self._renovar_atf()
                 if falhou:
                     log.info("Sinal de vida ao portal voltou.")
                 falhou = False
@@ -1050,6 +1095,12 @@ class Robo:
                 if self.parar:
                     return
                 time.sleep(1)
+
+    def _renovar_atf(self):
+        tarefas = list(self.tarefas_atuais) + list(getattr(self, "aguardando", {}).values())
+        tentativas = list(dict.fromkeys(t["tentativa_id"] for t in tarefas if t.get("tentativa_id")))
+        if tentativas:
+            self.portal.renovar_reservas_atf(tentativas)
 
     def _sinal(self, forcar=False):
         if forcar or time.time() - self.ultimo_sinal > 30:
@@ -1063,6 +1114,9 @@ class Robo:
         self.em_curso = {}
         grupos = {}
         for tarefa in lote:
+            if not tarefa.get("tentativa_id"):
+                log.warning("Tarefa ATF %s recebida sem identificador de reserva.", tarefa.get("id"))
+                continue
             try:
                 contexto = contexto_portal(tarefa, "sefaz_pb", "ie")
                 tipos = tarefa.get("tipos") or []
@@ -1073,6 +1127,8 @@ class Robo:
                 login, cifra = tarefa["login_atf"], tarefa["senha_cifrada"]
             except (KeyError, ValueError, TypeError) as erro:
                 self._finalizar(tarefa, Resultado("erro", f"Tarefa sem contexto válido: {erro}"))
+                continue
+            if not self.portal.atualizar_tarefa_reservada(tarefa, {}):
                 continue
             grupos.setdefault((contexto.contexto_id, login, cifra, inicio, fim), []).append((tarefa, contexto, tipos))
 
@@ -1091,8 +1147,12 @@ class Robo:
                     self._executar_grupo_portal(trabalhos)
                     trabalhos, ies = [], set()
                 ies.add(contexto.documento)
-                trabalhos.append((tarefa, Trabalho(contexto.documento, contexto.nome, login, senha, tipos, inicio, fim,
-                                                    tarefa.get("cnpj") or "", contexto.codigo, contexto=contexto)))
+                trabalho = Trabalho(
+                    contexto.documento, contexto.nome, login, senha, tipos, inicio, fim,
+                    tarefa.get("cnpj") or "", contexto.codigo, contexto=contexto,
+                    renovar_reserva=lambda tarefa=tarefa: self.portal.atualizar_tarefa_reservada(tarefa, {}),
+                )
+                trabalhos.append((tarefa, trabalho))
             self._executar_grupo_portal(trabalhos)
         self.chrome_ok = True
 
@@ -1183,7 +1243,7 @@ class Robo:
         except Exception:
             log.exception("Erro inesperado na NFS-e de %s", t["nome"])
             r = Resultado("erro", "Falha inesperada ao buscar as NFS-e. Agende de novo; se repetir, fale com a LotiVisse.")
-        if not self._finalizar(t, r, reservada=True):
+        if not self._finalizar(t, r):
             log.warning("   NFS-e %s: resultado descartado após perder a reserva.", t.get("nome"))
             return
         log.info("   NFS-e %s -> %s: %s", t["nome"], r.status, r.mensagem)
@@ -1229,8 +1289,7 @@ class Robo:
         for trabalhos, rs in repescados:
             for trabalho, r in zip(trabalhos, rs):
                 t = self.aguardando.pop(id(trabalho), None)
-                if t is not None:
-                    self._finalizar(t, r)
+                if t is not None and self._finalizar(t, r):
                     log.info("   %s -> %s: %s", t["nome"], r.status, r.mensagem)
         if ler and not tudo:
             log.error("ERRO: o ATF não entregou todos os XML em Minhas Mensagens, nem na última leitura. "
@@ -1240,17 +1299,21 @@ class Robo:
 
     def _andamento(self, trabalho, tipo: str, situacao: str, mensagem: str):
         """Cada serviço de cada empresa aparece no portal assim que muda (na fila, fazendo, concluído...)."""
-        tarefa = self.em_curso.get(id(trabalho))
-        if tarefa is None:
+        em_curso = self.em_curso.get(id(trabalho))
+        if em_curso is None or trabalho.reserva_perdida:
             return
-        tid, detalhes = tarefa
+        tarefa, detalhes = em_curso
         detalhes[tipo] = {"situacao": situacao, "mensagem": mensagem[:200]}
-        self.portal.atualizar_tarefa(tid, {"detalhes": detalhes})
+        trabalho.reserva_perdida = not self.portal.atualizar_tarefa_reservada(tarefa, {"detalhes": detalhes})
 
     def _mei(self, trabalho, resumo: dict):
-        tarefa = self.em_curso.get(id(trabalho))
-        if tarefa is not None:
-            self.portal.registrar_mei_tarefa(tarefa[0], trabalho.contexto, resumo.get("historico") or {}, resumo.get("inicio_atividade"))
+        em_curso = self.em_curso.get(id(trabalho))
+        if em_curso is not None and not trabalho.reserva_perdida:
+            registrados = self.portal.registrar_mei_tarefa(
+                em_curso[0], trabalho.contexto, resumo.get("historico") or {}, resumo.get("inicio_atividade"))
+            if registrados is None:
+                trabalho.reserva_perdida = True
+                return
             try:  # alerta de limite na hora (se falhar, sai no agendamento diário do portal)
                 r = self.portal.avisar_mei(trabalho.ie, org_id=trabalho.contexto.contexto_id)
                 if r.get("enviados"):
@@ -1260,19 +1323,19 @@ class Robo:
             except Exception as e:
                 log.warning("   alerta MEI não pedido ao portal: %s", e)
 
-    def _finalizar(self, t, r: Resultado, *, reservada=False):
-        andamento = next((d for tid, d in list(self.em_curso.values()) if tid == t["id"]), {})
+    def _finalizar(self, t, r: Resultado) -> bool:
+        tentativa = t["tentativa_id"]
+        andamento = next((d for tarefa, d in list(self.em_curso.values()) if tarefa["tentativa_id"] == tentativa), {})
         detalhes = detalhes_finais(arquivos.expandir_tipos(t.get("tipos") or []), r, andamento)
         campos = {
             "status": r.status, "mensagem": r.mensagem[:500], "qtd_xml": r.qtd_xml,
             "detalhes": detalhes, "pasta": r.pasta,
         }
-        if reservada:
-            return self.portal.atualizar_tarefa_reservada(t, campos)
-        self.portal.atualizar_tarefa(t["id"], {**campos, "concluido_em": agora()})
-        # Uma falha posterior no lote não deve reescrever tarefas já confirmadas pelo painel.
+        aceito = self.portal.atualizar_tarefa_reservada(t, campos)
+        # Uma falha posterior não deve repetir o retorno de uma tentativa encerrada.
         self.tarefas_atuais = [pendente for pendente in getattr(self, "tarefas_atuais", [])
-                              if pendente["id"] != t["id"]]
+                              if pendente.get("tentativa_id") != tentativa]
+        return aceito
 
     def encerrar(self, *_):
         log.info("Encerrando...")
@@ -1296,7 +1359,7 @@ class Robo:
 
     def _executar_grupo_portal(self, pares: list):
         trabalhos = [trabalho for _, trabalho in pares]
-        self.em_curso.update({id(trabalho): (tarefa["id"], {}) for tarefa, trabalho in pares})
+        self.em_curso.update({id(trabalho): (tarefa, {}) for tarefa, trabalho in pares})
         resultados = self.executor.executar_rodada(trabalhos)
         for (tarefa, trabalho), resultado in zip(pares, resultados, strict=True):
             trabalho.senha = ""
@@ -1304,17 +1367,20 @@ class Robo:
 
 
     def _registrar_resultado(self, tarefa, trabalho, resultado):
-        log.info("   %s -> %s: %s", tarefa["nome"], resultado.status, resultado.mensagem)
         if resultado.pendente:
+            # A caixa continua pendente, inclusive quando o banco recusou a atualização.
             self.aguardando[id(trabalho)] = tarefa
-            self.portal.atualizar_tarefa(tarefa["id"], {"mensagem": resultado.mensagem[:500], "detalhes": resultado.detalhes})
+            aceito = self.portal.atualizar_tarefa_reservada(
+                tarefa, {"mensagem": resultado.mensagem[:500], "detalhes": resultado.detalhes})
         else:
-            self._finalizar(tarefa, resultado)
+            aceito = self._finalizar(tarefa, resultado)
+        if aceito:
+            log.info("   %s -> %s: %s", tarefa["nome"], resultado.status, resultado.mensagem)
 
 
     def _lote_interrompido(self):
-        pendentes = {t["id"] for t in self.aguardando.values()}
-        return [t for t in self.tarefas_atuais if t["id"] not in pendentes]
+        pendentes = {t["tentativa_id"] for t in self.aguardando.values()}
+        return [t for t in self.tarefas_atuais if t.get("tentativa_id") and t["tentativa_id"] not in pendentes]
 
 
 # ====================================================================== NFS-e (Portal Nacional)

@@ -1,15 +1,20 @@
 # Revisão da integração ATF/MEI por escritório
 
-Branch `integracao/atf-mei-por-escritorio`. Comparar a entrega com `b9d19db`, a
-correção NFS-e aprovada. A main conferida por fetch permanece em `ae2eadc`.
+Branch `integracao/atf-mei-por-escritorio`. Comparar a entrega com `2af5bde`, a
+NFS-e corrigida sobre a main `05d9307`. Para revisar só a reserva ATF, comparar
+com o merge local `b7ed335`.
 As garantias anteriores têm referência em `5f76f92`; os arquivos atuais do ATF
 foram evoluídos para manter HTML, permissões, PDFs e os serviços recentes.
 
 ## Escopo e decisões
 
-- A fila ATF passa a `xml_pegar_lote_v2`. Organização e identidade são obrigatórias
+- A fila ATF passa a `xml_atf_reservar_lote`. Organização e identidade são obrigatórias
   antes da decifragem da senha; o processamento separa escritório, acesso e período
   e não junta IEs repetidas na mesma rodada.
+- O sinal de vida renova as tarefas da rodada e as que aguardam mensagens.
+  A tentativa antiga perde acesso ao progresso, ao resultado e à gravação
+  do histórico MEI. Anexos atrasados de uma tentativa vencida ficam para
+  conferência dentro do contexto da rodada.
 - A migração é aditiva, transacional e mantém nomes/assinaturas da referência v2.
   Conserva os contratos anteriores e a fila NFS-e. A retomada de 90 minutos é
   limitada à origem ATF; o acompanhamento MEI pausado continua respeitado.
@@ -45,7 +50,7 @@ foram evoluídos para manter HTML, permissões, PDFs e os serviços recentes.
 
 ## Roteiro para o Codex 2
 
-1. Conferir o diff contra `b9d19db` e os recursos atuais da main; não substituir o
+1. Conferir o diff contra `2af5bde` e os recursos atuais da main; não substituir o
    ATF atual pelo arquivo inteiro da referência anterior.
 2. Conferir tarefa sem UUID/IE válida antes da senha; mesmo nome, mesma IE em dois
    escritórios, IEs repetidas e períodos diferentes. Conferir arquivos, totais e
@@ -74,7 +79,14 @@ foram evoluídos para manter HTML, permissões, PDFs e os serviços recentes.
 
 ## Validação e limites
 
-Na rodada final, passaram **172 testes Python sem navegador** e **69 testes
+Na rodada da reserva por tentativa, passaram 193 testes Python sem Chrome,
+121 testes Node, a checagem TypeScript e o build do portal com configuração fictícia. Passaram também
+três cenários escolhidos com Chrome e ATF simulado, cobrindo downloads da
+caixa, resposta atrasada e reaproveitamento do histórico MEI. Em Python,
+os testes direcionados cobrem a rejeição de tentativa vencida, a preservação
+dos anexos para conferência e a renovação enquanto a tarefa aguarda a caixa.
+
+Na validação original de `4332d7e`, passaram **172 testes Python sem navegador** e **69 testes
 Node/web/banco**, incluindo subcasos. Os **18 cenários distintos com Chrome**
 ficaram aprovados: 16 passaram na rodada do módulo e três foram rechecados após
 adaptar os testes da resposta atrasada e dos caminhos CT-e/MEI. A rechecagem

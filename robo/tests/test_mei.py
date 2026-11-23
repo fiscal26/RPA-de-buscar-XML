@@ -148,7 +148,9 @@ def _robo_simulado(cfg, monkeypatch, pedidos, requisicao=None):
     def chamada(metodo, url, **kw):
         dados = kw["json"]
         pedidos.append((metodo, url.split("/rest/v1/")[-1], dados))
-        return requisicao(metodo, url, dados) if requisicao else Resposta(200, 2)
+        if requisicao:
+            return requisicao(metodo, url, dados)
+        return Resposta(200, True if url.endswith("/rpc/xml_atualizar_tarefa_reservada") else 2)
 
     monkeypatch.setattr(robo_xml.requests, "request", chamada)
     return robo_xml.Robo(cfg)
@@ -161,15 +163,16 @@ def test_tarefa_mei_envia_contexto_correto_e_limpa_dossie_entre_escritorios(cfg,
     monkeypatch.setattr(robo.executor, "_garantir_chrome", lambda diag: setattr(robo.executor, "atf", atf))
     robo.processar([linha("tarefa-a", ORG_A, tipos=["mei"]), linha("tarefa-b", ORG_B, tipos=["mei"])])
     assert atf.consultas == [IE_EMPRESA, IE_EMPRESA]
-    callbacks = [(url, d) for metodo, url, d in pedidos if metodo == "POST"]
-    assert [url for url, _ in callbacks] == ["rpc/xml_mei_registrar_v2"] * 2
-    for (_, d), tid, org, valor in zip(callbacks, ("tarefa-a", "tarefa-b"), (ORG_A, ORG_B), (100, 900), strict=True):
-        assert (d["p_tarefa"], d["p_org"], d["p_ie"]) == (tid, org, IE_EMPRESA)
+    callbacks = [d for _, url, d in pedidos if url == "rpc/xml_mei_registrar_tarefa_reservada"]
+    for d, tid, org, valor in zip(callbacks, ("tarefa-a", "tarefa-b"), (ORG_A, ORG_B), (100, 900), strict=True):
+        assert (d["p_tarefa"], d["p_tentativa"], d["p_org"], d["p_ie"]) == (tid, f"reserva-{tid}", org, IE_EMPRESA)
         assert d["p_meses"]["2026-09"]["saidas"] == valor
         assert d["p_meses"]["2026-01"]["saidas"] == 10
         assert all("linhas" not in m and datetime.fromisoformat(m["consultado_em"]).utcoffset() is not None
                    for m in d["p_meses"].values())
-    assert [d["status"] for metodo, _, d in pedidos if metodo == "PATCH" and "status" in d] == ["concluido"] * 2
+    conclusoes = [d["p_campos"]["status"] for _, url, d in pedidos
+                  if url == "rpc/xml_atualizar_tarefa_reservada" and "status" in d["p_campos"]]
+    assert conclusoes == ["concluido"] * 2
 
 
 def test_portal_mostra_planilha_pendente_e_ainda_recebe_os_meses_salvos(cfg, monkeypatch):
@@ -183,9 +186,10 @@ def test_portal_mostra_planilha_pendente_e_ainda_recebe_os_meses_salvos(cfg, mon
 
     monkeypatch.setattr(mei, "publicar_arquivo", falhar)
     robo.processar([linha("tarefa-a", ORG_A, tipos=["mei"])])
-    (enviado,) = [d for _, url, d in pedidos if url == "rpc/xml_mei_registrar_v2"]
+    (enviado,) = [d for _, url, d in pedidos if url == "rpc/xml_mei_registrar_tarefa_reservada"]
     assert enviado["p_meses"]["2026-09"]["saidas"] == 100
-    (final,) = [d for metodo, _, d in pedidos if metodo == "PATCH" and "status" in d]
+    (final,) = [d["p_campos"] for _, url, d in pedidos
+                if url == "rpc/xml_atualizar_tarefa_reservada" and "status" in d["p_campos"]]
     assert final["status"] == "erro"
     assert final["detalhes"]["mei"]["mensagem"] == mei.PLANILHA_PENDENTE
     assert final["detalhes"]["mei"]["arquivos"] == 0

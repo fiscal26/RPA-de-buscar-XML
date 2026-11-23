@@ -2,7 +2,8 @@
 
 Data: 16/11/2026. O plano e a correção NFS-e de `b9d19db` foram aprovados pelo usuário.
 A entrega ATF/MEI está implementada e aguarda revisão, na branch
-`integracao/atf-mei-por-escritorio`, partindo da NFS-e aprovada e da main `ae2eadc`.
+`integracao/atf-mei-por-escritorio`, partindo da NFS-e corrigida em `2af5bde`
+e da main `05d9307`.
 Monitor Fiscal e atualização operacional continuam pendentes. Nenhuma etapa foi ativada.
 
 ## Base e etapas

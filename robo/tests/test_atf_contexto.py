@@ -43,10 +43,17 @@ def cfg(tmp_path_factory):
 
 def linha(tid, org, ie=IE_EMPRESA, tipos=None):
     return {
-        "id": tid, "org_id": org, "org_nome": "Mesmo escritório", "ie": ie, "nome": "Empresa/A",
+        "id": tid, "tentativa_id": f"reserva-{tid}", "org_id": org, "org_nome": "Mesmo escritório",
+        "ie": ie, "nome": "Empresa/A",
         "codigo": "7", "tipos": tipos or ["nfe_saida", "faturas"], "login_atf": "mesmo-login",
         "senha_cifrada": "cifra-fictícia", "data_inicio": str(INICIO), "data_fim": str(FIM),
     }
+
+
+def registrar_atualizacao(atualizacoes, tarefa, dados):
+    assert tarefa["tentativa_id"]
+    atualizacoes.setdefault(tarefa["id"], {}).update(dados)
+    return True
 
 
 def zip_notas(*notas):
@@ -105,16 +112,16 @@ def test_portal_nao_recorre_a_funcoes_antigas_quando_falta_um_contrato(monkeypat
 
     monkeypatch.setattr(robo_xml.requests, "request", requisicao)
     portal = robo_xml.Portal("https://exemplo.invalid", "falsa")
-    with pytest.raises(robo_xml.ContratoPortalIndisponivel, match="xml_pegar_lote_v2"):
+    with pytest.raises(robo_xml.ContratoPortalIndisponivel, match="xml_atf_reservar_lote"):
         portal.pegar_lote("teste", "login", 4)
-    with pytest.raises(robo_xml.ContratoPortalIndisponivel, match="xml_nfse_pegar_lote_v2"):
+    with pytest.raises(robo_xml.ContratoPortalIndisponivel, match="xml_nfse_reservar_lote"):
         portal.pegar_lote_nfse("teste", 3)
     with pytest.raises(robo_xml.ContratoPortalIndisponivel, match="xml_mei_registrar_contexto"):
         portal.registrar_mei_contexto(ORG_A, IE_EMPRESA, {}, None)
     assert pedidos == [
-        ("POST", "https://exemplo.invalid/rest/v1/rpc/xml_pegar_lote_v2",
+        ("POST", "https://exemplo.invalid/rest/v1/rpc/xml_atf_reservar_lote",
          {"p_robo": "teste", "p_login": "login", "p_max": 4}),
-        ("POST", "https://exemplo.invalid/rest/v1/rpc/xml_nfse_pegar_lote_v2",
+        ("POST", "https://exemplo.invalid/rest/v1/rpc/xml_nfse_reservar_lote",
          {"p_robo": "teste", "p_max": 3}),
         ("POST", "https://exemplo.invalid/rest/v1/rpc/xml_mei_registrar_contexto",
          {"p_org": ORG_A, "p_ie": IE_EMPRESA, "p_meses": {}, "p_inicio_atividade": None}),
@@ -142,7 +149,8 @@ def test_motor_atf_separa_totais_arquivos_e_escritorios(cfg, monkeypatch):
     monkeypatch.setattr(robo_xml.cripto, "decifrar", lambda cifra, _: decifragens.append(cifra) or "falsa")
     robo = robo_xml.Robo(cfg)
     monkeypatch.setattr(robo.executor, "_garantir_chrome", lambda diag: setattr(robo.executor, "atf", atf))
-    monkeypatch.setattr(robo.portal, "atualizar_tarefa", lambda tid, dados: atualizacoes.setdefault(tid, {}).update(dados))
+    monkeypatch.setattr(robo.portal, "atualizar_tarefa_reservada",
+                        lambda tarefa, dados: registrar_atualizacao(atualizacoes, tarefa, dados))
     lote = [linha("A", ORG_A), linha("B", ORG_A, IE_B), linha("C", ORG_B), linha("sem-org", None),
             linha("D", ORG_A, tipos=["nfe_saida"])]
     robo.processar(lote)
@@ -227,8 +235,41 @@ def robo_com_caixa(cfg, monkeypatch, caixa, atualizacoes):
     cfg["atf"]["leituras_mensagens"] = 1
     robo = robo_xml.Robo(cfg)
     monkeypatch.setattr(robo.executor, "_garantir_chrome", lambda diag: setattr(robo.executor, "atf", caixa))
-    monkeypatch.setattr(robo.portal, "atualizar_tarefa", lambda tid, dados: atualizacoes.setdefault(tid, {}).update(dados))
+    monkeypatch.setattr(robo.portal, "atualizar_tarefa_reservada",
+                        lambda tarefa, dados: registrar_atualizacao(atualizacoes, tarefa, dados))
     return robo
+
+
+@pytest.mark.parametrize("na_ultima_leitura", [False, True])
+def test_resposta_atf_de_tentativa_expirada_fica_para_conferencia(cfg, monkeypatch, na_ultima_leitura):
+    caixa = CaixaSimulada(cfg)
+    atualizacoes = {}
+    robo = robo_com_caixa(cfg, monkeypatch, caixa, atualizacoes)
+    t = linha("A", ORG_A, tipos=["nfe_saida"])
+    nota = nfe(DONO, CLIENTE, ie_emit=IE_EMPRESA)
+    venceu = False
+
+    def resposta_atrasada():
+        nonlocal venceu
+        venceu = True
+        caixa.publicar("resposta-A", [("nota.xml", nota)])
+
+    def atualizar(tarefa, dados):
+        return not venceu and registrar_atualizacao(atualizacoes, tarefa, dados)
+
+    monkeypatch.setattr(robo.portal, "atualizar_tarefa_reservada", atualizar)
+    if not na_ultima_leitura:
+        caixa.ao_consultar = resposta_atrasada
+    robo.processar([t])
+    if na_ultima_leitura:
+        assert robo.aguardando
+        resposta_atrasada()
+        robo._repescar()
+    destino = Path(cfg["pastas"]["destino"]) / PASTA_CONTEXTOS
+    assert "status" not in atualizacoes["A"]
+    assert not list((destino / "portal").rglob("*.xml"))
+    assert [p.read_bytes() for p in (destino / "_nao_identificados").rglob("*.xml")] == [nota]
+    assert list((destino / "_caixas_atf").glob("*.lock"))
 
 
 @pytest.mark.parametrize("com_data", [False, True])
@@ -418,15 +459,17 @@ def test_falha_no_retorno_ao_painel_preserva_arquivos_para_reexecucao(cfg, monke
     monkeypatch.setattr(robo.executor, "_garantir_chrome", lambda _: setattr(robo.executor, "atf", atf))
     atualizacoes = {}
 
-    def falhar_final(tid, dados):
+    def falhar_final(tarefa, dados):
         if "status" in dados:
             raise OSError("Painel temporariamente indisponível")
+        return True
 
-    monkeypatch.setattr(robo.portal, "atualizar_tarefa", falhar_final)
+    monkeypatch.setattr(robo.portal, "atualizar_tarefa_reservada", falhar_final)
     t = linha("A", ORG_A, tipos=["nfe_saida"])
     with pytest.raises(OSError, match="indisponível"):
         robo.processar([t])
-    monkeypatch.setattr(robo.portal, "atualizar_tarefa", lambda tid, dados: atualizacoes.setdefault(tid, {}).update(dados))
+    monkeypatch.setattr(robo.portal, "atualizar_tarefa_reservada",
+                        lambda tarefa, dados: registrar_atualizacao(atualizacoes, tarefa, dados))
     robo.processar([t])
     assert atualizacoes["A"]["status"] == "concluido" and atualizacoes["A"]["qtd_xml"] == 1
     assert atualizacoes["A"]["detalhes"]["nfe_saida"]["valor"] == 100
@@ -444,6 +487,46 @@ def test_alerta_mei_do_robo_leva_escritorio_sem_divulgar_chave(monkeypatch):
     assert pedidos[0][1]["headers"] == {"x-robo-chave": "chave-ficticia"}
 
 
+@pytest.mark.parametrize("registrados", [None, 0, 1])
+def test_historico_mei_so_envia_alerta_se_o_banco_aceitou_a_tentativa(monkeypatch, registrados):
+    tarefa = linha("A", ORG_A, tipos=["mei"])
+    contexto = robo_xml.contexto_portal(tarefa, "sefaz_pb", "ie")
+    trabalho = robo_xml.Trabalho(IE_EMPRESA, "Empresa", "login", "senha", ["mei"], INICIO, FIM, contexto=contexto)
+    robo = robo_xml.Robo.__new__(robo_xml.Robo)
+    robo.portal = robo_xml.Portal("https://banco.invalid", "falsa", site="https://site.invalid")
+    robo.em_curso = {id(trabalho): (tarefa, {})}
+    pedidos, alertas = [], []
+
+    def requisicao(metodo, url, **kwargs):
+        pedidos.append((url, kwargs["json"]))
+        return SimpleNamespace(status_code=200, json=lambda: registrados)
+
+    monkeypatch.setattr(robo_xml.requests, "request", requisicao)
+    monkeypatch.setattr(robo_xml.requests, "post", lambda *a, **kw: alertas.append(kw["json"]) or Resposta(200, {}))
+    historico = {"2026-09": {"saidas": 100}}
+    robo._mei(trabalho, {"historico": historico})
+    url, dados = pedidos[0]
+    assert url.endswith("/rpc/xml_mei_registrar_tarefa_reservada")
+    assert dados["p_tentativa"] == tarefa["tentativa_id"] and dados["p_org"] == ORG_A
+    assert dados["p_ie"] == IE_EMPRESA and dados["p_meses"] == historico
+    assert alertas == ([] if registrados is None else [{"ie": IE_EMPRESA, "org_id": ORG_A}])
+
+
+def test_renovacao_atf_cobre_tarefa_que_espera_a_caixa(monkeypatch):
+    robo = robo_xml.Robo.__new__(robo_xml.Robo)
+    robo.portal = robo_xml.Portal("https://banco.invalid", "falsa")
+    atual = linha("A", ORG_A)
+    aguardando = linha("B", ORG_A)
+    robo.tarefas_atuais = [atual]
+    robo.aguardando = {1: atual, 2: aguardando}
+    pedidos = []
+    monkeypatch.setattr(robo_xml.requests, "request",
+                        lambda metodo, url, **kwargs: pedidos.append((url, kwargs["json"])) or Resposta(204, None))
+    robo._renovar_atf()
+    assert pedidos == [("https://banco.invalid/rest/v1/rpc/xml_renovar_reservas_atf",
+                        {"p_tentativas": [atual["tentativa_id"], aguardando["tentativa_id"]]})]
+
+
 def test_falha_no_fim_do_lote_nao_reescreve_tarefa_ja_confirmada(cfg, monkeypatch):
     notas = [("a.xml", nfe(DONO, CLIENTE, ie_emit=IE_EMPRESA, valor=100)),
              ("b.xml", nfe(CNPJ_B, CLIENTE, ie_emit=IE_B, valor=200))]
@@ -456,14 +539,16 @@ def test_falha_no_fim_do_lote_nao_reescreve_tarefa_ja_confirmada(cfg, monkeypatc
     robo.tarefas_atuais = lote.copy()
     confirmadas = {}
 
-    def enviar(tid, dados):
+    def enviar(tarefa, dados):
         if "status" not in dados:
-            return
+            return True
+        tid = tarefa["id"]
         if tid == "B":
             raise OSError("Falha no retorno da segunda tarefa")
         confirmadas[tid] = dados
+        return True
 
-    monkeypatch.setattr(robo.portal, "atualizar_tarefa", enviar)
+    monkeypatch.setattr(robo.portal, "atualizar_tarefa_reservada", enviar)
     with pytest.raises(OSError, match="segunda tarefa"):
         robo.processar(lote)
     assert confirmadas["A"]["status"] == "concluido" and confirmadas["A"]["qtd_xml"] == 1

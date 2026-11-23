@@ -84,11 +84,12 @@ precisam ser enviadas de novo. Para ver a pública de novo: `python robo_xml.py 
 
 ## 6. Monitoramento de Faturamento MEI
 
-1. **Integração por escritório:** esta versão usa `xml_pegar_lote_v2`,
-   `xml_mei_registrar_v2` e `xml_mei_registrar_contexto`, além da fila NFS-e por contexto.
-   A migração `20261116110000_atf_mei_por_contexto.sql` mantém os contratos antigos.
-   Sua aplicação e a troca operacional aguardam homologação e autorização; não execute
-   o schema inteiro em produção como procedimento automático de atualização.
+1. **Integração por escritório.** Confira o histórico de migrações. Os contratos
+   de contexto de 16/11 precedem `20261123180000_reserva_tarefas_nfse.sql` e
+   `20261123181000_reserva_tarefas_atf.sql`. O robô atualizado usa as filas e
+   retornos por tentativa. Os contratos antigos permanecem disponíveis durante
+   a transição. Use as migrações pendentes do ambiente como procedimento de
+   atualização, após homologação e autorização.
 2. O robô reenvia somente históricos validados de
    `Arquivos por empresa v2/portal/org_<uuid>--<rotulo>/sefaz_pb/ie_<ie>--<rotulo>/Dossiê MEI/`.
    Dados locais ou anteriores sem identidade não são distribuídos por IE entre escritórios.
