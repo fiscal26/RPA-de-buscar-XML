@@ -1,9 +1,10 @@
 # Revisão da integração NFS-e por escritório
 
-Branch `integracao/nfse-por-escritorio`. Base do produto atualizada para `ae2eadc`,
-incorporando o cadastro individual que entrou na main durante a implementação.
-O plano vem de `c0a2b9e`, originalmente sobre `5256b9b`. Comparar a entrega com
-`ae2eadc` e com as garantias de `5f76f92`.
+Branch `integracao/nfse-por-escritorio`. A base atual é a main em `05d9307`,
+que incorpora as correções do Monitor Fiscal e do reprocessamento MEI do PR #60.
+Para revisar a integração completa, compare com `05d9307`. Para revisar a
+proteção da retirada, compare com o merge local que incorporou a main à
+correção NFS-e `b9d19db`, imediatamente antes do commit da reserva.
 
 ## Escopo e decisões
 
@@ -11,10 +12,15 @@ Esta etapa integra a NFS-e atual com armazenamento por escritório, preservando
 procuração, filial, PDF alternativo, lote ABRASF e faturamento MEI. Os fluxos ATF/MEI
 e Monitor Fiscal terão integração própria nas próximas etapas.
 
-- A fila usada pela NFS-e passa a `xml_nfse_pegar_lote_v2`, com organização explícita,
-  certificado selecionado, procurador, acompanhamento MEI e pausa. A migração é aditiva
-  em relação aos contratos atualmente usados por instalações anteriores. Uma definição
-  v2 de ensaio é substituída em transação, com recusa se houver dependência registrada.
+- A fila NFS-e usa `xml_nfse_reservar_lote`, com organização explícita,
+  certificado selecionado, procurador, acompanhamento MEI e pausa. A migração da
+  reserva acrescenta as funções e preserva os contratos anteriores. A migração
+  de 16/11 substitui uma definição v2 de ensaio em transação e recusa a troca
+  quando há dependência registrada.
+- A tarefa pode ser retirada de novo após 90 minutos sem renovação. A nova
+  retirada troca o identificador da tentativa. O banco valida esse identificador
+  e o prazo ao receber progresso, renovação ou conclusão. Uma tentativa recusada
+  deixa de publicar ao verificar a reserva e não dispara alerta de MEI.
 - Os validadores fiscais são compartilhados por planilha e armazenamento em
   `documentos.py`, preservando os imports públicos e a lógica existente.
 - Os documentos, o cache, `resumo_mei` e `eh_mei` usam a mesma identidade. O resultado
@@ -52,9 +58,23 @@ e Monitor Fiscal terão integração própria nas próximas etapas.
    tarefa ATF antiga. Comparar o bloco final do schema com a migração.
 7. Conferir comandos de início e teste local e a pausa dos trabalhadores. Examinar
    o comportamento diante de contrato indisponível e falha de comunicação.
+8. Simular a renovação sem alterar `iniciado_em`, depois a expiração e a retirada
+   por outro robô. Verificar que progresso e conclusão da tentativa anterior
+   são recusados. Simular a perda da reserva enquanto a API responde e conferir
+   cache, documentos finais e alertas.
 
 Relatar defeitos por gravidade, com cenário, arquivo/linha, consequência e evidência.
 Distinguir aceite do código, publicação quando autorizada e ativação operacional.
+
+## Validação da reserva sobre o PR #60
+
+Rodada local com 154 testes Python sem navegador e 115 testes Node, incluindo
+banco simulado. Os ensaios cobrem renovação, expiração, conclusão atrasada,
+permissões, preservação do faturamento por escritório e perda da reserva antes
+da escrita. Ainda faltam duas sessões PostgreSQL independentes e chamadas ao
+PostgREST em homologação. Os contratos legados continuam disponíveis durante
+a transição, inclusive a fila antiga de ATF que pode reabrir tarefas de NFS-e.
+Prepare a troca com os consumidores antigos pausados no mesmo banco.
 
 ## Correção após a revisão de `2193e54`
 

@@ -5,12 +5,15 @@ const path = require('node:path');
 const { PGlite } = require('@electric-sql/pglite');
 const { pgcrypto } = require('@electric-sql/pglite/contrib/pgcrypto');
 
-const schema = fs.readFileSync(path.join(__dirname, '../supabase/schema.sql'), 'utf8');
+const schema = fs.readFileSync(path.join(__dirname, '../supabase/schema.sql'), 'utf8').replace(/\r\n/g, '\n');
 const migracao = fs.readFileSync(path.join(__dirname, '../supabase/migrations/20261116100000_nfse_por_contexto.sql'), 'utf8');
+const migracaoReserva = fs.readFileSync(path.join(__dirname, '../supabase/migrations/20261123180000_reserva_tarefas_nfse.sql'), 'utf8').replace(/\r\n/g, '\n');
 const id = (n) => '00000000-0000-4000-8000-' + String(n).padStart(12, '0');
 const ids = (...ns) => ns.map(n => `'${id(n)}'`).join(',');
 const cnpj = '11222333000262';
-assert.ok(schema.replace(/\r\n/g, '\n').endsWith(migracao.replace(/\r\n/g, '\n')));
+for (const bloco of [migracao, migracaoReserva]) {
+  assert.ok(schema.includes(bloco.replace(/\r\n/g, '\n')));
+}
 
 test('NFS-e por contexto preserva contratos, recursos atuais e isolamento', async () => {
   const db = new PGlite({ extensions: { pgcrypto } });
@@ -19,7 +22,7 @@ test('NFS-e por contexto preserva contratos, recursos atuais e isolamento', asyn
     await db.exec(`create role anon; create role authenticated; create role service_role bypassrls;
       create schema auth; create table auth.users(id uuid primary key);
       create function auth.uid() returns uuid language sql stable as 'select null::uuid';`);
-    await db.exec(schema);
+    await db.exec(schema.replace(migracaoReserva, ''));
     const contratos = `select oid::regprocedure::text as assinatura,pg_get_functiondef(oid) as definicao
       from pg_proc where pronamespace='public'::regnamespace and proname in
       ('xml_nfse_pegar_lote','xml_pegar_lote','xml_mei_registrar','xml_mei_registrar_ie') order by assinatura`;
@@ -27,6 +30,8 @@ test('NFS-e por contexto preserva contratos, recursos atuais e isolamento', asyn
     assert.equal(anteriores.length, 4);
     await db.exec(migracao);
     await db.exec(migracao);
+    await db.exec(migracaoReserva);
+    await db.exec(migracaoReserva);
     assert.deepEqual(await rows(contratos), anteriores);
     await db.exec("create view public.dependencia_ensaio as select id from public.xml_nfse_pegar_lote_v2('ensaio',1)");
     await assert.rejects(db.exec(migracao), erro => erro.code === '2BP01');
@@ -37,6 +42,12 @@ test('NFS-e por contexto preserva contratos, recursos atuais e isolamento', asyn
       has_function_privilege('authenticated','public.xml_nfse_pegar_lote_v2(text,integer)','execute') as web,
       has_function_privilege('service_role','public.xml_nfse_pegar_lote_v2(text,integer)','execute') as robo`);
     assert.deepEqual(permissoes, { anon: false, web: false, robo: true });
+    for (const assinatura of ['xml_nfse_reservar_lote(text,integer)', 'xml_atualizar_tarefa_reservada(uuid,uuid,jsonb)']) {
+      const [p] = await rows(`select has_function_privilege('anon',$1,'execute') as anon,
+        has_function_privilege('authenticated',$1,'execute') as web,
+        has_function_privilege('service_role',$1,'execute') as robo`, [assinatura]);
+      assert.deepEqual(p, permissoes);
+    }
 
     await db.exec(`
       insert into public.organizacoes(id,nome,ativo) values
@@ -78,7 +89,7 @@ test('NFS-e por contexto preserva contratos, recursos atuais e isolamento', asyn
     `);
     const atf = await rows(`select status,iniciado_em,robo from public.xml_tarefas where id=${ids(69)}`);
     await db.exec('set role service_role');
-    const lote = await rows("select * from public.xml_nfse_pegar_lote_v2('ensaio',20)");
+    const lote = await rows("select * from public.xml_nfse_reservar_lote('ensaio',20)");
     await db.exec('reset role');
     assert.deepEqual(lote.map(t => t.id).sort(), [id(61), id(62), id(68)].sort());
     assert.deepEqual(await rows(`select status,iniciado_em,robo from public.xml_tarefas where id=${ids(69)}`), atf);
@@ -94,12 +105,41 @@ test('NFS-e por contexto preserva contratos, recursos atuais e isolamento', asyn
     assert.equal(lote.find(t => t.id === id(68)).certificado_cnpj, '11222333000181');
     const estados = await rows(`select id,status from public.xml_tarefas where id in (${ids(63,64,65,66,67)}) order by id`);
     assert.deepEqual(estados.map(t => t.status), ['pendente','erro','erro','erro','certificado']);
-    assert.equal((await rows("select * from public.xml_nfse_pegar_lote_v2('outro',20)")).length, 0);
+    assert.equal((await rows("select * from public.xml_nfse_reservar_lote('outro',20)")).length, 0);
 
-    for (const [tarefa, valor] of [[61,100],[62,200]]) {
-      await db.query("update public.xml_tarefas set status='concluido',detalhes=$1 where id=$2",
-        [{ mei_nfse: { meses: [{ competencia: '2026-09-01', valor, quantidade: 1 }] } }, id(tarefa)]);
+    const atualizar = async (tarefa, tentativa, campos) => (await rows(
+      "select public.xml_atualizar_tarefa_reservada($1,$2,$3) as aceitou",
+      [tarefa, tentativa, campos]))[0].aceitou;
+    assert.ok(a.tentativa_id && b.tentativa_id && a.tentativa_id !== b.tentativa_id);
+
+    await db.exec(`update public.xml_tarefas set reserva_ate = now() + interval '2 minutes',
+      iniciado_em = now() - interval '91 minutes' where id = '${a.id}'`);
+    const estado = async () => (await rows(
+      'select status,iniciado_em,reserva_ate,tentativa_id,robo,mensagem from public.xml_tarefas where id=$1', [a.id]))[0];
+    const antes = await estado();
+    assert.equal(await atualizar(a.id, a.tentativa_id, { mensagem: 'Em andamento' }), true);
+    const renovada = await estado();
+    assert.deepEqual(renovada.iniciado_em, antes.iniciado_em);
+    assert.ok(renovada.reserva_ate > antes.reserva_ate);
+    assert.equal((await rows("select id from public.xml_nfse_reservar_lote('outro',1)")).length, 0);
+
+    await db.exec(`update public.xml_tarefas set reserva_ate = now() - interval '1 second' where id = '${a.id}'`);
+    assert.equal(await atualizar(a.id, a.tentativa_id, { mensagem: 'Expirada' }), false);
+    const [nova] = await rows("select * from public.xml_nfse_reservar_lote('outro',1)");
+    assert.equal(nova.id, a.id);
+    assert.notEqual(nova.tentativa_id, a.tentativa_id);
+    assert.equal(await atualizar(a.id, a.tentativa_id, { status: 'erro', mensagem: 'Conclusão atrasada' }), false);
+    assert.equal(await atualizar(b.id, nova.tentativa_id, { status: 'erro' }), false);
+    assert.equal((await estado()).robo, 'outro');
+    assert.equal((await estado()).status, 'processando');
+    await assert.rejects(atualizar(a.id, nova.tentativa_id, { org_id: b.org_id }), erro => erro.code === '22023');
+
+    for (const [tarefa, valor] of [[nova,100],[b,200]]) {
+      const detalhes = { mei_nfse: { meses: [{ competencia: '2026-09-01', valor, quantidade: 1 }] } };
+      assert.equal(await atualizar(tarefa.id, tarefa.tentativa_id, { status: 'concluido', detalhes }), true);
+      assert.equal(await atualizar(tarefa.id, tarefa.tentativa_id, { status: 'erro' }), false);
     }
+    assert.equal((await estado()).tentativa_id, null);
     const totais = await rows(`select org_id,valor from public.xml_mei_nfse_meses where cnpj=$1 order by org_id`, [cnpj]);
     assert.deepEqual(totais.map(m => [m.org_id, Number(m.valor)]), [[id(1),100],[id(2),200]]);
     await db.exec(schema);

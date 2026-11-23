@@ -295,17 +295,21 @@ class Cache:
                 yield int(nsu), info["tipo"], dados
 
 
-def atualizar_cache(cliente: ClienteADN, cache: Cache) -> int:
+def atualizar_cache(cliente: ClienteADN, cache: Cache, *, confirmar_reserva=None) -> int:
     """Busca o que for novo desde o último NSU guardado. Devolve quantos documentos chegaram."""
     novos = 0
     try:
         for nsu, tipo, chave, xml in cliente.documentos(cache.ultimo_nsu):
+            if confirmar_reserva is not None:
+                confirmar_reserva()
             cache.guardar(nsu, tipo, chave, xml)
             novos += 1
             if novos % 200 == 0:
                 cache.salvar()
                 log.info("  NFS-e: %d documento(s) recebidos do Portal Nacional...", novos)
     finally:
+        if confirmar_reserva is not None:
+            confirmar_reserva(forcar=True)
         cache.salvar()
     return novos
 
@@ -580,17 +584,31 @@ def danfse_do_xml(xml: bytes) -> bytes | None:
 
 def baixar_competencia(cliente: ClienteADN, contexto: ContextoArmazenamento, competencia: str,
                        destino: str | Path, *, pdf: bool = True, com_emitidas: bool = True,
-                       com_recebidas: bool = True, relatorio: bool = True, atualizar: bool = True) -> ResultadoNfse:
+                       com_recebidas: bool = True, relatorio: bool = True, atualizar: bool = True,
+                       confirmar_reserva=None) -> ResultadoNfse:
     """Coleta, documentos e faturamento compartilham a trava da identidade consultada."""
     if (contexto.origem, contexto.tipo_documento) != ("nfse_nacional", "cnpj"):
         raise ErroADN("A NFS-e exige o contexto do CNPJ consultado.")
+
+    def publicar(caminho, escrever):
+        def escrever_validado(temporario):
+            escrever(temporario)
+            if confirmar_reserva is not None:
+                confirmar_reserva()
+
+        publicar_arquivo(caminho, escrever_validado)
+
     with abrir_empresa(destino, contexto) as empresa:
+        if confirmar_reserva is not None:
+            confirmar_reserva(forcar=True)
         pasta_mes = pasta_da_competencia(empresa, competencia)
         raiz_cache = area_do_contexto(destino, "_cache", contexto.tipo_contexto, contexto.contexto_id, contexto.documento)
         cache = Cache(raiz_cache)
         list(cache.xmls())  # Confere documentos existentes antes de consultar ou avançar o índice.
         cnpj = contexto.documento
-        res = ResultadoNfse(novos_documentos=atualizar_cache(cliente, cache) if atualizar else 0)
+        res = ResultadoNfse()
+        if atualizar:
+            res.novos_documentos = atualizar_cache(cliente, cache, confirmar_reserva=confirmar_reserva)
         emitidas, recebidas, res.canceladas = separar(cache, cnpj, competencia)
         emitidas = emitidas if com_emitidas else []
         recebidas = recebidas if com_recebidas else []
@@ -604,7 +622,7 @@ def baixar_competencia(cliente: ClienteADN, contexto: ContextoArmazenamento, com
                 base = nota.chave
                 if not re.fullmatch(r"[0-9]{1,50}", base):
                     raise ErroADN("Chave de acesso inválida na NFS-e.")
-                publicar_arquivo(arquivo_validado(pasta, f"{base}.xml"), lambda temporario: temporario.write_bytes(xml))
+                publicar(arquivo_validado(pasta, f"{base}.xml"), lambda temporario: temporario.write_bytes(xml))
                 if pdf:
                     arq_pdf = arquivo_validado(pasta, f"{base}.pdf")
                     if arq_pdf.exists():
@@ -617,7 +635,7 @@ def baixar_competencia(cliente: ClienteADN, contexto: ContextoArmazenamento, com
                         if conteudo:
                             res.pdfs_gerados += 1
                     if conteudo:
-                        publicar_arquivo(arq_pdf, lambda temporario: temporario.write_bytes(conteudo))
+                        publicar(arq_pdf, lambda temporario: temporario.write_bytes(conteudo))
                         res.pdfs += 1
                     else:
                         res.pdfs_faltando += 1
@@ -634,12 +652,12 @@ def baixar_competencia(cliente: ClienteADN, contexto: ContextoArmazenamento, com
             arquivo = arquivo_validado(pasta_mes, f"{sub} {competencia[5:7] + competencia[:4]}.xml")
             if lista or arquivo.exists():
                 # Um cancelamento pode zerar o mês. O lote publicado precisa refletir o estado atual.
-                publicar_arquivo(arquivo, lambda temporario: temporario.write_bytes(lote_abrasf([xml for _, xml in lista], competencia)))
+                publicar(arquivo, lambda temporario: temporario.write_bytes(lote_abrasf([xml for _, xml in lista], competencia)))
                 res.lotes.append(arquivo)
         arquivo_relatorio = arquivo_validado(pasta_mes, f"Retenções NFS-e {competencia}.xlsx")
         if relatorio and (res.emitidas or res.recebidas or arquivo_relatorio.exists()):
             res.relatorio = arquivo_relatorio
-            publicar_arquivo(res.relatorio, lambda temporario: relatorio_retencoes(
+            publicar(res.relatorio, lambda temporario: relatorio_retencoes(
                 res.emitidas, res.recebidas, temporario, contexto.nome, competencia))
         res.resumo_mei = resumo_mei(cache, cnpj, competencia)
         res.detectado_mei = eh_mei(cache, cnpj)

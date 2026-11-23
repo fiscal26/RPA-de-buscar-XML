@@ -1,4 +1,12 @@
 import config
+
+
+def test_sondagem_de_destino_preserva_arquivo_existente(tmp_path):
+    existente = tmp_path / ".teste_gravacao"
+    existente.write_text("já existia", encoding="utf-8")
+    assert config._pasta_gravavel(tmp_path)
+    assert existente.read_text(encoding="utf-8") == "já existia"
+    assert list(tmp_path.iterdir()) == [existente]
 import pytest
 
 
