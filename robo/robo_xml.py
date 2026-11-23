@@ -815,6 +815,10 @@ class ContratoPortalIndisponivel(RuntimeError):
     pass
 
 
+class ReservaTarefaPerdida(RuntimeError):
+    """A tentativa deixou de ter autorização para publicar."""
+
+
 def contexto_nfse(tarefa: dict) -> ContextoArmazenamento:
     return ContextoArmazenamento("portal", tarefa["org_id"], "nfse_nacional", "cnpj", tarefa["cnpj"],
                                  tarefa.get("nome") or "", tarefa.get("codigo") or "",
@@ -836,10 +840,11 @@ class Portal:
     def _r(self, metodo, caminho, **kw):
         cab = {**self.cabecalhos, **kw.pop("headers", {})}
         r = requests.request(metodo, f"{self.url}{caminho}", headers=cab, timeout=self.timeout, **kw)
-        if r.status_code == 404 and caminho in ("/rest/v1/rpc/xml_nfse_pegar_lote_v2",
-                                                "/rest/v1/rpc/xml_pegar_lote_v2",
-                                                "/rest/v1/rpc/xml_mei_registrar_v2",
-                                                "/rest/v1/rpc/xml_mei_registrar_contexto"):
+        if r.status_code == 404 and caminho in (
+            "/rest/v1/rpc/xml_nfse_reservar_lote", "/rest/v1/rpc/xml_atualizar_tarefa_reservada",
+            "/rest/v1/rpc/xml_devolver_tarefa_reservada", "/rest/v1/rpc/xml_pegar_lote_v2",
+            "/rest/v1/rpc/xml_mei_registrar_v2", "/rest/v1/rpc/xml_mei_registrar_contexto",
+        ):
             raise ContratoPortalIndisponivel(f"Função {caminho.rsplit('/', 1)[-1]} indisponível. Confira o banco e a migração de integração.")
         if r.status_code >= 400:
             raise RuntimeError(f"{metodo} {caminho} -> {r.status_code}: {r.text[:300]}")
@@ -852,7 +857,7 @@ class Portal:
 
     def pegar_lote_nfse(self, robo: str, maximo: int) -> list[dict]:
         """Tarefas liberadas da NFS-e (Portal Nacional), cada uma com o certificado A1 cifrado."""
-        return self._r("POST", "/rest/v1/rpc/xml_nfse_pegar_lote_v2", json={"p_robo": robo, "p_max": maximo}).json() or []
+        return self._r("POST", "/rest/v1/rpc/xml_nfse_reservar_lote", json={"p_robo": robo, "p_max": maximo}).json() or []
 
     def meses_nfse_consultados(self, tarefa: str, cnpj: str, competencia: str, *, org_id: str) -> list[str]:
         """O banco, e não as pastas do PC, comprova os meses consultados (inclusive zero)."""
@@ -868,6 +873,20 @@ class Portal:
 
     def atualizar_tarefa(self, tid: str, campos: dict):
         self._r("PATCH", f"/rest/v1/xml_tarefas?id=eq.{tid}", json=campos, headers={"Prefer": "return=minimal"})
+
+    def atualizar_tarefa_reservada(self, tarefa: dict, campos: dict) -> bool:
+        if not tarefa.get("tentativa_id"):
+            raise ReservaTarefaPerdida("A fila não informou o identificador da tentativa.")
+        resposta = self._r("POST", "/rest/v1/rpc/xml_atualizar_tarefa_reservada", json={
+            "p_tarefa": tarefa["id"], "p_tentativa": tarefa["tentativa_id"], "p_campos": campos,
+        })
+        return resposta.json() is True
+
+    def devolver_tarefa_reservada(self, tarefa: dict) -> bool:
+        resposta = self._r("POST", "/rest/v1/rpc/xml_devolver_tarefa_reservada", json={
+            "p_tarefa": tarefa["id"], "p_tentativa": tarefa["tentativa_id"],
+        })
+        return resposta.json() is True
 
 
     def avisar_mei(self, ie: str, *, org_id: str | None = None) -> dict:
@@ -940,8 +959,8 @@ class Robo:
         self.parar = False
         # filas de API (NFS-e e Monitor Fiscal): várias empresas ao mesmo tempo, em paralelo com o ATF
         self._trava = threading.Lock()
-        self.em_paralelo: dict[str, dict] = {}       # id -> tarefa da NFS-e em andamento
-        self.monitores_em_curso: dict[str, dict] = {}  # id -> empresa do Monitor Fiscal em andamento
+        self.em_paralelo: dict[tuple[str, str | None], dict] = {}  # (id, tentativa) -> NFS-e em andamento
+        self.monitores_em_curso: dict[tuple[str, str | None], dict] = {}
         self._travas_empresa: dict[tuple, threading.Lock] = {}
 
     def enviar_historico_mei(self):
@@ -1034,7 +1053,8 @@ class Robo:
 
     def _sinal(self, forcar=False):
         if forcar or time.time() - self.ultimo_sinal > 30:
-            paralelas = list(getattr(self, "em_paralelo", {}))  # cópia de uma vez (sob o GIL)
+            retiradas = list(getattr(self, "em_paralelo", {}))  # cópia de uma vez (sob o GIL)
+            paralelas = list(dict.fromkeys(tid for tid, _ in retiradas))
             self.portal.sinal(self.nome, {"chrome": self.chrome_ok,
                                           "tarefas": [t["id"] for t in list(self.tarefas_atuais)] + paralelas})
             self.ultimo_sinal = time.time()
@@ -1110,7 +1130,7 @@ class Robo:
                         continue
                 for t in lote:
                     with self._trava:
-                        em_curso[t["id"]] = t
+                        em_curso[(t["id"], t.get("tentativa_id"))] = t
                     pool.submit(self._rodar_um, processar, t, em_curso, vaga, nome)
                 if not lote:
                     vaga.wait(self.cfg["portal"]["intervalo_segundos"] if livres > 0 else 30)
@@ -1126,23 +1146,47 @@ class Robo:
             log.exception("Erro inesperado em %s", t.get("nome"))
         finally:
             with self._trava:
-                em_curso.pop(t["id"], None)
+                em_curso.pop((t["id"], t.get("tentativa_id")), None)
             if vaga is not None:
                 vaga.set()
 
     def _uma_nfse(self, t: dict):
-        self.portal.atualizar_tarefa(t["id"], {"detalhes": {tipo: {"situacao": "andamento", "mensagem": ""}
-                                                            for tipo in t.get("tipos") or []}})
+        ultima_confirmacao = time.monotonic()
+
+        def confirmar_reserva(*, forcar=False):
+            nonlocal ultima_confirmacao
+            agora_monotonico = time.monotonic()
+            if forcar or agora_monotonico - ultima_confirmacao >= 30:
+                if not self.portal.atualizar_tarefa_reservada(t, {}):
+                    raise ReservaTarefaPerdida
+                ultima_confirmacao = agora_monotonico
+
         try:
+            detalhes = {tipo: {"situacao": "andamento", "mensagem": ""} for tipo in t.get("tipos") or []}
+            if not self.portal.atualizar_tarefa_reservada(t, {"detalhes": detalhes}):
+                raise ReservaTarefaPerdida
             contexto = contexto_nfse(t)
             t = {**t, "meses_consultados": self.portal.meses_nfse_consultados(
                 t["id"], contexto.documento, str(t["data_inicio"]), org_id=contexto.contexto_id)}
-            r = executar_nfse(self.cfg, t, self.privada)
+            r = executar_nfse(self.cfg, t, self.privada, confirmar_reserva=confirmar_reserva)
+        except ArmazenamentoOcupado:
+            if self.portal.devolver_tarefa_reservada(t):
+                log.info("   NFS-e %s: pasta em uso; tarefa devolvida à fila.", t.get("nome"))
+            return
+        except ReservaTarefaPerdida:
+            log.warning("   NFS-e %s: tentativa encerrada após perder a reserva.", t.get("nome"))
+            return
+        except ContratoPortalIndisponivel as erro:
+            log.error("%s", erro)
+            self.parar = True
+            return
         except Exception:
             log.exception("Erro inesperado na NFS-e de %s", t["nome"])
             r = Resultado("erro", "Falha inesperada ao buscar as NFS-e. Agende de novo; se repetir, fale com a LotiVisse.")
+        if not self._finalizar(t, r, reservada=True):
+            log.warning("   NFS-e %s: resultado descartado após perder a reserva.", t.get("nome"))
+            return
         log.info("   NFS-e %s -> %s: %s", t["nome"], r.status, r.mensagem)
-        self._finalizar(t, r)
 
         if r.detalhes.get("mei_nfse"):
             try:
@@ -1216,13 +1260,16 @@ class Robo:
             except Exception as e:
                 log.warning("   alerta MEI não pedido ao portal: %s", e)
 
-    def _finalizar(self, t, r: Resultado):
+    def _finalizar(self, t, r: Resultado, *, reservada=False):
         andamento = next((d for tid, d in list(self.em_curso.values()) if tid == t["id"]), {})
         detalhes = detalhes_finais(arquivos.expandir_tipos(t.get("tipos") or []), r, andamento)
-        self.portal.atualizar_tarefa(t["id"], {
+        campos = {
             "status": r.status, "mensagem": r.mensagem[:500], "qtd_xml": r.qtd_xml,
-            "detalhes": detalhes, "pasta": r.pasta, "concluido_em": agora(),
-        })
+            "detalhes": detalhes, "pasta": r.pasta,
+        }
+        if reservada:
+            return self.portal.atualizar_tarefa_reservada(t, campos)
+        self.portal.atualizar_tarefa(t["id"], {**campos, "concluido_em": agora()})
         # Uma falha posterior no lote não deve reescrever tarefas já confirmadas pelo painel.
         self.tarefas_atuais = [pendente for pendente in getattr(self, "tarefas_atuais", [])
                               if pendente["id"] != t["id"]]
@@ -1271,7 +1318,7 @@ class Robo:
 
 
 # ====================================================================== NFS-e (Portal Nacional)
-def executar_nfse(cfg: dict, t: dict, privada, sessao_falsa=None) -> Resultado:
+def executar_nfse(cfg: dict, t: dict, privada, sessao_falsa=None, *, confirmar_reserva=None) -> Resultado:
     """Uma tarefa da NFS-e: abre o certificado A1 (só na memória), busca as notas da competência pela API
     oficial e devolve a situação de cada serviço (emitidas, recebidas, PDF, relatório de retenções)."""
     import nfse
@@ -1288,6 +1335,8 @@ def executar_nfse(cfg: dict, t: dict, privada, sessao_falsa=None) -> Resultado:
         return Resultado("erro", f"Contexto NFS-e inválido: {erro}", detalhes=todos("erro", "contexto inválido"))
 
     try:
+        if confirmar_reserva is not None:
+            confirmar_reserva(forcar=True)
         pfx = cripto.decifrar_arquivo(t["pfx_cifrado"], privada)
         senha = cripto.decifrar(t["senha_cifrada"], privada)
     except cripto.SenhaIlegivel as e:
@@ -1313,6 +1362,8 @@ def executar_nfse(cfg: dict, t: dict, privada, sessao_falsa=None) -> Resultado:
             destino = cfg["pastas"]["destino"]
             opcoes = dict(pdf="nfse_pdf" in tipos, com_emitidas="nfse_emitidas" in tipos,
                           com_recebidas="nfse_recebidas" in tipos, relatorio="nfse_retencoes" in tipos)
+            if confirmar_reserva is not None:
+                opcoes["confirmar_reserva"] = confirmar_reserva
             anteriores = nfse.meses_sem_busca(competencia, t.get("meses_consultados") or [])
             r = nfse.baixar_competencia(cliente, contexto, competencia, destino, **opcoes)
             # O cache contém emitidas mesmo se o usuário escolheu só salvar as recebidas.
@@ -1329,7 +1380,11 @@ def executar_nfse(cfg: dict, t: dict, privada, sessao_falsa=None) -> Resultado:
                         meses_extra.append((mes, n))
                 log.info("   MEI %s: meses anteriores do ano conferidos (%s)", t["nome"],
                          ", ".join(f"{m[5:]}/{m[:4]}: {n} nota(s)" for m, n in meses_extra) or "nenhuma nota")
-    except (IdentidadeArmazenamentoInvalida, ArmazenamentoOcupado, OSError) as erro:
+    except ArmazenamentoOcupado as erro:
+        if confirmar_reserva is not None:
+            raise
+        return Resultado("erro", str(erro), detalhes=todos("erro", str(erro)))
+    except (IdentidadeArmazenamentoInvalida, OSError) as erro:
         return Resultado("erro", str(erro), detalhes=todos("erro", str(erro)))
     except nfse.ErroADN as e:
         texto = str(e)

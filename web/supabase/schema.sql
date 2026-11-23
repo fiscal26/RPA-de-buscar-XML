@@ -586,6 +586,9 @@ create table if not exists public.xml_nfe_notas (
   primary key (org_id, chave)
 );
 create index if not exists xml_nfe_notas_empresa_idx on public.xml_nfe_notas (org_id, cnpj, emissao desc);
+alter table public.xml_nfe_notas
+  add column if not exists xml_consultado_em timestamptz,
+  add column if not exists xml_fora_prazo boolean not null default false;
 
 -- Horário da consulta diária, escolhido pelo escritório (padrão 11h, horário de Brasília)
 alter table public.organizacoes add column if not exists monitor_hora time not null default '11:00';
@@ -644,11 +647,16 @@ begin
 
   return query
   select m.id, m.cnpj, m.nome, m.codigo, m.ciencia, m.ultimo_nsu, o.nome, c.cnpj, c.pfx_cifrado, c.senha_cifrada,
-         coalesce((select jsonb_agg(jsonb_build_object('chave', n.chave, 'manifestada', n.manifestada_em is not null))
-                     from (select n.chave, n.manifestada_em from public.xml_nfe_notas n
-                            where n.org_id = m.org_id and n.cnpj = m.cnpj and not n.completa and n.situacao = 'autorizada'
-                              and n.encontrada_em > now() - interval '90 days'
-                            order by n.encontrada_em desc limit 100) n), '[]'::jsonb)
+         coalesce((select jsonb_agg(jsonb_build_object('chave', n.chave, 'manifestada', f.manifestada)
+                                    order by n.xml_consultado_em nulls first, n.encontrada_em desc, n.chave)
+                     from (values (true), (false)) f(manifestada)
+                     cross join lateral (
+                       select n.chave, n.xml_consultado_em, n.encontrada_em from public.xml_nfe_notas n
+                        where n.org_id = m.org_id and n.cnpj = m.cnpj and not n.completa and n.situacao = 'autorizada'
+                          and not n.xml_fora_prazo and (n.manifestada_em is not null) = f.manifestada
+                          and n.encontrada_em > now() - interval '90 days'
+                        order by n.xml_consultado_em nulls first, n.encontrada_em desc, n.chave limit 100
+                     ) n), '[]'::jsonb)
     from public.xml_nfe_monitor m
     join public.organizacoes o on o.id = m.org_id
     cross join lateral (
@@ -676,15 +684,17 @@ begin
   with dados as (
     select n.* from jsonb_to_recordset(coalesce(p_notas, '[]'::jsonb)) as n(
       chave text, numero text, serie text, emitente_cnpj text, emitente_nome text, emitente_uf text,
-      valor numeric, emissao timestamptz, situacao text, completa boolean, manifestada boolean, pdf boolean)
+      valor numeric, emissao timestamptz, situacao text, completa boolean, manifestada boolean, pdf boolean,
+      xml_consultado boolean, xml_fora_prazo boolean)
      where n.chave ~ '^[0-9]{44}$'
   ), gravadas as (
     insert into public.xml_nfe_notas as t (org_id, chave, cnpj, numero, serie, emitente_cnpj, emitente_nome, emitente_uf,
-                                           valor, emissao, situacao, completa, manifestada_em, pdf)
+                                           valor, emissao, situacao, completa, manifestada_em, pdf, xml_consultado_em, xml_fora_prazo)
     select m.org_id, d.chave, m.cnpj, coalesce(d.numero, ''), coalesce(d.serie, ''), coalesce(d.emitente_cnpj, ''),
            coalesce(d.emitente_nome, ''), coalesce(d.emitente_uf, ''), d.valor, d.emissao,
            case when d.situacao in ('autorizada', 'cancelada', 'denegada') then d.situacao else 'autorizada' end,
-           coalesce(d.completa, false), case when d.manifestada then now() end, coalesce(d.pdf, false)
+           coalesce(d.completa, false), case when d.manifestada then now() end, coalesce(d.pdf, false),
+           case when d.xml_consultado then now() end, coalesce(d.xml_fora_prazo, false)
       from dados d
     on conflict (org_id, chave) do update set
       numero        = coalesce(nullif(excluded.numero, ''), t.numero),
@@ -699,7 +709,9 @@ begin
                            when excluded.situacao = 'denegada' then 'denegada' else t.situacao end,
       completa      = t.completa or excluded.completa,
       manifestada_em = coalesce(t.manifestada_em, excluded.manifestada_em),
-      pdf           = t.pdf or excluded.pdf
+      pdf           = t.pdf or excluded.pdf,
+      xml_consultado_em = greatest(t.xml_consultado_em, excluded.xml_consultado_em),
+      xml_fora_prazo = t.xml_fora_prazo or excluded.xml_fora_prazo
     returning (xmax = 0) as nova
   )
   select count(*) filter (where nova) into v_novas from gravadas;
@@ -740,6 +752,24 @@ create policy xml_nfe_monitor_ler on public.xml_nfe_monitor for select to authen
 drop policy if exists xml_nfe_notas_ler on public.xml_nfe_notas;
 create policy xml_nfe_notas_ler on public.xml_nfe_notas for select to authenticated
   using ((select public.sou_admin()) or org_id = (select public.minha_org()));
+
+-- Totais do Monitor Fiscal agrupados por escritório e empresa, sob a RLS das notas.
+create or replace function public.xml_nfe_resumo_monitor(p_inicio timestamptz, p_fim timestamptz)
+returns jsonb language sql stable security invoker set search_path = '' as $$
+  select coalesce(jsonb_agg(to_jsonb(resumo)), '[]'::jsonb)
+  from (
+    select org_id, cnpj, count(*) as "notasEncontradas",
+      count(*) filter (where no_mes) as "notasMes",
+      coalesce(sum(valor) filter (where no_mes), 0) as "comprasMes"
+    from (
+      select org_id, cnpj, valor, situacao = 'autorizada' and emissao >= p_inicio and emissao < p_fim as no_mes
+      from public.xml_nfe_notas
+    ) notas
+    group by org_id, cnpj
+  ) resumo
+$$;
+revoke execute on function public.xml_nfe_resumo_monitor(timestamptz, timestamptz) from public, anon;
+grant execute on function public.xml_nfe_resumo_monitor(timestamptz, timestamptz) to authenticated;
 
 revoke all on function public.xml_nfe_pegar_monitor(text, integer) from public, anon, authenticated;
 grant execute on function public.xml_nfe_pegar_monitor(text, integer) to service_role;
@@ -1633,10 +1663,24 @@ grant execute on function public.xml_mei_nome(uuid,text),public.xml_mei_autoriza
 revoke all on function public.xml_mei_pode_consultar(uuid,text,date) from public,anon;
 grant execute on function public.xml_mei_pode_consultar(uuid,text,date) to authenticated,service_role;
 
+-- Identifica a NFS-e já pendente que cobre a competência do Dossiê MEI.
+create or replace function public.xml_mei_nfse_pendente(p_org uuid, p_nfse uuid, p_competencia date, p_executar_em timestamptz)
+returns uuid language sql stable security invoker set search_path = '' as $$
+  select a.id from public.xml_tarefas t join public.xml_agendamentos a on a.id = t.agendamento_id and a.org_id = t.org_id
+    where t.org_id = p_org and t.nfse_empresa_id = p_nfse and a.origem = 'nfse'
+      and 'nfse_emitidas' = any(t.tipos) and t.status in ('pendente', 'processando')
+      and a.competencia >= p_competencia and a.competencia < (date_trunc('year', p_competencia::timestamp) + interval '1 year')::date
+      and a.executar_em <= p_executar_em
+    order by a.competencia, a.executar_em, a.id limit 1
+$$;
+revoke all on function public.xml_mei_nfse_pendente(uuid, uuid, date, timestamptz) from public, anon, authenticated;
+grant execute on function public.xml_mei_nfse_pendente(uuid, uuid, date, timestamptz) to service_role;
+
 create or replace function public.xml_mei_reprocessar(p_org uuid, p_documento text, p_competencia date)
 returns jsonb language plpgsql security definer set search_path = public as $$
 declare
   v_cnpj text; v_empresa record; v_nfse record; v_ag uuid; v_ids uuid[] := '{}'; v_ativo uuid; v_criados integer := 0;
+  v_complemento uuid;
 begin
   if not coalesce(public.sou_admin() or (p_org = public.minha_org() and public.meu_papel() = 'gestor'), false) then
     raise exception 'Somente gestor ou administrador pode reprocessar';
@@ -1697,6 +1741,15 @@ begin
     v_ids := array_append(v_ids, v_ag); v_criados := v_criados + 1;
   end loop;
   if cardinality(v_ids) = 0 then raise exception 'Cadastre a empresa na NFS-e ou na SEFAZ antes de reprocessar'; end if;
+  if v_nfse.id is null then
+    -- A inserção da tarefa SEFAZ pode ter criado o cadastro e agendado NFS-e pelo trigger.
+    select public.xml_mei_nfse_pendente(p_org, n.id, p_competencia, a.executar_em) into v_complemento
+      from public.xml_nfse_empresas n
+      join public.xml_agendamentos a on a.org_id = n.org_id and a.id = any(v_ids) and a.origem = 'sefaz'
+      where n.org_id = p_org and n.cnpj = v_cnpj
+      order by a.executar_em desc, a.id limit 1;
+    if v_complemento is not null then v_ids := array_append(v_ids, v_complemento); end if;
+  end if;
   return jsonb_build_object('agendamentos', v_ids, 'existente', v_criados = 0);
 end $$;
 
@@ -1728,13 +1781,7 @@ begin
     values (new.org_id, v_empresa.cnpj, v_empresa.nome, v_empresa.codigo, array['nfse_emitidas'])
     on conflict (org_id, cnpj) do nothing;
   select id into v_nfse from public.xml_nfse_empresas where org_id = new.org_id and cnpj = v_empresa.cnpj;
-  if exists (
-    select 1 from public.xml_tarefas t join public.xml_agendamentos a on a.id = t.agendamento_id
-      where t.org_id = new.org_id and t.nfse_empresa_id = v_nfse and a.origem = 'nfse'
-        and 'nfse_emitidas' = any(t.tipos) and t.status in ('pendente', 'processando')
-        and a.competencia >= v_ag.competencia and date_trunc('year', a.competencia) = date_trunc('year', v_ag.competencia)
-        and a.executar_em <= v_ag.executar_em
-  ) then return new; end if;
+  if public.xml_mei_nfse_pendente(new.org_id, v_nfse, v_ag.competencia, v_ag.executar_em) is not null then return new; end if;
 
   insert into public.xml_agendamentos(org_id, criado_por, competencia, executar_em, total, origem, nome_arquivo)
     values (new.org_id, v_ag.criado_por, v_ag.competencia, v_ag.executar_em, 1, 'nfse', 'Complemento NFS-e do MEI (ATF)') returning id into v_novo;
@@ -2110,6 +2157,209 @@ revoke all on function public.xml_mei_registrar_contexto(uuid, text, jsonb, date
 grant execute on function public.xml_mei_registrar_contexto(uuid, text, jsonb, date) to service_role;
 revoke all on function public.xml_mei_registrar_v2(uuid, uuid, text, jsonb, date) from public, anon, authenticated;
 grant execute on function public.xml_mei_registrar_v2(uuid, uuid, text, jsonb, date) to service_role;
+
+notify pgrst, 'reload schema';
+commit;
+
+-- Reserva por tentativa. Os contratos de retirada anteriores mantêm a assinatura e o comportamento.
+begin;
+
+alter table public.xml_tarefas add column if not exists tentativa_id uuid;
+alter table public.xml_tarefas add column if not exists reserva_ate timestamptz;
+alter table public.xml_tarefas add column if not exists tentar_novamente_em timestamptz;
+
+-- A fila legada do ATF continua atendendo SEFAZ e deixa as reservas v2 intactas.
+create or replace function public.xml_pegar_lote(p_robo text, p_login text default '', p_max integer default 15)
+returns table (id uuid, ie text, cnpj text, nome text, codigo text, tipos text[], data_inicio date, data_fim date,
+               login_atf text, senha_cifrada text, org_nome text)
+language plpgsql security definer set search_path = public as $$
+#variable_conflict use_column
+declare
+  v_acesso uuid;
+  v_competencia date;
+  v_ids uuid[];
+begin
+  -- tarefa "presa" (o robô caiu no meio) volta para a fila depois de 90 min
+  update public.xml_tarefas t set status = 'pendente', iniciado_em = null, robo = null
+    from public.xml_agendamentos a
+   where a.id = t.agendamento_id and a.origem = 'sefaz'
+     and t.status = 'processando' and t.tentativa_id is null
+     and t.iniciado_em < now() - interval '90 minutes';
+
+  perform public.xml_mei_limpar_fila();
+
+  -- empresa ou login apagado depois do agendamento: encerra com aviso
+  update public.xml_tarefas t set status = 'erro', concluido_em = now(),
+         mensagem = 'Empresa ou login do ATF removido do cadastro; envie a planilha de novo.'
+   where t.status = 'pendente'
+     and exists (select 1 from public.xml_agendamentos a where a.id = t.agendamento_id and a.origem = 'sefaz')
+     and not exists (select 1 from public.xml_empresas e join public.xml_acessos c on c.id = e.acesso_id
+                      where e.id = t.empresa_id);
+
+  -- qual login e competência atender agora
+  select e.acesso_id, a.competencia into v_acesso, v_competencia
+    from public.xml_tarefas t
+    join public.xml_agendamentos a on a.id = t.agendamento_id
+    join public.xml_empresas e on e.id = t.empresa_id
+    join public.xml_acessos c on c.id = e.acesso_id
+   where t.status = 'pendente' and a.executar_em <= now()
+     and (t.tentar_novamente_em is null or t.tentar_novamente_em <= statement_timestamp())
+   order by (c.login is not distinct from nullif(p_login, '')) desc, a.executar_em, t.criado_em
+   limit 1;
+  if v_acesso is null then return; end if;
+
+  select array_agg(x.id) into v_ids from (
+    select t.id
+      from public.xml_tarefas t
+      join public.xml_agendamentos a on a.id = t.agendamento_id
+      join public.xml_empresas e on e.id = t.empresa_id
+     where t.status = 'pendente' and a.executar_em <= now()
+     and (t.tentar_novamente_em is null or t.tentar_novamente_em <= statement_timestamp())
+       and e.acesso_id = v_acesso and a.competencia = v_competencia
+     order by a.executar_em, t.criado_em
+     limit greatest(1, least(p_max, 50))
+     for update of t skip locked) x;
+  if v_ids is null then return; end if;
+
+  update public.xml_tarefas set status = 'processando', iniciado_em = now(), robo = p_robo where xml_tarefas.id = any(v_ids);
+
+  return query
+  select t.id, t.ie, e.cnpj, t.nome, t.codigo, t.tipos, a.data_inicio, a.data_fim, c.login, c.senha_cifrada, o.nome
+    from public.xml_tarefas t
+    join public.organizacoes o on o.id = t.org_id
+    join public.xml_agendamentos a on a.id = t.agendamento_id
+    join public.xml_empresas e on e.id = t.empresa_id
+    join public.xml_acessos c on c.id = e.acesso_id
+   where t.id = any(v_ids)
+   order by t.criado_em;
+end $$;
+
+create or replace function public.xml_nfse_reservar_lote(p_robo text, p_max integer default 10)
+returns table (id uuid, cnpj text, nome text, codigo text, tipos text[], data_inicio date, data_fim date,
+               certificado_cnpj text, pfx_cifrado text, senha_cifrada text, org_id uuid, org_nome text, procurador boolean, mei boolean, mei_bloqueado boolean,
+               tentativa_id uuid)
+-- Executa com as permissões do proprietário. A concessão ao serviço limita quem pode chamar.
+language plpgsql security definer set search_path = pg_catalog, pg_temp as $$
+#variable_conflict use_column
+begin
+  update public.xml_tarefas t set status = 'pendente', iniciado_em = null, robo = null, tentativa_id = null, reserva_ate = null
+    from public.xml_agendamentos a, public.organizacoes o
+   where t.agendamento_id = a.id and a.origem = 'nfse' and o.id = t.org_id and o.ativo
+     and t.status = 'processando' and coalesce(t.reserva_ate, t.iniciado_em + interval '90 minutes') <= statement_timestamp();
+
+  update public.xml_tarefas t set status = 'erro', concluido_em = now(),
+         mensagem = 'Empresa ou agendamento da NFS-e incompatível com a organização da tarefa.'
+    from public.xml_agendamentos a, public.organizacoes o
+   where t.agendamento_id = a.id and a.origem = 'nfse' and o.id = t.org_id and o.ativo
+     and t.status = 'pendente' and a.executar_em <= now()
+     and (t.tentar_novamente_em is null or t.tentar_novamente_em <= statement_timestamp())
+     and (a.org_id <> t.org_id or t.empresa_id is not null or not exists (
+       select 1 from public.xml_nfse_empresas e
+       where e.id = t.nfse_empresa_id and e.org_id = t.org_id and e.cnpj = t.ie
+     ));
+
+  update public.xml_tarefas t set status = 'certificado', concluido_em = now(),
+         mensagem = 'Sem certificado A1 autorizado da empresa, matriz ou procurador nesta organização.'
+    from public.xml_agendamentos a, public.organizacoes o, public.xml_nfse_empresas e
+   where t.agendamento_id = a.id and a.org_id = t.org_id and a.origem = 'nfse' and a.executar_em <= now()
+     and (t.tentar_novamente_em is null or t.tentar_novamente_em <= statement_timestamp())
+     and o.id = t.org_id and o.ativo and t.empresa_id is null and t.status = 'pendente'
+     and e.id = t.nfse_empresa_id and e.org_id = t.org_id and e.cnpj = t.ie
+     and not exists (select 1 from public.xml_nfse_certificados c
+                      where c.org_id = t.org_id and (a.certificado_id is null or c.id = a.certificado_id)
+                        and ((length(c.cnpj) = 14 and left(c.cnpj, 8) = left(e.cnpj, 8)) or c.procurador));
+
+  -- Reserva e credenciais saem das mesmas linhas. Os bloqueios mantêm os vínculos durante a operação.
+  return query
+  with lote as (
+    select t.id, e.cnpj, t.nome, t.codigo, t.tipos, a.data_inicio, a.data_fim, c.cnpj as certificado_cnpj,
+           c.pfx_cifrado, c.senha_cifrada, t.org_id, o.nome as org_nome, c.procurador,
+           a.competencia, a.executar_em, t.criado_em
+      from public.xml_tarefas t
+      join public.xml_agendamentos a on a.id = t.agendamento_id and a.org_id = t.org_id
+      join public.organizacoes o on o.id = t.org_id and o.ativo
+      join public.xml_nfse_empresas e on e.id = t.nfse_empresa_id and e.org_id = t.org_id and e.cnpj = t.ie
+      cross join lateral (
+        select c.cnpj, c.pfx_cifrado, c.senha_cifrada,
+               (c.cnpj <> e.cnpj and not (length(c.cnpj) = 14 and left(c.cnpj, 8) = left(e.cnpj, 8))) as procurador
+          from public.xml_nfse_certificados c
+         where c.org_id = t.org_id and (a.certificado_id is null or c.id = a.certificado_id)
+                        and ((length(c.cnpj) = 14 and left(c.cnpj, 8) = left(e.cnpj, 8)) or c.procurador)
+         order by (c.cnpj = e.cnpj) desc, (length(c.cnpj) = 14 and left(c.cnpj, 8) = left(e.cnpj, 8)) desc, (substr(c.cnpj, 9, 4) = '0001') desc, c.atualizado_em desc, c.id
+         limit 1 for share of c
+      ) c
+     where t.status = 'pendente' and a.origem = 'nfse' and a.executar_em <= now()
+     and (t.tentar_novamente_em is null or t.tentar_novamente_em <= statement_timestamp()) and t.empresa_id is null
+     order by a.executar_em, t.criado_em, t.id
+     limit greatest(1, least(p_max, 50))
+     for update of t skip locked for share of a, o, e
+  ), retiradas as (
+    update public.xml_tarefas t set status = 'processando', iniciado_em = statement_timestamp(), robo = p_robo,
+           tentativa_id = gen_random_uuid(), reserva_ate = statement_timestamp() + interval '90 minutes',
+           tentar_novamente_em = null
+      from lote l where t.id = l.id returning t.id, t.tentativa_id
+  )
+  select l.id, l.cnpj, l.nome, l.codigo, l.tipos, l.data_inicio, l.data_fim,
+         l.certificado_cnpj, l.pfx_cifrado, l.senha_cifrada, l.org_id, l.org_nome, l.procurador,
+         (exists (select 1 from public.xml_mei_cadastros m
+                   where m.org_id = l.org_id and m.cnpj = l.cnpj and m.ativo
+                     and l.competencia >= m.inicio_mei and (m.fim_mei is null or l.competencia <= m.fim_mei))
+          or (not exists (select 1 from public.xml_mei_cadastros m where m.org_id = l.org_id and m.cnpj = l.cnpj)
+              and exists (select 1 from public.xml_empresas s where s.org_id = l.org_id and s.cnpj = l.cnpj and 'mei' = any(s.tipos)))),
+         not public.xml_mei_pode_consultar(l.org_id, l.cnpj, l.competencia), r.tentativa_id
+    from lote l join retiradas r on r.id = l.id
+   order by l.executar_em, l.criado_em, l.id;
+end $$;
+
+-- O identificador muda a cada retirada. A atualização só vale durante a reserva correspondente.
+create or replace function public.xml_atualizar_tarefa_reservada(
+  p_tarefa uuid, p_tentativa uuid, p_campos jsonb default '{}'::jsonb
+) returns boolean
+language plpgsql security definer set search_path = pg_catalog, pg_temp as $$
+begin
+  if jsonb_typeof(p_campos) is distinct from 'object' then
+    raise exception 'A atualização da tarefa precisa ser um objeto JSON.' using errcode = '22023';
+  end if;
+  if (p_campos - array['status','mensagem','detalhes','pasta','qtd_xml']) <> '{}'::jsonb
+     or (p_campos ? 'status' and coalesce(p_campos->>'status', '') not in (
+         'concluido', 'sem_notas', 'erro', 'fora_do_ar', 'certificado', 'senha_invalida')) then
+    raise exception 'Campos ou estado inválidos na atualização da reserva.' using errcode = '22023';
+  end if;
+
+  update public.xml_tarefas t
+     set status = coalesce(dados.status, t.status),
+         mensagem = coalesce(dados.mensagem, t.mensagem),
+         detalhes = coalesce(dados.detalhes, t.detalhes),
+         pasta = coalesce(dados.pasta, t.pasta),
+         qtd_xml = coalesce(dados.qtd_xml, t.qtd_xml),
+         concluido_em = case when dados.status is null then t.concluido_em else clock_timestamp() end,
+         tentativa_id = case when dados.status is null then t.tentativa_id end,
+         reserva_ate = case when dados.status is null then clock_timestamp() + interval '90 minutes' end
+    from jsonb_to_record(p_campos) as dados(status text, mensagem text, detalhes jsonb, pasta text, qtd_xml integer)
+   where t.id = p_tarefa and t.status = 'processando' and t.tentativa_id = p_tentativa
+     and t.reserva_ate > clock_timestamp();
+  return found;
+end $$;
+
+revoke all on function public.xml_nfse_reservar_lote(text, integer) from public, anon, authenticated;
+grant execute on function public.xml_nfse_reservar_lote(text, integer) to service_role;
+revoke all on function public.xml_atualizar_tarefa_reservada(uuid, uuid, jsonb) from public, anon, authenticated;
+grant execute on function public.xml_atualizar_tarefa_reservada(uuid, uuid, jsonb) to service_role;
+
+-- Uma disputa pela pasta é temporária. Só a tentativa atual pode devolver a tarefa.
+create or replace function public.xml_devolver_tarefa_reservada(p_tarefa uuid, p_tentativa uuid)
+returns boolean language plpgsql security definer set search_path = pg_catalog, pg_temp as $$
+begin
+  update public.xml_tarefas t
+     set status = 'pendente', iniciado_em = null, concluido_em = null, robo = null,
+         tentativa_id = null, reserva_ate = null, tentar_novamente_em = clock_timestamp() + interval '1 minute',
+         mensagem = 'A pasta da empresa ainda está em uso. Nova tentativa agendada.', detalhes = '{}'::jsonb
+   where t.id = p_tarefa and t.status = 'processando' and t.tentativa_id = p_tentativa
+     and t.reserva_ate > clock_timestamp();
+  return found;
+end $$;
+revoke all on function public.xml_devolver_tarefa_reservada(uuid, uuid) from public, anon, authenticated;
+grant execute on function public.xml_devolver_tarefa_reservada(uuid, uuid) to service_role;
 
 notify pgrst, 'reload schema';
 commit;

@@ -75,7 +75,15 @@ Emissão e Distribuição, com a procuração eletrônica cadastrada na Receita 
 
 ## Integração da NFS-e por escritório
 
-A fila do robô atualizado usa `xml_nfse_pegar_lote_v2`. A estrutura de documentos é
+A fila do robô atualizado usa `xml_nfse_reservar_lote`. Cada retirada ganha um novo
+`tentativa_id`. A função `xml_atualizar_tarefa_reservada` aceita progresso e
+conclusão somente durante a reserva correspondente. O processamento renova a
+reserva de 90 minutos em pontos de verificação. Se perder a reserva, interrompe
+a gravação ao verificar a titularidade e descarta o resultado para o painel.
+Se outro processo ainda estiver usando a pasta, a tentativa atual devolve a
+tarefa à fila para tentar depois de um minuto.
+
+A estrutura de documentos é
 `<destino>/Arquivos por empresa v2/portal/org_<uuid>--<rótulo>/nfse_nacional/cnpj_<cnpj>--<rótulo>/`.
 O cache está em `_cache/nfse/portal/<uuid>/<cnpj>/` sob a mesma raiz. Renomear o
 escritório ou a empresa mantém os identificadores e os históricos associados.
@@ -106,7 +114,11 @@ config.json. Reutilize o mesmo identificador nas próximas execuções.
 .\robo\testar_nfse.bat --criar-contexto-local
 ```
 
-A migração `web/supabase/migrations/20261116100000_nfse_por_contexto.sql` exige o banco
-atualizado com a main de referência. Sua aplicação operacional depende da revisão,
-da homologação e da autorização da troca. O roteiro está em
-[revisão da entrega](../docs/reviews/nfse-por-escritorio.md).
+Confira o histórico do ambiente antes de aplicar as migrações
+`20261116100000_nfse_por_contexto.sql` e `20261123180000_reserva_tarefas_nfse.sql`.
+O robô atualizado usa as funções da segunda migração. Os contratos anteriores
+continuam disponíveis durante a transição. A fila legada de ATF só reabre
+tarefas SEFAZ. Pause os consumidores de NFS-e que ainda usam o contrato anterior
+antes de iniciar o robô atualizado no mesmo banco.
+A aplicação operacional depende da revisão, da homologação e da autorização da
+troca. O roteiro está na [revisão da entrega](../docs/reviews/nfse-por-escritorio.md).

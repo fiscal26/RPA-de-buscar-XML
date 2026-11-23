@@ -8,6 +8,7 @@ import copy
 import json
 import os
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from uuid import uuid4
 
 from armazenamento import (ArmazenamentoOcupado, gravar_json_atomico, normalizar_id_contexto, trava_exclusiva)
@@ -40,9 +41,9 @@ def _pasta_gravavel(pasta: Path) -> bool:
     """Cria a pasta (se faltar) e testa a gravação de um arquivo."""
     try:
         pasta.mkdir(parents=True, exist_ok=True)
-        teste = pasta / ".teste_gravacao"
-        teste.write_text("ok", encoding="utf-8")
-        teste.unlink()
+        with NamedTemporaryFile(dir=pasta, prefix=".teste_gravacao-") as teste:
+            teste.write(b"ok")
+            teste.flush()
         return True
     except OSError:
         return False

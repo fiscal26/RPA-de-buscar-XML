@@ -30,7 +30,8 @@ def documento(valor=100, chave=C1, numero="1"):
 
 
 def test_fluxo_portal_publica_resultados_e_arquivos_separados(cfg, chaves, monkeypatch):
-    tarefas = [tarefa(chaves, ["nfse_emitidas", "nfse_retencoes"]) | {"id": str(i), "org_id": org}
+    tarefas = [tarefa(chaves, ["nfse_emitidas", "nfse_retencoes"]) |
+               {"id": str(i), "org_id": org, "tentativa_id": f"tentativa-{i}"}
                for i, org in enumerate((ORG, OUTRA_ORG), 1)]
     portais = iter([PortalFalso([documento(100)]), PortalFalso([documento(200)])])
     monkeypatch.setattr(nfse, "sessao_com_certificado", lambda _: next(portais))
@@ -42,9 +43,12 @@ def test_fluxo_portal_publica_resultados_e_arquivos_separados(cfg, chaves, monke
             return Resposta(200, [{"org_id": t["org_id"], "ie": t["cnpj"]}])
         if metodo == "GET":
             return Resposta(200, [])
-        if "status" in kw["json"]:
-            finais[url.rsplit("eq.", 1)[1]] = kw["json"]
-        return Resposta(204, {})
+        assert metodo == "POST" and url.endswith("/rpc/xml_atualizar_tarefa_reservada")
+        payload = kw["json"]
+        assert payload["p_tentativa"] == "tentativa-" + payload["p_tarefa"]
+        if "status" in payload["p_campos"]:
+            finais[payload["p_tarefa"]] = payload["p_campos"]
+        return Resposta(200, True)
 
     monkeypatch.setattr(robo_xml.requests, "request", requisicao)
     robo = robo_xml.Robo.__new__(robo_xml.Robo)
@@ -158,7 +162,65 @@ def test_fila_ausente_nao_recorre_ao_contrato_antigo(monkeypatch):
     portal = robo_xml.Portal("https://teste.invalid", "falsa")
     with pytest.raises(robo_xml.ContratoPortalIndisponivel):
         portal.pegar_lote_nfse("robo", 2)
-    assert pedidos == ["https://teste.invalid/rest/v1/rpc/xml_nfse_pegar_lote_v2"]
+    assert pedidos == ["https://teste.invalid/rest/v1/rpc/xml_nfse_reservar_lote"]
+
+
+def test_reserva_perdida_durante_a_consulta_bloqueia_gravacao_e_conclusao(cfg, chaves, monkeypatch):
+    t = tarefa(chaves, ["nfse_emitidas"]) | {"id": "t", "tentativa_id": "antiga"}
+    robo = robo_xml.Robo.__new__(robo_xml.Robo)
+    robo.cfg, robo.privada, robo.em_curso = cfg, chaves[0], {}
+    robo.portal = robo_xml.Portal("https://teste.invalid", "falsa")
+    instante = 0.0
+    tentativas = []
+
+    def requisicao(metodo, url, **kw):
+        if metodo == "GET" and url.endswith("xml_tarefas"):
+            return Resposta(200, [{"org_id": t["org_id"], "ie": t["cnpj"]}])
+        if metodo == "GET":
+            return Resposta(200, [])
+        assert url.endswith("/rpc/xml_atualizar_tarefa_reservada")
+        tentativas.append(kw["json"])
+        return Resposta(200, instante == 0)
+
+    class RespostaAtrasada(PortalFalso):
+        def get(self, *args, **kwargs):
+            nonlocal instante
+            instante = 91 * 60
+            return super().get(*args, **kwargs)
+
+    monkeypatch.setattr(robo_xml.time, "monotonic", lambda: instante)
+    monkeypatch.setattr(robo_xml.requests, "request", requisicao)
+    monkeypatch.setattr(nfse, "sessao_com_certificado", lambda _: RespostaAtrasada([documento()]))
+    robo._uma_nfse(t)
+    raiz = Path(cfg["pastas"]["destino"])
+    assert len(tentativas) >= 4 and tentativas[-1]["p_campos"] == {}
+    assert all("status" not in tentativa["p_campos"] for tentativa in tentativas)
+    assert not list(raiz.rglob("*.xml")) and not list(raiz.rglob("indice.json"))
+
+
+def test_portal_devolve_tarefa_quando_a_pasta_esta_em_uso(cfg, chaves, monkeypatch):
+    t = tarefa(chaves, ["nfse_emitidas"]) | {"id": "t", "tentativa_id": "nova"}
+    robo = robo_xml.Robo.__new__(robo_xml.Robo)
+    robo.cfg, robo.privada, robo.em_curso = cfg, chaves[0], {}
+    robo.portal = robo_xml.Portal("https://teste.invalid", "falsa")
+    portal_falso = PortalFalso([])
+    chamadas = []
+
+    def requisicao(metodo, url, **kw):
+        if metodo == "GET" and url.endswith("xml_tarefas"):
+            return Resposta(200, [{"org_id": t["org_id"], "ie": t["cnpj"]}])
+        if metodo == "GET":
+            return Resposta(200, [])
+        chamadas.append((url.rsplit("/", 1)[1], kw["json"]))
+        return Resposta(200, True)
+
+    monkeypatch.setattr(robo_xml.requests, "request", requisicao)
+    monkeypatch.setattr(nfse, "sessao_com_certificado", lambda _: portal_falso)
+    with abrir_empresa(cfg["pastas"]["destino"], contexto()):
+        robo._uma_nfse(t)
+    assert chamadas[-1] == ("xml_devolver_tarefa_reservada", {"p_tarefa": "t", "p_tentativa": "nova"})
+    assert all("status" not in payload.get("p_campos", {}) for _, payload in chamadas)
+    assert not portal_falso.pedidos
 
 
 def test_contexto_invalido_e_historico_de_outra_org_nao_abrem_credenciais(cfg, monkeypatch):
