@@ -4,20 +4,24 @@ import Tabela from "@/components/ui/Tabela";
 import Paginacao from "@/components/ui/Paginacao";
 
 import Link from "next/link";
-import { useDeferredValue, useState } from "react";
+import { useDeferredValue, useState, type ReactNode } from "react";
 import Icone from "@/components/Icones";
 import BotaoRemover from "../empresas/BotaoRemover";
 import { dataBR, dataHoraBR, formatarDocumento, iniciais } from "@/lib/documentos";
-import { SITUACAO_MONITOR, reaisMonitor, type MonitorLinha } from "@/lib/monitor";
+import { SITUACAO_MONITOR, reaisMonitor, somarNotasMonitor, type MonitorLinha, type ResumoNotasMonitor } from "@/lib/monitor";
 import { consultarAgora, removerMonitor } from "./actions";
 
-export type LinhaTabela = MonitorLinha & {
-  organizacao: string; comprasMes: number; notasMes: number;
+export type LinhaTabela = MonitorLinha & ResumoNotasMonitor & {
+  organizacao: string;
   certificado: { validade: string | null; nome: string; classe: string; vencido: boolean } | null;
 };
 
-/** Empresas monitoradas, da última nota encontrada para trás, com filtro por nome ou CNPJ. */
-export default function TabelaMonitor({ linhas, gerencia, admin }: { linhas: LinhaTabela[]; gerencia: boolean; admin: boolean }) {
+const numero = (n: number) => n.toLocaleString("pt-BR");
+
+/** Empresas monitoradas com totais de notas e compras para o filtro atual. */
+export default function TabelaMonitor({ linhas, gerencia, admin, resumoGeral, clientesMonitorados, vazio }: {
+  linhas: LinhaTabela[]; gerencia: boolean; admin: boolean; resumoGeral: ResumoNotasMonitor; clientesMonitorados: number; vazio: ReactNode;
+}) {
   const [filtro, setFiltro] = useState("");
   const [pagina, setPagina] = useState(1);
   const termo = useDeferredValue(filtro).trim().toLowerCase();
@@ -25,11 +29,51 @@ export default function TabelaMonitor({ linhas, gerencia, admin }: { linhas: Lin
   const visiveis = linhas.filter((x) => !termo || x.nome.toLowerCase().includes(termo) || (digitos && x.cnpj.includes(digitos))
     || x.codigo.toLowerCase() === termo);
   const atual = Math.min(pagina, Math.max(1, Math.ceil(visiveis.length / 25)));
+  const resumo = termo ? somarNotasMonitor(visiveis) : resumoGeral;
+  return (
+    <>
+      <div className="painel-numeros monitor-numeros">
+        <div className="numero-cartao">
+          <span className="numero-icone"><Icone nome="empresas" /></span>
+          <span className="nome">Clientes monitorados</span>
+          <span className="valor">{numero(clientesMonitorados)}</span>
+        </div>
+        <div className="numero-cartao">
+          <span className="numero-icone"><Icone nome="tarefas" /></span>
+          <span className="nome">Notas encontradas</span>
+          <span className="valor">{numero(resumo.notasEncontradas)}</span>
+          <span className="suave">desde o início do monitoramento</span>
+        </div>
+        <div className="numero-cartao">
+          <span className="numero-icone"><Icone nome="agendar" /></span>
+          <span className="nome">Notas no mês</span>
+          <span className="valor">{numero(resumo.notasMes)}</span>
+        </div>
+        <div className="numero-cartao">
+          <span className="numero-icone"><Icone nome="mei" /></span>
+          <span className="nome">Compras no mês</span>
+          <span className="valor valor-moeda">{reaisMonitor(resumo.comprasMes)}</span>
+        </div>
+      </div>
+      <section className="cartao">
+        {linhas.length ? (
+          <ListaMonitor linhas={linhas} visiveis={visiveis} filtro={filtro} pagina={atual} gerencia={gerencia} admin={admin}
+            aoFiltrar={(valor) => { setFiltro(valor); setPagina(1); }} aoPaginar={setPagina} />
+        ) : vazio}
+      </section>
+    </>
+  );
+}
+
+function ListaMonitor({ linhas, visiveis, filtro, pagina, gerencia, admin, aoFiltrar, aoPaginar }: {
+  linhas: LinhaTabela[]; visiveis: LinhaTabela[]; filtro: string; pagina: number; gerencia: boolean; admin: boolean;
+  aoFiltrar: (valor: string) => void; aoPaginar: (pagina: number) => void;
+}) {
   return (
     <>
       <div className="cartao-topo">
         <input type="search" className="busca-monitor" placeholder="Filtrar por nome ou CNPJ" value={filtro}
-          onChange={(e) => { setFiltro(e.target.value); setPagina(1); }} aria-label="Filtrar empresas monitoradas" />
+          onChange={(e) => aoFiltrar(e.target.value)} aria-label="Filtrar empresas monitoradas" />
         <span className="suave">{visiveis.length} de {linhas.length}</span>
       </div>
       <Tabela rotulo="Empresas do Monitor Fiscal">
@@ -43,7 +87,7 @@ export default function TabelaMonitor({ linhas, gerencia, admin }: { linhas: Lin
             </tr>
           </thead>
           <tbody>
-            {visiveis.slice((atual - 1) * 25, atual * 25).map((x) => {
+            {visiveis.slice((pagina - 1) * 25, pagina * 25).map((x) => {
               const s = SITUACAO_MONITOR[x.status] ?? SITUACAO_MONITOR.fila;
               return (
                 <tr key={x.id} className={x.ativo ? "" : "inativo"}>
@@ -96,7 +140,7 @@ export default function TabelaMonitor({ linhas, gerencia, admin }: { linhas: Lin
         </table>
       </Tabela>
       {!visiveis.length && <p className="listagem-vazia" role="status">Nenhuma empresa encontrada. Tente outro nome ou CNPJ.</p>}
-      <Paginacao total={visiveis.length} pagina={atual} aoMudar={setPagina} rotulo="Paginação do Monitor Fiscal" />
+      <Paginacao total={visiveis.length} pagina={pagina} aoMudar={aoPaginar} rotulo="Paginação do Monitor Fiscal" />
     </>
   );
 }

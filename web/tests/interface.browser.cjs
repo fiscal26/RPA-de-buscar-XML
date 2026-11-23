@@ -118,6 +118,40 @@ async function acessivel(page) {
     await page.getByRole('button',{name:'Confirmar agendamento',exact:true}).click();await page.getByRole('link',{name:/Acompanhar/}).first().waitFor();
     await page.setViewportSize({width:1440,height:1000});
   });
+  await teste('Listas de empresas do agendamento mantêm nome e documento legíveis ao buscar e marcar', async () => {
+    for (const [origem, grupo, busca] of [
+      ['sefaz', 'Empresas SEFAZ cadastradas', 'Procurar empresa SEFAZ'],
+      ['nfse', 'Empresas cadastradas', 'Procurar empresa'],
+    ]) {
+      await page.goto(`${url}/painel/agendar?origem=${origem}&fonte=cadastro&org=org-1`);
+      const lista = page.getByRole('group', { name: grupo, exact: true });
+      const buscar = page.getByRole('searchbox', { name: busca, exact: true });
+      await buscar.fill('Restaurante Sabor da Terra');
+      const empresa = lista.getByRole('checkbox', { name: /Restaurante Sabor da Terra/ });
+      await empresa.waitFor();
+      for (const width of [1329, 960, 390]) {
+        await page.setViewportSize({ width, height: 900 });
+        const medidas = await empresa.evaluate((checkbox) => {
+          const linha = checkbox.closest('label');
+          const nome = linha.querySelector('.nome-empresa').getBoundingClientRect();
+          const documento = linha.querySelector('.doc').getBoundingClientRect();
+          const limite = linha.getBoundingClientRect();
+          return { largura: nome.width, separado: nome.right <= documento.left || nome.bottom <= documento.top,
+            contido: documento.right <= limite.right && nome.right <= limite.right };
+        });
+        assert.ok(medidas.largura > 120 && medidas.separado && medidas.contido, `${origem}, ${width}px: ${JSON.stringify(medidas)}`);
+      }
+      await buscar.press('Tab');
+      assert.ok(await empresa.evaluate((el) => el === document.activeElement));
+      await empresa.press('Space');
+      assert.ok(await empresa.isChecked());
+      await buscar.fill('Mercado Sol');
+      await lista.getByRole('checkbox', { name: /Mercado Sol/ }).waitFor();
+      assert.equal(await lista.locator('input:checked').count(), 1);
+      await acessivel(page);
+    }
+    await page.setViewportSize({ width: 1440, height: 1000 });
+  });
   await teste('Formulário vazio identifica os campos, preserva o foco e remove o erro após a correção', async () => {
     await page.goto(`${url}/login`);
     assert.equal(await page.locator('.validacao-resumo').count(), 0);
@@ -177,7 +211,7 @@ async function acessivel(page) {
     const detalhe = page.locator('summary[aria-label^="NF-e Entrada: Erro"]');
     await detalhe.click(); assert.ok(await page.getByText(/O ATF não entregou o XML em Minhas Mensagens/).isVisible());
   });
-  await teste('Tabelas funcionam no celular, sem transbordamento, e passam nos critérios automáticos de acessibilidade', async () => {
+  await teste('Totais do Monitor Fiscal acompanham o filtro e a tabela funciona no celular', async () => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.getByRole('searchbox', { name: 'Buscar empresa nesta execução' }).fill('');
     await page.waitForFunction(() => document.querySelectorAll('.grade-tarefas tbody tr').length === 25);
@@ -185,10 +219,48 @@ async function acessivel(page) {
     await acessivel(page);
     await page.goto(`${url}/painel/monitor`);
     assert.equal(await page.locator('.tabela-monitor tbody tr').count(), 25);
-    await page.getByRole('searchbox', { name: 'Filtrar empresas monitoradas' }).fill('Mercado Sol');
+    const filtro = page.getByRole('searchbox', { name: 'Filtrar empresas monitoradas' });
+    const total = (nome) => page.locator('.monitor-numeros .numero-cartao').filter({ hasText: nome }).locator('.valor');
+    assert.equal(await total('Notas encontradas').innerText(), '99');
+    await filtro.fill('Mercado Sol');
     await page.waitForFunction(() => document.querySelectorAll('.tabela-monitor tbody tr').length === 1);
+    assert.equal(await total('Notas encontradas').innerText(), '5');
+    assert.equal(await total('Notas no mês').innerText(), '3');
+    assert.equal((await total('Compras no mês').innerText()).replace(/\s+/g, ' '), 'R$ 10.119,00');
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     await acessivel(page);
+    await filtro.fill('Empresa Exemplo');
+    await page.getByText('26 de 1001', { exact: true }).waitFor();
+    assert.equal(await total('Notas encontradas').innerText(), '78');
+    await page.getByRole('button', { name: 'Próxima', exact: true }).click();
+    assert.equal(await page.locator('.tabela-monitor tbody tr').count(), 1);
+    assert.equal(await total('Notas encontradas').innerText(), '78');
+    await filtro.fill('Pesquisa sem resultado');
+    await page.getByText('Nenhuma empresa encontrada.', { exact: false }).waitFor();
+    assert.equal(await total('Notas encontradas').innerText(), '0');
+    assert.equal(await total('Notas no mês').innerText(), '0');
+    await filtro.fill('65.264.879/0001-74');
+    await page.getByRole('link', { name: 'Notas de Empresa além do limite', exact: true }).waitFor();
+    assert.equal(await total('Notas encontradas').innerText(), '1');
+    assert.equal(await total('Notas no mês').innerText(), '1');
+    assert.equal((await total('Compras no mês').innerText()).replace(/\s+/g, ' '), 'R$ 275,25');
+    await filtro.fill('');
+    await page.getByText('1001 de 1001', { exact: true }).waitFor();
+    assert.equal(await total('Notas encontradas').innerText(), '99');
+  });
+  await teste('Reprocessamento MEI mostra as fontes cadastradas e as fontes que entraram na fila', async () => {
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    for (const [empresa, fontes] of [['MEI de serviços', 'NFS-e'], ['MEI de comércio', 'SEFAZ'], ['MEI misto', 'NFS-e e SEFAZ']]) {
+      await page.goto(`${url}/painel/mei`);
+      await page.getByText(empresa, { exact: true }).click();
+      const fontesDoCadastro = page.getByText('Fontes do reprocessamento', { exact: false });
+      assert.equal(await fontesDoCadastro.locator('strong').innerText(), fontes);
+      await page.getByLabel('Mês inicial', { exact: true }).fill('2024-01');
+      await page.getByLabel('Mês final', { exact: true }).fill('2024-01');
+      await page.getByRole('button', { name: 'Reprocessar período' }).click();
+      const fontesDaFila = page.getByText('Fontes na fila', { exact: false });
+      assert.equal(await fontesDaFila.locator('strong').innerText(), fontes);
+    }
   });
   await teste('Tema escuro mantém a leitura e o menu fecha com Escape', async () => {
     await page.setViewportSize({ width: 1440, height: 1000 });

@@ -117,8 +117,10 @@ export default function FormAgendamentoNfse({ organizacoes, competencia, empresa
                 <label key={e.cnpj} hidden={!visivel(e)}>
                   <input type="checkbox" name="cnpjs" value={e.cnpj} checked={marcadas.has(e.cnpj)} onChange={() => alternar(e.cnpj)} />
                   <span className="avatar-q" aria-hidden="true">{iniciais(e.nome)}</span>
-                  <span className="nome-empresa">{e.nome}{e.codigo && <small className="suave"> · ID {e.codigo}</small>}</span>
-                  <span className="doc suave">{formatarDocumento(e.cnpj)}</span>
+                  <span className="empresa-selecao-dados">
+                    <span className="nome-empresa">{e.nome}{e.codigo && <small className="suave"> · ID {e.codigo}</small>}</span>
+                    <span className="doc suave">{formatarDocumento(e.cnpj)}</span>
+                  </span>
                 </label>
               ))}
             </div>

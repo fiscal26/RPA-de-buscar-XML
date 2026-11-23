@@ -28,6 +28,26 @@ export default async function PainelMei({ params, searchParams }: {
   const { meis: lista } = await carregarMeis(supabase, ano, ie, true);
   const mei = lista.find((m) => m.org === sp.org) ?? lista[0];
   if (!mei) notFound();
+  const podeReprocessar = gerencia && (!mei.decisao || mei.decisao.estado === "ativo");
+  let fontesReprocessamento: string[] | null = null;
+  if (podeReprocessar) {
+    let sefaz = supabase.from("xml_empresas").select("id").eq("org_id", mei.org);
+    if (mei.cnpj) {
+      sefaz = sefaz.eq("cnpj", mei.cnpj);
+      if (!mei.cadastro?.ativo) sefaz = sefaz.contains("tipos", ["mei"]);
+    } else {
+      sefaz = sefaz.eq("ie", mei.ie);
+    }
+    const [cadastroSefaz, cadastroNfse] = await Promise.all([
+      sefaz.limit(1),
+      mei.cnpj ? supabase.from("xml_nfse_empresas").select("id").eq("org_id", mei.org).eq("cnpj", mei.cnpj).limit(1) : null,
+    ]);
+    if (!cadastroSefaz.error && !cadastroNfse?.error) {
+      fontesReprocessamento = [];
+      if (cadastroNfse?.data?.length) fontesReprocessamento.push("nfse");
+      if (cadastroSefaz.data?.length) fontesReprocessamento.push("sefaz");
+    }
+  }
   const a = mei.ano;
   const nivel = NIVEIS[a.nivel];
   const classeFaixa = a.conferirFontes ? "alerta" : nivel.classe === "st-erro" ? "erro" : nivel.classe === "st-alerta" ? "alerta" : "ok";
@@ -75,7 +95,8 @@ export default async function PainelMei({ params, searchParams }: {
 
       {gerencia && <section className="cartao">
         <h2 className="titulo-cartao">Atualizar faturamento</h2>
-        {(!mei.decisao || mei.decisao.estado === "ativo") && <FormReprocessar org={mei.org} documento={mei.ie} competencia={`${ano}-${String(Math.max(a.ultimo, a.primeiroMes) + 1).padStart(2, "0")}`} />}
+        {podeReprocessar && <FormReprocessar org={mei.org} documento={mei.ie} fontes={fontesReprocessamento}
+          competencia={`${ano}-${String(Math.max(a.ultimo, a.primeiroMes) + 1).padStart(2, "0")}`} />}
         <Link href={`/painel/mei/gerenciar?org=${mei.org}&cnpj=${mei.cnpj}#cadastro-mei`} className="link-discreto">Editar enquadramento MEI</Link>
       </section>}
 
