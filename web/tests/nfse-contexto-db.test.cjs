@@ -28,21 +28,28 @@ test('NFS-e por contexto preserva contratos, recursos atuais e isolamento', asyn
       ('xml_nfse_pegar_lote','xml_pegar_lote','xml_mei_registrar','xml_mei_registrar_ie') order by assinatura`;
     const anteriores = await rows(contratos);
     assert.equal(anteriores.length, 4);
+    const conferirContratos = async () => {
+      const atuais = await rows(contratos);
+      assert.deepEqual(atuais.map(c => c.assinatura), anteriores.map(c => c.assinatura));
+      const semFilaAtf = cs => cs.filter(c => !c.assinatura.startsWith('xml_pegar_lote('));
+      assert.deepEqual(semFilaAtf(atuais), semFilaAtf(anteriores));
+    };
     await db.exec(migracao);
     await db.exec(migracao);
     await db.exec(migracaoReserva);
     await db.exec(migracaoReserva);
-    assert.deepEqual(await rows(contratos), anteriores);
+    await conferirContratos();
     await db.exec("create view public.dependencia_ensaio as select id from public.xml_nfse_pegar_lote_v2('ensaio',1)");
     await assert.rejects(db.exec(migracao), erro => erro.code === '2BP01');
     await db.exec('rollback; drop view public.dependencia_ensaio');
-    assert.deepEqual(await rows(contratos), anteriores);
+    await conferirContratos();
     const [permissoes] = await rows(`select
       has_function_privilege('anon','public.xml_nfse_pegar_lote_v2(text,integer)','execute') as anon,
       has_function_privilege('authenticated','public.xml_nfse_pegar_lote_v2(text,integer)','execute') as web,
       has_function_privilege('service_role','public.xml_nfse_pegar_lote_v2(text,integer)','execute') as robo`);
     assert.deepEqual(permissoes, { anon: false, web: false, robo: true });
-    for (const assinatura of ['xml_nfse_reservar_lote(text,integer)', 'xml_atualizar_tarefa_reservada(uuid,uuid,jsonb)']) {
+    for (const assinatura of ['xml_nfse_reservar_lote(text,integer)', 'xml_atualizar_tarefa_reservada(uuid,uuid,jsonb)',
+      'xml_devolver_tarefa_reservada(uuid,uuid)']) {
       const [p] = await rows(`select has_function_privilege('anon',$1,'execute') as anon,
         has_function_privilege('authenticated',$1,'execute') as web,
         has_function_privilege('service_role',$1,'execute') as robo`, [assinatura]);
@@ -122,6 +129,8 @@ test('NFS-e por contexto preserva contratos, recursos atuais e isolamento', asyn
     assert.deepEqual(renovada.iniciado_em, antes.iniciado_em);
     assert.ok(renovada.reserva_ate > antes.reserva_ate);
     assert.equal((await rows("select id from public.xml_nfse_reservar_lote('outro',1)")).length, 0);
+    assert.deepEqual(await rows("select id from public.xml_pegar_lote('ATF', '', 10)"), [{ id: id(69) }]);
+    assert.deepEqual(await estado(), renovada);
 
     await db.exec(`update public.xml_tarefas set reserva_ate = now() - interval '1 second' where id = '${a.id}'`);
     assert.equal(await atualizar(a.id, a.tentativa_id, { mensagem: 'Expirada' }), false);
@@ -134,7 +143,18 @@ test('NFS-e por contexto preserva contratos, recursos atuais e isolamento', asyn
     assert.equal((await estado()).status, 'processando');
     await assert.rejects(atualizar(a.id, nova.tentativa_id, { org_id: b.org_id }), erro => erro.code === '22023');
 
-    for (const [tarefa, valor] of [[nova,100],[b,200]]) {
+    const devolver = async tentativa => (await rows(
+      'select public.xml_devolver_tarefa_reservada($1,$2) as aceitou', [a.id, tentativa]))[0].aceitou;
+    assert.equal(await devolver(a.tentativa_id), false);
+    assert.equal(await devolver(nova.tentativa_id), true);
+    assert.equal((await estado()).status, 'pendente');
+    assert.equal((await rows("select id from public.xml_nfse_reservar_lote('outro',1)")).length, 0);
+    await db.query("update public.xml_tarefas set tentar_novamente_em = now() - interval '1 second' where id = $1", [a.id]);
+    const [retomada] = await rows("select * from public.xml_nfse_reservar_lote('outro',1)");
+    assert.equal(retomada.id, a.id);
+    assert.notEqual(retomada.tentativa_id, nova.tentativa_id);
+
+    for (const [tarefa, valor] of [[retomada,100],[b,200]]) {
       const detalhes = { mei_nfse: { meses: [{ competencia: '2026-09-01', valor, quantidade: 1 }] } };
       assert.equal(await atualizar(tarefa.id, tarefa.tentativa_id, { status: 'concluido', detalhes }), true);
       assert.equal(await atualizar(tarefa.id, tarefa.tentativa_id, { status: 'erro' }), false);
@@ -143,7 +163,7 @@ test('NFS-e por contexto preserva contratos, recursos atuais e isolamento', asyn
     const totais = await rows(`select org_id,valor from public.xml_mei_nfse_meses where cnpj=$1 order by org_id`, [cnpj]);
     assert.deepEqual(totais.map(m => [m.org_id, Number(m.valor)]), [[id(1),100],[id(2),200]]);
     await db.exec(schema);
-    assert.deepEqual(await rows(contratos), anteriores);
+    await conferirContratos();
   } finally {
     await db.close();
   }

@@ -198,6 +198,31 @@ def test_reserva_perdida_durante_a_consulta_bloqueia_gravacao_e_conclusao(cfg, c
     assert not list(raiz.rglob("*.xml")) and not list(raiz.rglob("indice.json"))
 
 
+def test_portal_devolve_tarefa_quando_a_pasta_esta_em_uso(cfg, chaves, monkeypatch):
+    t = tarefa(chaves, ["nfse_emitidas"]) | {"id": "t", "tentativa_id": "nova"}
+    robo = robo_xml.Robo.__new__(robo_xml.Robo)
+    robo.cfg, robo.privada, robo.em_curso = cfg, chaves[0], {}
+    robo.portal = robo_xml.Portal("https://teste.invalid", "falsa")
+    portal_falso = PortalFalso([])
+    chamadas = []
+
+    def requisicao(metodo, url, **kw):
+        if metodo == "GET" and url.endswith("xml_tarefas"):
+            return Resposta(200, [{"org_id": t["org_id"], "ie": t["cnpj"]}])
+        if metodo == "GET":
+            return Resposta(200, [])
+        chamadas.append((url.rsplit("/", 1)[1], kw["json"]))
+        return Resposta(200, True)
+
+    monkeypatch.setattr(robo_xml.requests, "request", requisicao)
+    monkeypatch.setattr(nfse, "sessao_com_certificado", lambda _: portal_falso)
+    with abrir_empresa(cfg["pastas"]["destino"], contexto()):
+        robo._uma_nfse(t)
+    assert chamadas[-1] == ("xml_devolver_tarefa_reservada", {"p_tarefa": "t", "p_tentativa": "nova"})
+    assert all("status" not in payload.get("p_campos", {}) for _, payload in chamadas)
+    assert not portal_falso.pedidos
+
+
 def test_contexto_invalido_e_historico_de_outra_org_nao_abrem_credenciais(cfg, monkeypatch):
     monkeypatch.setattr(robo_xml.cripto, "decifrar_arquivo", lambda *args: pytest.fail("Credencial aberta antes de validar contexto"))
     r = robo_xml.executar_nfse(cfg, {"cnpj": DONO, "tipos": ["nfse_emitidas"], "data_inicio": "2026-09-01"}, None)

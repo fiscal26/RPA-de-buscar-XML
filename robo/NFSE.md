@@ -80,6 +80,8 @@ A fila do robô atualizado usa `xml_nfse_reservar_lote`. Cada retirada ganha um 
 conclusão somente durante a reserva correspondente. O processamento renova a
 reserva de 90 minutos em pontos de verificação. Se perder a reserva, interrompe
 a gravação ao verificar a titularidade e descarta o resultado para o painel.
+Se outro processo ainda estiver usando a pasta, a tentativa atual devolve a
+tarefa à fila para tentar depois de um minuto.
 
 A estrutura de documentos é
 `<destino>/Arquivos por empresa v2/portal/org_<uuid>--<rótulo>/nfse_nacional/cnpj_<cnpj>--<rótulo>/`.
@@ -115,7 +117,8 @@ config.json. Reutilize o mesmo identificador nas próximas execuções.
 Confira o histórico do ambiente antes de aplicar as migrações
 `20261116100000_nfse_por_contexto.sql` e `20261123180000_reserva_tarefas_nfse.sql`.
 O robô atualizado usa as funções da segunda migração. Os contratos anteriores
-continuam disponíveis durante a transição, por isso a troca operacional exige
-pausar os consumidores antigos, inclusive o ATF antigo no mesmo banco.
+continuam disponíveis durante a transição. A fila legada de ATF só reabre
+tarefas SEFAZ. Pause os consumidores de NFS-e que ainda usam o contrato anterior
+antes de iniciar o robô atualizado no mesmo banco.
 A aplicação operacional depende da revisão, da homologação e da autorização da
 troca. O roteiro está na [revisão da entrega](../docs/reviews/nfse-por-escritorio.md).

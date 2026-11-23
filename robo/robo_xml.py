@@ -698,6 +698,7 @@ class Portal:
         r = requests.request(metodo, f"{self.url}{caminho}", headers=cab, timeout=self.timeout, **kw)
         if r.status_code == 404 and caminho in (
             "/rest/v1/rpc/xml_nfse_reservar_lote", "/rest/v1/rpc/xml_atualizar_tarefa_reservada",
+            "/rest/v1/rpc/xml_devolver_tarefa_reservada",
         ):
             raise ContratoPortalIndisponivel("Reserva da fila NFS-e indisponível. Confira o banco e a migração.")
         if r.status_code >= 400:
@@ -733,6 +734,12 @@ class Portal:
             raise ReservaTarefaPerdida("A fila não informou o identificador da tentativa.")
         resposta = self._r("POST", "/rest/v1/rpc/xml_atualizar_tarefa_reservada", json={
             "p_tarefa": tarefa["id"], "p_tentativa": tarefa["tentativa_id"], "p_campos": campos,
+        })
+        return resposta.json() is True
+
+    def devolver_tarefa_reservada(self, tarefa: dict) -> bool:
+        resposta = self._r("POST", "/rest/v1/rpc/xml_devolver_tarefa_reservada", json={
+            "p_tarefa": tarefa["id"], "p_tentativa": tarefa["tentativa_id"],
         })
         return resposta.json() is True
 
@@ -1015,6 +1022,10 @@ class Robo:
             t = {**t, "meses_consultados": self.portal.meses_nfse_consultados(
                 t["id"], contexto.documento, str(t["data_inicio"]), org_id=contexto.contexto_id)}
             r = executar_nfse(self.cfg, t, self.privada, confirmar_reserva=confirmar_reserva)
+        except ArmazenamentoOcupado:
+            if self.portal.devolver_tarefa_reservada(t):
+                log.info("   NFS-e %s: pasta em uso; tarefa devolvida à fila.", t.get("nome"))
+            return
         except ReservaTarefaPerdida:
             log.warning("   NFS-e %s: tentativa encerrada após perder a reserva.", t.get("nome"))
             return
@@ -1198,7 +1209,11 @@ def executar_nfse(cfg: dict, t: dict, privada, sessao_falsa=None, *, confirmar_r
                         meses_extra.append((mes, n))
                 log.info("   MEI %s: meses anteriores do ano conferidos (%s)", t["nome"],
                          ", ".join(f"{m[5:]}/{m[:4]}: {n} nota(s)" for m, n in meses_extra) or "nenhuma nota")
-    except (IdentidadeArmazenamentoInvalida, ArmazenamentoOcupado, OSError) as erro:
+    except ArmazenamentoOcupado as erro:
+        if confirmar_reserva is not None:
+            raise
+        return Resultado("erro", str(erro), detalhes=todos("erro", str(erro)))
+    except (IdentidadeArmazenamentoInvalida, OSError) as erro:
         return Resultado("erro", str(erro), detalhes=todos("erro", str(erro)))
     except nfse.ErroADN as e:
         texto = str(e)

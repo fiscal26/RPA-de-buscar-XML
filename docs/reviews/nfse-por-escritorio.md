@@ -72,9 +72,10 @@ Rodada local com 154 testes Python sem navegador e 115 testes Node, incluindo
 banco simulado. Os ensaios cobrem renovação, expiração, conclusão atrasada,
 permissões, preservação do faturamento por escritório e perda da reserva antes
 da escrita. Ainda faltam duas sessões PostgreSQL independentes e chamadas ao
-PostgREST em homologação. Os contratos legados continuam disponíveis durante
-a transição, inclusive a fila antiga de ATF que pode reabrir tarefas de NFS-e.
-Prepare a troca com os consumidores antigos pausados no mesmo banco.
+PostgREST em homologação. A correção da revisão limita a retomada pelo ATF
+legado às tarefas SEFAZ e testa uma chamada ATF com uma reserva NFS-e renovada.
+Quando a pasta está ocupada, a tentativa atual devolve a tarefa para nova retirada
+após um minuto. Prepare a troca com os consumidores antigos de NFS-e pausados.
 
 ## Correção após a revisão de `2193e54`
 
