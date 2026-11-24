@@ -42,7 +42,7 @@ O robô terá implementação própria; aqui ficam só os endereços e as regras
 |---|---|
 | Cliente da API (mTLS, lotes por NSU, espera e repetição, DANFSe) | `robo/nfse.py` (`ClienteADN`, `contexto_tls`, `sessao_com_certificado`) |
 | Leitura do XML e das retenções | `robo/nfse.py` (`ler_nfse`, `NotaServico`) |
-| Pastas, cache por CNPJ e relatório de retenções | `robo/nfse.py` (`baixar_competencia`, `Cache`, `relatorio_retencoes`) |
+| Pastas, cache por escritório/CNPJ e relatório de retenções | `robo/nfse.py` e `robo/armazenamento.py` |
 | Tarefa vinda do portal | `robo/robo_xml.py` (`executar_nfse`, `Robo.processar_nfse`, `Portal.pegar_lote_nfse`) |
 | Teste com um .pfx do PC | `robo/testar_nfse.bat` → `robo_xml.py --nfse-teste` (`testar_nfse`) |
 | Certificado cifrado (v2) | `web/lib/cripto.ts` (`cifrarArquivo`) e `robo/cripto.py` (`decifrar_arquivo`) |
@@ -72,3 +72,60 @@ Emissão e Distribuição, com a procuração eletrônica cadastrada na Receita 
   mensagem de que falta a procuração da empresa no e-CAC.
 - **Conferir no teste real:** a documentação oficial (adn.nfse.gov.br/contribuintes/docs) não pôde ser lida daqui.
   Confirmar o nome do parâmetro, o tipo de procuração exigido (serviço da NFS-e no e-CAC) e se o e-CPF é aceito.
+
+## Integração da NFS-e por escritório
+
+A fila do robô atualizado usa `xml_nfse_reservar_lote`. Cada retirada ganha um novo
+`tentativa_id`. A função `xml_atualizar_tarefa_reservada` aceita progresso e
+conclusão somente durante a reserva correspondente. O processamento renova a
+reserva de 90 minutos em pontos de verificação. Se perder a reserva, interrompe
+a gravação ao verificar a titularidade e descarta o resultado para o painel.
+Se outro processo ainda estiver usando a pasta, a tentativa atual devolve a
+tarefa à fila para tentar depois de um minuto.
+
+A estrutura de documentos é
+`<destino>/Arquivos por empresa v2/portal/org_<uuid>--<rótulo>/nfse_nacional/cnpj_<cnpj>--<rótulo>/`.
+O cache está em `_cache/nfse/portal/<uuid>/<cnpj>/` sob a mesma raiz. Renomear o
+escritório ou a empresa mantém os identificadores e os históricos associados.
+
+Novas competências usam MMAAAA. Meses já gravados em AAAA-MM são reutilizados.
+Se ambos os formatos existirem para a mesma identidade e competência, a tarefa
+para com erro de conferência. O lote mensal mantém seu nome MMAAAA. XMLs individuais
+usam a chave de acesso e entram no lote ABRASF com o conteúdo original.
+
+Se o cache estiver ilegível ou apontar para XML ausente, preserve a pasta e confira
+o erro. A falha impede atualizar o faturamento como zero. Se apenas a publicação da
+planilha falhar, uma nova tentativa pode reconstruí-la dos documentos do cache.
+Os dados do cache antigo permanecem disponíveis para uma migração planejada.
+
+Os arquivos `.lock` podem permanecer na pasta após a execução. O sistema
+operacional libera a trava quando o processo termina, inclusive após uma queda.
+Mantenha esses arquivos na pasta para que todos os processos usem a mesma trava.
+
+Na raiz da instalação, confira o banco efetivo e inicie com a URL esperada.
+`SUPABASE_URL` e `SUPABASE_SERVICE_ROLE_KEY` prevalecem sobre o JSON.
+
+```powershell
+.\.venv\Scripts\python.exe robo/robo_xml.py --conferir-banco
+.\robo\iniciar_robo.bat --confirmar-banco https://PROJETO-ESPERADO.supabase.co
+```
+
+O comando `--nfse-teste` consulta o Portal Nacional real com um certificado local.
+Na primeira execução, `--criar-contexto-local` autoriza gravar um identificador no
+config.json. Reutilize o mesmo identificador nas próximas execuções.
+
+```powershell
+.\robo\testar_nfse.bat --criar-contexto-local
+```
+
+Confira o histórico do ambiente antes de aplicar as migrações da NFS-e:
+`20261116100000_nfse_por_contexto.sql`, `20261123180000_reserva_tarefas_nfse.sql` e
+`20261124190000_filas_nfse_compativeis_com_reservas.sql`.
+O robô atualizado usa as funções da segunda migração. A terceira mantém as filas
+anteriores disponíveis e faz com que respeitem a reserva vigente e o horário da
+próxima tentativa. O reinício de um robô antigo também preserva as tarefas
+reservadas. A fila legada de ATF só reabre
+tarefas SEFAZ. Pause os consumidores de NFS-e que ainda usam o contrato anterior
+antes de iniciar o robô atualizado no mesmo banco.
+A aplicação operacional depende da revisão, da homologação e da autorização da
+troca. O roteiro está na [revisão da entrega](../docs/reviews/nfse-por-escritorio.md).

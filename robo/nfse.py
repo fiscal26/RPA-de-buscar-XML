@@ -22,15 +22,18 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from arquivos import nome_de_pasta, pasta_competencia, pasta_empresa
+from armazenamento import (ContextoArmazenamento, abrir_empresa, area_do_contexto, arquivo_validado,
+                           criar_subpasta_validada, gravar_json_atomico, pasta_da_competencia, publicar_arquivo)
 
 log = logging.getLogger("robo_xml")
 
 ADN = "https://adn.nfse.gov.br"
-CACHE = Path(__file__).resolve().parent / "nfse_cache"
 PASSAGEIROS = {429, 502, 503, 504}
 PASTA_EMITIDAS = "NFS-e Emitidas"
 PASTA_RECEBIDAS = "NFS-e Recebidas"
+_CHAVE_ACESSO = re.compile(r"[0-9]{50}")
+# Formato TSDec15V2 do esquema nacional para vServ.
+_VALOR_SERVICO = re.compile(r"(?:0|[1-9][0-9]{0,14})(?:\.[0-9]{2})?")
 
 
 class ErroADN(Exception):
@@ -232,15 +235,32 @@ def abrir_xml(conteudo: str | None) -> bytes:
 
 # ====================================================================== cache por CNPJ
 class Cache:
-    """<cache>/<CNPJ>/: um XML por NSU e um índice (último NSU e o resumo de cada documento)."""
+    """Um XML por NSU e um índice no diretório do contexto e CNPJ consultados."""
 
-    def __init__(self, cnpj: str, raiz: Path = CACHE):
-        self.pasta = Path(raiz) / so_digitos(cnpj)
-        self.arquivo = self.pasta / "indice.json"
+    def __init__(self, pasta: Path):
+        self.pasta = pasta
+        arquivo = self._arquivo("indice.json")
         try:
-            self.indice = json.loads(self.arquivo.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+            self.indice = json.loads(arquivo.read_text(encoding="utf-8"))
+        except FileNotFoundError:
             self.indice = {"ultimo_nsu": 0, "documentos": {}}
+        except (OSError, ValueError) as erro:
+            raise ErroADN("Índice do cache por contexto ilegível. Confira a pasta do cache.") from erro
+        if (not isinstance(self.indice, dict) or type(self.indice.get("ultimo_nsu")) is not int
+                or not isinstance(self.indice.get("documentos"), dict)):
+            raise ErroADN("Índice do cache por contexto inválido.")
+
+        documentos = self.indice["documentos"]
+        if self.indice["ultimo_nsu"] < 0 or any(
+            not re.fullmatch(r"[0-9]+", nsu) or not isinstance(info, dict)
+            or not isinstance(info.get("tipo"), str) or not isinstance(info.get("chave"), str)
+            or type(info.get("xml")) is not bool or int(nsu) > self.indice["ultimo_nsu"]
+            for nsu, info in documentos.items()
+        ):
+            raise ErroADN("Documentos inválidos no índice do cache por contexto.")
+
+    def _arquivo(self, nome: str) -> Path:
+        return arquivo_validado(self.pasta, nome)
 
     @property
     def ultimo_nsu(self) -> int:
@@ -248,33 +268,63 @@ class Cache:
 
     def guardar(self, nsu: int, tipo: str, chave: str, xml: bytes):
         self.pasta.mkdir(parents=True, exist_ok=True)
-        if xml:
-            (self.pasta / f"{nsu}.xml").write_bytes(xml)
+        if xml or tipo.upper() in ("NFSE", "EVENTO"):
+            self._validar_xml(tipo, xml)
+            caminho = self._arquivo(f"{nsu}.xml")
+            publicar_arquivo(caminho, lambda temporario: temporario.write_bytes(xml))
         self.indice["documentos"][str(nsu)] = {"tipo": tipo, "chave": chave, "xml": bool(xml)}
         self.indice["ultimo_nsu"] = max(self.ultimo_nsu, nsu)
 
     def salvar(self):
         self.pasta.mkdir(parents=True, exist_ok=True)
-        self.arquivo.write_text(json.dumps(self.indice, ensure_ascii=False), encoding="utf-8")
+        gravar_json_atomico(self._arquivo("indice.json"), self.indice)
+
+    @staticmethod
+    def _validar_xml(tipo: str, dados: bytes):
+        tipo = tipo.upper()
+        if tipo == "NFSE":
+            nota = ler_nfse(dados)
+            if (nota is None or not _CHAVE_ACESSO.fullmatch(nota.chave)
+                    or not re.fullmatch(r"[0-9]{4}-(0[1-9]|1[0-2])", nota.competencia)):
+                raise ErroADN("Documento ausente ou inválido no cache NFS-e.")
+        elif tipo == "EVENTO":
+            chave, codigo = chave_do_evento(dados)
+            if not codigo or not _CHAVE_ACESSO.fullmatch(chave):
+                raise ErroADN("O evento da NFS-e não tem XML válido com chave e código.")
+        else:
+            try:
+                ET.fromstring(dados)
+            except ET.ParseError as erro:
+                raise ErroADN("XML ilegível no cache por contexto. Confira os arquivos.") from erro
 
     def xmls(self):
         for nsu, info in sorted(self.indice["documentos"].items(), key=lambda x: int(x[0])):
-            arq = self.pasta / f"{nsu}.xml"
-            if info.get("xml") and arq.exists():
-                yield int(nsu), info.get("tipo", ""), arq.read_bytes()
+            arq = self._arquivo(f"{nsu}.xml")
+            if info.get("xml") and not arq.is_file():
+                raise ErroADN("O índice aponta para um XML ausente. Confira a pasta do cache.")
+            if info.get("xml"):
+                dados = arq.read_bytes()
+                self._validar_xml(info["tipo"], dados)
+                yield int(nsu), info["tipo"], dados
+            elif info["tipo"].upper() in ("NFSE", "EVENTO"):
+                raise ErroADN("O índice aponta para uma nota ou evento sem XML. Confira a pasta do cache.")
 
 
-def atualizar_cache(cliente: ClienteADN, cache: Cache) -> int:
+def atualizar_cache(cliente: ClienteADN, cache: Cache, *, confirmar_reserva=None) -> int:
     """Busca o que for novo desde o último NSU guardado. Devolve quantos documentos chegaram."""
     novos = 0
     try:
         for nsu, tipo, chave, xml in cliente.documentos(cache.ultimo_nsu):
+            if confirmar_reserva is not None:
+                confirmar_reserva()
             cache.guardar(nsu, tipo, chave, xml)
             novos += 1
             if novos % 200 == 0:
                 cache.salvar()
                 log.info("  NFS-e: %d documento(s) recebidos do Portal Nacional...", novos)
     finally:
+        if confirmar_reserva is not None:
+            confirmar_reserva(forcar=True)
         cache.salvar()
     return novos
 
@@ -381,7 +431,10 @@ def ler_nfse(dados: bytes) -> NotaServico | None:
         n.tomador_nome = _txt(toma, "xNome")
     n.servico_codigo = _txt(dps, "cTribNac")
     n.servico_descricao = _txt(dps, "xDescServ")
-    n.valor_servico = _num(dps, "vServ")
+    valor_servico = _txt(dps, "vServPrest", "vServ")
+    if not _VALOR_SERVICO.fullmatch(valor_servico):
+        return None
+    n.valor_servico = float(valor_servico)
 
     trib_mun = _achar(dps, "tribMun")
     tp_ret_iss = _txt(trib_mun, "tpRetISSQN") if trib_mun is not None else ""
@@ -441,6 +494,8 @@ class ResultadoNfse:
     pasta: Path | None = None
     relatorio: Path | None = None
     novos_documentos: int = 0
+    resumo_mei: dict = field(default_factory=dict)
+    detectado_mei: bool = False
     lotes: list[Path] = field(default_factory=list)  # o mês num XML só (envelope ABRASF), emitidas e recebidas
 
 
@@ -498,10 +553,10 @@ def lote_abrasf(xmls: list[bytes], competencia: str, agora: "datetime | None" = 
     return b"".join(partes)
 
 
-def eh_mei(cnpj: str, cache_raiz: Path | None = None) -> bool:
+def eh_mei(cache: Cache, cnpj: str) -> bool:
     """A empresa emitiu alguma NFS-e como MEI (opSimpNac = 2)? Lê só o cache local, sem chamar o portal."""
     dono = so_digitos(cnpj)
-    for _, tipo, xml in Cache(cnpj, cache_raiz or CACHE).xmls():
+    for _, tipo, xml in cache.xmls():
         if tipo.upper() == "EVENTO":
             continue
         nota = ler_nfse(xml)
@@ -510,14 +565,14 @@ def eh_mei(cnpj: str, cache_raiz: Path | None = None) -> bool:
     return False
 
 
-def resumo_mei(cnpj: str, competencia: str, cache_raiz: Path | None = None) -> dict:
+def resumo_mei(cache: Cache, cnpj: str, competencia: str) -> dict:
     """Receita de serviços por competência, somente emitidas válidas, em centavos e sem duplicar chaves.
 
     Usa a separação do importador (inclui eventos de cancelamento). Não usa recebidas, valor líquido
     nem o enquadramento histórico da nota como autorização para cadastrar a empresa no monitoramento.
     """
     from decimal import Decimal, ROUND_HALF_UP
-    emitidas, _, _ = separar(Cache(cnpj, cache_raiz or CACHE), cnpj, competencia)
+    emitidas, _, _ = separar(cache, cnpj, competencia)
     por_chave = {n.chave: n for n, _ in emitidas}
     total = sum((Decimal(str(n.valor_servico)) for n in por_chave.values()), Decimal('0'))
     return {"competencia": competencia + "-01", "valor": float(total.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)),
@@ -545,61 +600,90 @@ def danfse_do_xml(xml: bytes) -> bytes | None:
     return bytes(pdf) if pdf else None
 
 
-def nome_do_arquivo(nota: NotaServico) -> str:
-    outro = nota.tomador_nome if nota.prestador_doc else ""
-    return nome_de_pasta(f"NFS-e {nota.numero} - {outro}".strip(" -"))[:60] + f" - {nota.chave[-8:]}"
+def baixar_competencia(cliente: ClienteADN, contexto: ContextoArmazenamento, competencia: str,
+                       destino: str | Path, *, pdf: bool = True, com_emitidas: bool = True,
+                       com_recebidas: bool = True, relatorio: bool = True, atualizar: bool = True,
+                       confirmar_reserva=None) -> ResultadoNfse:
+    """Coleta, documentos e faturamento compartilham a trava da identidade consultada."""
+    if (contexto.origem, contexto.tipo_documento) != ("nfse_nacional", "cnpj"):
+        raise ErroADN("A NFS-e exige o contexto do CNPJ consultado.")
 
+    def publicar(caminho, escrever):
+        def escrever_validado(temporario):
+            escrever(temporario)
+            if confirmar_reserva is not None:
+                confirmar_reserva()
 
-def baixar_competencia(cliente: ClienteADN, cnpj: str, competencia: str, destino: str | Path, nome: str,
-                       codigo: str = "", pdf: bool = True, cache_raiz: Path | None = None, com_emitidas: bool = True,
-                       com_recebidas: bool = True, relatorio: bool = True, atualizar: bool = True) -> ResultadoNfse:
-    """Atualiza o cache, salva os XML (e o PDF) da competência e gera o relatório de retenções.
-    atualizar=False usa só o cache (outro mês da mesma empresa, logo depois de atualizado)."""
-    cache = Cache(cnpj, cache_raiz or CACHE)
-    res = ResultadoNfse(novos_documentos=atualizar_cache(cliente, cache) if atualizar else 0)
-    emitidas, recebidas, res.canceladas = separar(cache, cnpj, competencia)
-    emitidas = emitidas if com_emitidas else []
-    recebidas = recebidas if com_recebidas else []
-    sem_pdf_no_portal = False  # o portal não entregou o PDF das primeiras notas: não insiste nas outras
-    pasta_mes = pasta_empresa(destino, nome, cnpj, codigo) / pasta_competencia(competencia)
-    res.pasta = pasta_mes
-    for lista, sub in ((emitidas, PASTA_EMITIDAS), (recebidas, PASTA_RECEBIDAS)):
-        if not lista:
-            continue
-        pasta = pasta_mes / sub
-        pasta.mkdir(parents=True, exist_ok=True)
-        for nota, xml in lista:
-            base = nome_do_arquivo(nota)
-            (pasta / f"{base}.xml").write_bytes(xml)
-            if pdf:
-                arq_pdf = pasta / f"{base}.pdf"
-                if arq_pdf.exists():
-                    res.pdfs += 1
-                    continue
-                conteudo = None if sem_pdf_no_portal else cliente.danfse(nota.chave)
-                if not conteudo:  # o portal não entregou: gera o DANFSe a partir do XML, no modelo oficial
-                    sem_pdf_no_portal = sem_pdf_no_portal or res.pdfs_gerados >= 3 and res.pdfs == res.pdfs_gerados
-                    conteudo = danfse_do_xml(xml)
+        publicar_arquivo(caminho, escrever_validado)
+
+    with abrir_empresa(destino, contexto) as empresa:
+        if confirmar_reserva is not None:
+            confirmar_reserva(forcar=True)
+        pasta_mes = pasta_da_competencia(empresa, competencia)
+        raiz_cache = area_do_contexto(destino, "_cache", contexto.tipo_contexto, contexto.contexto_id, contexto.documento)
+        cache = Cache(raiz_cache)
+        cnpj = contexto.documento
+        res = ResultadoNfse()
+        if atualizar:
+            # Confere o cache antes de consultar ou avançar o índice, lendo um XML por vez.
+            for _ in cache.xmls():
+                pass
+            res.novos_documentos = atualizar_cache(cliente, cache, confirmar_reserva=confirmar_reserva)
+        emitidas_mes, recebidas_mes, res.canceladas = separar(cache, cnpj, competencia)
+        emitidas = emitidas_mes if com_emitidas else []
+        recebidas = recebidas_mes if com_recebidas else []
+        sem_pdf_no_portal = False  # o portal não entregou o PDF das primeiras notas: não insiste nas outras
+        res.pasta = pasta_mes
+        for lista, sub in ((emitidas, PASTA_EMITIDAS), (recebidas, PASTA_RECEBIDAS)):
+            if not lista:
+                continue
+            pasta = criar_subpasta_validada(pasta_mes, sub)
+            for nota, xml in lista:
+                base = nota.chave
+                if not _CHAVE_ACESSO.fullmatch(base):
+                    raise ErroADN("Chave de acesso inválida na NFS-e.")
+                publicar(arquivo_validado(pasta, f"{base}.xml"), lambda temporario: temporario.write_bytes(xml))
+                if pdf:
+                    arq_pdf = arquivo_validado(pasta, f"{base}.pdf")
+                    if arq_pdf.exists():
+                        res.pdfs += 1
+                        continue
+                    conteudo = None if sem_pdf_no_portal else cliente.danfse(nota.chave)
+                    if not conteudo:  # o portal não entregou: gera o DANFSe a partir do XML, no modelo oficial
+                        sem_pdf_no_portal = sem_pdf_no_portal or res.pdfs_gerados >= 3 and res.pdfs == res.pdfs_gerados
+                        conteudo = danfse_do_xml(xml)
+                        if conteudo:
+                            res.pdfs_gerados += 1
                     if conteudo:
-                        res.pdfs_gerados += 1
-                if conteudo:
-                    arq_pdf.write_bytes(conteudo)
-                    res.pdfs += 1
-                else:
-                    res.pdfs_faltando += 1
-    res.emitidas = [n for n, _ in emitidas]
-    res.recebidas = [n for n, _ in recebidas]
-    # todas as notas do mês num XML só, no envelope ABRASF (o que a importação da Domínio lê)
-    for lista, sub in ((emitidas, PASTA_EMITIDAS), (recebidas, PASTA_RECEBIDAS)):
-        if lista:
-            arquivo = pasta_mes / f"{sub} {pasta_competencia(competencia)}.xml"
-            arquivo.write_bytes(lote_abrasf([xml for _, xml in lista], competencia))
-            res.lotes.append(arquivo)
-    if relatorio and (res.emitidas or res.recebidas):
-        pasta_mes.mkdir(parents=True, exist_ok=True)
-        res.relatorio = relatorio_retencoes(res.emitidas, res.recebidas, pasta_mes / f"Retenções NFS-e {competencia}.xlsx",
-                                            nome, competencia)
-    return res
+                        publicar(arq_pdf, lambda temporario: temporario.write_bytes(conteudo))
+                        res.pdfs += 1
+                    else:
+                        res.pdfs_faltando += 1
+        res.emitidas = [n for n, _ in emitidas]
+        res.recebidas = [n for n, _ in recebidas]
+        # todas as notas do mês num XML só, no envelope ABRASF (o que a importação da Domínio lê)
+        for lista, sub, selecionada in (
+            (emitidas, PASTA_EMITIDAS, com_emitidas),
+            (recebidas, PASTA_RECEBIDAS, com_recebidas),
+        ):
+            # Desmarcar uma direção preserva seu lote; não confirma ausência de notas.
+            if not selecionada:
+                continue
+            arquivo = arquivo_validado(pasta_mes, f"{sub} {competencia[5:7] + competencia[:4]}.xml")
+            if lista or arquivo.exists():
+                # Um cancelamento pode zerar o mês. O lote publicado precisa refletir o estado atual.
+                publicar(arquivo, lambda temporario: temporario.write_bytes(lote_abrasf([xml for _, xml in lista], competencia)))
+                res.lotes.append(arquivo)
+        arquivo_relatorio = arquivo_validado(pasta_mes, f"Retenções NFS-e {competencia}.xlsx")
+        # A planilha mensal consolida as duas direções. A seleção só limita os documentos publicados.
+        if relatorio and (emitidas_mes or recebidas_mes or arquivo_relatorio.exists()):
+            res.relatorio = arquivo_relatorio
+            publicar(res.relatorio, lambda temporario: relatorio_retencoes(
+                [nota for nota, _ in emitidas_mes], [nota for nota, _ in recebidas_mes],
+                temporario, contexto.nome, competencia))
+        res.resumo_mei = resumo_mei(cache, cnpj, competencia)
+        res.detectado_mei = eh_mei(cache, cnpj)
+        return res
 
 
 # ====================================================================== relatório

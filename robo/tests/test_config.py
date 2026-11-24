@@ -1,13 +1,21 @@
 import config
 
 
-def test_destino_do_exemplo_vai_para_documentos_deste_computador(tmp_path, monkeypatch):
+def test_sondagem_de_destino_preserva_arquivo_existente(tmp_path):
+    existente = tmp_path / ".teste_gravacao"
+    existente.write_text("já existia", encoding="utf-8")
+    assert config._pasta_gravavel(tmp_path)
+    assert existente.read_text(encoding="utf-8") == "já existia"
+    assert list(tmp_path.iterdir()) == [existente]
+import pytest
+
+
+def test_destino_do_exemplo_exige_correcao(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "DESTINO_PADRAO", tmp_path / "XML SEFAZ-PB")
     cfg = {"pastas": {"destino": "C:\\Users\\SEU-USUARIO\\Documents\\XML SEFAZ-PB", "diagnostico": ""}}
-    avisos = config.resolver_pastas(cfg)
-    assert avisos and cfg["pastas"]["destino"] == str(tmp_path / "XML SEFAZ-PB")
-    assert cfg["pastas"]["diagnostico"] == str(tmp_path / "XML SEFAZ-PB" / "_diagnostico")
-    assert (tmp_path / "XML SEFAZ-PB").is_dir()
+    with pytest.raises(config.ConfigInvalida, match="destino gravável"):
+        config.resolver_pastas(cfg)
+    assert not (tmp_path / "XML SEFAZ-PB").exists()
 
 
 def test_destino_vazio_e_destino_valido(tmp_path, monkeypatch):
@@ -18,15 +26,35 @@ def test_destino_vazio_e_destino_valido(tmp_path, monkeypatch):
     assert config.resolver_pastas(escolhido) == [] and escolhido["pastas"]["destino"] == str(tmp_path / "Clientes" / "XML")
 
 
-def test_pasta_antiga_xml_sefaz_pb_vira_rpa_xml_lotivisse(tmp_path, monkeypatch):
+def test_pasta_antiga_permanece_intacta(tmp_path, monkeypatch):
     antiga, nova = tmp_path / "XML SEFAZ-PB", tmp_path / "RPA XML LotiVisse"
     (antiga / "Arquivos baixados" / "5-Joao").mkdir(parents=True)
     monkeypatch.setattr(config, "DESTINO_PADRAO", nova)
-    monkeypatch.setattr(config, "DESTINO_ANTIGO", antiga)
     cfg = {"pastas": {"destino": "", "diagnostico": ""}}
-    avisos = config.resolver_pastas(cfg)
-    assert cfg["pastas"]["destino"] == str(nova) and (nova / "Arquivos baixados" / "5-Joao").is_dir()
-    assert not antiga.exists() and avisos and "agora se chama" in avisos[0]
+    config.resolver_pastas(cfg)
+    assert antiga.is_dir() and nova.is_dir() and not list(nova.iterdir())
+
+
+def test_diagnostico_indisponivel_usa_a_pasta_padrao(tmp_path):
+    destino = tmp_path / "xml"
+    arquivo = tmp_path / "indisponivel"
+    arquivo.write_text("não é uma pasta", encoding="utf-8")
+    cfg = {"pastas": {"destino": str(destino), "diagnostico": str(arquivo / "ATF")}}
+
+    config.resolver_pastas(cfg)
+
+    assert cfg["pastas"]["diagnostico"] == str(destino.resolve() / "_diagnostico")
+
+
+def test_diagnostico_personalizado_expande_variaveis(tmp_path, monkeypatch):
+    logs = tmp_path / "logs"
+    monkeypatch.setenv("TESTE_DIRETORIO_DIAGNOSTICO", str(logs))
+    cfg = {"pastas": {"destino": str(tmp_path / "xml"), "diagnostico": "$TESTE_DIRETORIO_DIAGNOSTICO"}}
+
+    config.resolver_pastas(cfg)
+
+    assert cfg["pastas"]["diagnostico"] == str(logs)
+    assert logs.is_dir()
 
 
 def test_filas_do_robo(tmp_path, monkeypatch):

@@ -61,18 +61,21 @@ precisam ser enviadas de novo. Para ver a pública de novo: `python robo_xml.py 
 1. Copie `robo/config.exemplo.json` para `robo/config.json` e preencha:
    - a pasta dos arquivos não precisa ser preenchida: o robô usa **Documentos\RPA XML LotiVisse deste
      computador** (com OneDrive, a pasta Documentos dele). Para outro lugar, acrescente
-     `"pastas": {"destino": "D:\\Clientes\\XML"}`; se a pasta não existir ou não aceitar gravação, o robô
-     avisa ao ligar e volta para a pasta Documentos;
+     `"pastas": {"destino": "D:\\Clientes\\XML"}`. Se o destino não aceitar gravação, escolha outro
+     no config.json antes de iniciar o robô;
    - `portal.supabase_url` e `portal.chave_service_role`;
    - `portal.nome_robo`: um nome para este PC (aparece no portal).
-2. Abra o Chrome pelo `abrir_chrome.bat` (porta 9222, perfil próprio).
-3. Ligue o robô com o `iniciar_robo.bat` e deixe a janela aberta. No portal, em **Agendamentos**,
-   aparece "Robô ligado".
+2. Crie o ambiente virtual `.venv` na raiz e instale as dependências conforme o
+   [README](../README.md#robô-instalação-e-uso). Abra o Chrome pelo `abrir_chrome.bat` (porta 9222, perfil próprio).
+3. Use `robo\iniciar_robo.bat --conferir-banco` e confira a URL efetiva. Inicie com
+   `robo\iniciar_robo.bat --confirmar-banco https://SEU-PROJETO.supabase.co`, usando a URL esperada.
+   Deixe a janela aberta. No portal, em **Agendamentos**, aparece "Robô ligado".
 
 ## 5. Primeiro teste (validação no ATF real)
 
 1. Preencha a planilha modelo com uma ou duas empresas suas.
-2. Rode sem o portal: `python robo_xml.py --local empresas.xlsx --competencia 09/2026` e acompanhe no Chrome.
+2. Da raiz do repositório, rode sem o portal com
+   `.venv\Scripts\python.exe robo\robo_xml.py --local empresas.xlsx --competencia 09/2026` e acompanhe no Chrome.
 3. Se alguma etapa não for reconhecida (login ou lista de notas depois do *Pesquisar*), o robô espera
    você concluir no Chrome (modo assistido) e salva um pacote em `<destino>/_diagnostico/`.
    Com esse pacote ajustamos o roteiro, e a partir daí fica automático.
@@ -191,7 +194,9 @@ e sem captcha. O acesso é o **certificado digital A1 (e-CNPJ)** da empresa; o d
    3. Cada empresa ganha, em `Arquivos baixados/<ID>-<Nome>/<MMAAAA>/`, as pastas `NFS-e Emitidas` e
       `NFS-e Recebidas` (XML e PDF), o `Retenções NFS-e AAAA-MM.xlsx` e o mês inteiro num XML só (`NFS-e Emitidas MMAAAA.xml`
       e o das recebidas), no envelope ABRASF que a importação da Domínio lê.
-5. **Teste sem o portal:** `robo\testar_nfse.bat` (pede o .pfx e a senha na hora; nada fica gravado).
+5. **Teste sem o portal:** na primeira execução, use `robo\testar_nfse.bat --criar-contexto-local`
+   para gravar o identificador local no `config.json`. Nas próximas, use `robo\testar_nfse.bat`.
+   O atalho pede o arquivo .pfx e a senha a cada execução.
 
 **Procuração (desde 01/11/2026):** em Certificados, marque "Certificado do escritório (procuração)" ao enviar o
 e-CNPJ do escritório ou o e-CPF do contador. Ele vale para todas as empresas que deram procuração eletrônica ao

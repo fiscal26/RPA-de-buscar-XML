@@ -8,6 +8,10 @@ import copy
 import json
 import os
 from pathlib import Path
+from tempfile import NamedTemporaryFile
+from uuid import uuid4
+
+from armazenamento import (ArmazenamentoOcupado, gravar_json_atomico, normalizar_id_contexto, trava_exclusiva)
 
 RAIZ = Path(__file__).resolve().parent
 ARQUIVO_CONFIG = RAIZ / "config.json"
@@ -31,52 +35,36 @@ def pasta_documentos() -> Path:
 
 
 DESTINO_PADRAO = pasta_documentos() / "RPA XML LotiVisse"
-DESTINO_ANTIGO = pasta_documentos() / "XML SEFAZ-PB"  # nome até 10/2026: é renomeada na primeira vez
 
 
 def _pasta_gravavel(pasta: Path) -> bool:
     """Cria a pasta (se faltar) e testa a gravação de um arquivo."""
     try:
         pasta.mkdir(parents=True, exist_ok=True)
-        teste = pasta / ".teste_gravacao"
-        teste.write_text("ok", encoding="utf-8")
-        teste.unlink()
+        with NamedTemporaryFile(dir=pasta, prefix=".teste_gravacao-") as teste:
+            teste.write(b"ok")
+            teste.flush()
         return True
     except OSError:
         return False
 
 
-def resolver_pastas(cfg: dict) -> list[str]:
-    """Garante uma pasta de destino que existe e aceita gravação NESTE computador. Destino vazio, com o
-    exemplo ("SEU-USUARIO") ou que não dá para gravar: usa a pasta Documentos deste computador.
-    Devolve avisos para mostrar na tela."""
-    avisos = []
+def resolver_pastas(cfg: dict):
     pastas = cfg["pastas"]
     pedido = os.path.expandvars(os.path.expanduser(str(pastas.get("destino") or "").strip()))
     destino = Path(pedido) if pedido else DESTINO_PADRAO
-    if destino == DESTINO_PADRAO and not DESTINO_PADRAO.exists() and DESTINO_ANTIGO.is_dir():
-        try:  # a pasta antiga muda de nome com tudo dentro (as empresas, as competências, o diagnóstico)
-            DESTINO_ANTIGO.rename(DESTINO_PADRAO)
-            avisos.append(f"A pasta \"{DESTINO_ANTIGO.name}\" agora se chama \"{DESTINO_PADRAO.name}\" "
-                          f"(tudo o que estava nela continua lá).")
-        except OSError as e:
-            avisos.append(f"Não consegui renomear \"{DESTINO_ANTIGO}\" para \"{DESTINO_PADRAO.name}\" ({e}). "
-                          "Os arquivos novos vão para a pasta nova; feche o Explorer e a sincronização e tente de novo.")
-    if pedido and ("SEU-USUARIO" in pedido.upper() or not _pasta_gravavel(destino)):
-        avisos.append(f"Não consigo gravar em \"{pedido}\" (pasta de outro computador ou do exemplo). "
-                      f"Os arquivos vão para {DESTINO_PADRAO}.")
-        destino = DESTINO_PADRAO
-    if not _pasta_gravavel(destino):
-        raise ConfigInvalida(f"Não consigo criar nem gravar na pasta {destino}. Escolha outra em "
-                             f"\"pastas\" > \"destino\" no config.json.")
+    if "SEU-USUARIO" in pedido.upper() or not _pasta_gravavel(destino):
+        raise ConfigInvalida(f"Escolha uma pasta de destino gravável: {destino}")
+    destino = destino.resolve()
     pastas["destino"] = str(destino)
-    # diagnóstico: dentro do destino, a não ser que o config.json escolha outro lugar gravável
-    diag = os.path.expandvars(os.path.expanduser(str(pastas.get("diagnostico") or "").strip()))
-    if not diag or not _pasta_gravavel(Path(diag)):
-        pastas["diagnostico"] = str(destino / "_diagnostico")
-    return avisos
+    diagnostico = os.path.expandvars(os.path.expanduser(str(pastas.get("diagnostico") or "").strip()))
+    if not diagnostico or not _pasta_gravavel(Path(diagnostico)):
+        diagnostico = str(destino / "_diagnostico")
+    pastas["diagnostico"] = diagnostico
+    return []
 
 PADRAO = {
+    "armazenamento": {"local_id": "", "local_nome": "Escritório local"},
     "chrome": {
         "porta": 9222,
         # Pasta onde o Chrome salva downloads (usada para achar o XML/ZIP baixado à mão)
@@ -92,7 +80,7 @@ PADRAO = {
         # Robô que atende vários escritórios (VPS): uma pasta por escritório dentro do destino,
         # <destino>/<Escritório>/Arquivos baixados/... (cada escritório recebe só a pasta dele no Drive).
         "por_escritorio": False,
-        # Nome da pasta do mês: "MMAAAA" (102026, o caminho da importação automática da Domínio) ou "AAAA-MM"
+        # Formato mensal do ATF. A NFS-e reencontra meses existentes e cria os novos em MMAAAA.
         "formato_competencia": "MMAAAA",
         # PDF de cada NF-e, NFC-e e CT-e baixado do ATF (DANFE/DANFC-e/DACTE gerado do XML), em <tipo>/PDF/
         "pdf_das_notas": True,
@@ -280,7 +268,40 @@ class ConfigInvalida(Exception):
 FILAS = ("sefaz", "nfse")
 
 
-def carregar() -> dict:
+def carregar_contexto_local(*, confirmar_criacao: bool = False) -> tuple[str, str]:
+    """Retorna o identificador persistente e o nome do contexto local."""
+    arquivo = ARQUIVO_CONFIG
+    try:
+        with trava_exclusiva(arquivo.with_suffix(".local-id.lock")):
+            if arquivo.is_symlink():
+                raise ConfigInvalida("O config.json do modo local deve ser um arquivo regular.")
+            try:
+                dados = json.loads(arquivo.read_text(encoding="utf-8-sig"))
+            except FileNotFoundError:
+                dados = {}
+            if not isinstance(dados, dict):
+                raise ConfigInvalida("O config.json deve conter um objeto JSON.")
+            armazenamento = dados.setdefault("armazenamento", {})
+            if not isinstance(armazenamento, dict):
+                raise ConfigInvalida("A configuração armazenamento deve conter um objeto JSON.")
+            nome = armazenamento.get("local_nome", PADRAO["armazenamento"]["local_nome"])
+            if not isinstance(nome, str) or not nome.strip():
+                raise ConfigInvalida("armazenamento.local_nome deve ser um texto não vazio.")
+
+            identificador = armazenamento.get("local_id", "")
+            if identificador != "":
+                return normalizar_id_contexto(identificador), nome
+            if confirmar_criacao is not True:
+                raise ConfigInvalida("Confirme a criação de armazenamento.local_id no config.json com --criar-contexto-local.")
+            identificador = str(uuid4())
+            armazenamento.update(local_id=identificador, local_nome=nome)
+            gravar_json_atomico(arquivo, dados)
+            return identificador, nome
+    except (OSError, ValueError, ArmazenamentoOcupado) as erro:
+        raise ConfigInvalida(f"Não foi possível preparar o contexto local em {arquivo}: {erro}") from erro
+
+
+def carregar(*, preparar_pastas: bool = True) -> dict:
     cfg = copy.deepcopy(PADRAO)
     if ARQUIVO_CONFIG.exists():
         # utf-8-sig: aceita o arquivo salvo pelo Bloco de Notas (que grava um BOM no início)
@@ -292,9 +313,11 @@ def carregar() -> dict:
                     f"O arquivo config.json tem um erro na linha {e.lineno}, coluna {e.colno}: {e.msg}.\n\n"
                     "Confira aspas, vírgulas e chaves { }. Arquivo: " + str(ARQUIVO_CONFIG)
                 ) from e
+        if not isinstance(dados, dict):
+            raise ConfigInvalida("O config.json precisa conter um objeto JSON.")
         _mesclar(cfg, dados)
 
-    cfg["_avisos"] = resolver_pastas(cfg)
+    cfg["_avisos"] = resolver_pastas(cfg) if preparar_pastas else []
     portal = cfg["portal"]
     portal["supabase_url"] = os.environ.get("SUPABASE_URL", portal["supabase_url"])
     portal["chave_service_role"] = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", portal["chave_service_role"])

@@ -28,6 +28,8 @@ import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from documentos import cnpj_valido, cpf_valido, ie_pb_valida
+
 MODELO = Path(__file__).resolve().parent.parent / "modelos" / "modelo_empresas_sefaz_pb.xlsx"
 
 # coluna da planilha -> tipo de XML do robô
@@ -69,31 +71,6 @@ def _chave(texto) -> str:
     texto = unicodedata.normalize("NFKD", str(texto or "")).encode("ascii", "ignore").decode().lower()
     texto = texto.replace("-", "")
     return re.sub(r"[^a-z0-9]+", " ", texto).strip()
-
-
-def _dv(numeros: str, pesos: list[int]) -> int:
-    resto = sum(int(n) * p for n, p in zip(numeros, pesos)) % 11
-    return 0 if resto < 2 else 11 - resto
-
-
-def cnpj_valido(cnpj: str) -> bool:
-    if not re.fullmatch(r"\d{14}", cnpj) or len(set(cnpj)) == 1:
-        return False
-    return cnpj[-2:] == f"{_dv(cnpj[:12], [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2])}{_dv(cnpj[:13], [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2])}"
-
-
-def cpf_valido(cpf: str) -> bool:
-    if not re.fullmatch(r"\d{11}", cpf) or len(set(cpf)) == 1:
-        return False
-    return cpf[-2:] == f"{_dv(cpf[:9], list(range(10, 1, -1)))}{_dv(cpf[:10], list(range(11, 1, -1)))}"
-
-
-def ie_pb_valida(ie: str) -> bool:
-    """Inscrição estadual da Paraíba: 9 dígitos, módulo 11 com pesos 9 a 2 (resto 0 ou 1 -> dígito 0)."""
-    if not re.fullmatch(r"\d{9}", ie) or len(set(ie)) == 1:
-        return False
-    resto = sum(int(n) * p for n, p in zip(ie[:8], range(9, 1, -1))) % 11
-    return int(ie[8]) == (0 if resto < 2 else 11 - resto)
 
 
 def _numero(valor) -> str:
