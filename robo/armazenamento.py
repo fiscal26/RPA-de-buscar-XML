@@ -21,6 +21,11 @@ PASTA_CONTEXTOS = "Arquivos por empresa v2"
 LIMITE_CAMINHO = 259
 RESERVA_ARQUIVOS = 80  # separadores, competência/serviço e nome do arquivo
 RESERVA_ARQUIVOS_ATF = 104  # competência, pasta com total, PDF e chave de acesso completa
+# A mesma pasta de escritório atende as duas origens, independentemente de qual chegar primeiro.
+_RESERVA_CONTEXTO = max(
+    len("/sefaz_pb/ie_") + 9 + RESERVA_ARQUIVOS_ATF,
+    len("/nfse_nacional/cnpj_") + 14 + RESERVA_ARQUIVOS,
+)
 # WinNT.h: IO_REPARSE_TAG_CLOUD e variantes _1 a _F nos bits da máscara.
 _TAG_CLOUD = 0x9000001A
 _MASCARA_VARIANTE_CLOUD = 0x0000F000
@@ -112,6 +117,11 @@ def _verificar_tamanho(caminho: Path, reserva: int = 0):
         raise IdentidadeArmazenamentoInvalida(
             f"Caminho do armazenamento v2 longo demais. Escolha uma raiz mais curta: {caminho}"
         )
+
+
+def validar_espaco_atf(empresa: Path):
+    """Exige espaço para o XML e o PDF antes de consultar o ATF, também em pastas preexistentes."""
+    _verificar_tamanho(empresa, RESERVA_ARQUIVOS_ATF)
 
 
 def _componente(pai: Path, nome: str) -> Path:
@@ -285,9 +295,8 @@ def abrir_empresa(destino: str | Path, contexto: ContextoArmazenamento, *, somen
     id_contexto = f"{prefixo_contexto}_{contexto.contexto_id}"
     id_empresa = f"{contexto.tipo_documento}_{contexto.documento}"
     reserva_empresa = RESERVA_ARQUIVOS_ATF if contexto.origem == "sefaz_pb" else RESERVA_ARQUIVOS
-    # Novas pastas reservam o espaço necessário ao fluxo; pastas existentes não são renomeadas.
-    reserva_contexto = len(f"/{contexto.origem}/{id_empresa}") + reserva_empresa
-    nova_pasta_contexto = _nome_pasta(tipo, id_contexto, contexto.nome_contexto, 20, reserva_contexto)
+    if not somente_leitura and not tipo.exists():
+        _verificar_tamanho(tipo / id_contexto, _RESERVA_CONTEXTO)
     if somente_leitura:
         subpasta_existente_validada(destino, PASTA_CONTEXTOS, contexto.tipo_contexto)
         travas = subpasta_existente_validada(raiz, "_travas")
@@ -303,15 +312,16 @@ def abrir_empresa(destino: str | Path, contexto: ContextoArmazenamento, *, somen
         pasta_contexto = _buscar_pasta(tipo, id_contexto)
         if pasta_contexto is None:
             if somente_leitura:
-                raise FileNotFoundError(nova_pasta_contexto)
-            pasta_contexto = _diretorio(nova_pasta_contexto)
+                raise FileNotFoundError(tipo / id_contexto)
+            pasta_contexto = _diretorio(
+                _nome_pasta(tipo, id_contexto, contexto.nome_contexto, 20, _RESERVA_CONTEXTO)
+            )
 
     trava_empresa = travas / f"{id_contexto}-{contexto.origem}-{id_empresa}.lock"
     _verificar_tamanho(trava_empresa)
     with trava_exclusiva(trava_empresa):
         origem = pasta_contexto / contexto.origem
         rotulo = "-".join(filter(None, (contexto.codigo, contexto.nome)))
-        nova_pasta = _nome_pasta(origem, id_empresa, rotulo, 40, reserva_empresa)
         if somente_leitura:
             subpasta_existente_validada(pasta_contexto, contexto.origem)
         else:
@@ -319,7 +329,8 @@ def abrir_empresa(destino: str | Path, contexto: ContextoArmazenamento, *, somen
         pasta = _buscar_pasta(origem, id_empresa)
         if pasta is None:
             if somente_leitura:
-                raise FileNotFoundError(nova_pasta)
+                raise FileNotFoundError(origem / id_empresa)
+            nova_pasta = _nome_pasta(origem, id_empresa, rotulo, 40, reserva_empresa)
             dados = {
                 "versao": VERSAO, "identidade": contexto.identidade,
                 "criado_em": datetime.now(timezone.utc).isoformat(),
@@ -365,12 +376,36 @@ def reservar_caixa_atf(destino: str | Path, login: str, execucao_id: str) -> Pat
     pasta = criar_subpasta_validada(Path(destino).resolve(), PASTA_CONTEXTOS, "_caixas_atf")
     chave = hashlib.sha256(login.strip().casefold().encode("utf-8")).hexdigest()
     marcador = arquivo_validado(pasta, f"{chave}.lock")
+    temporario = identidade = None
     try:
-        with marcador.open("x", encoding="ascii") as arquivo:
-            arquivo.write(f"execucao={execucao_id}\n")
-    except FileExistsError as erro:
-        raise ArmazenamentoOcupado(
-            f"A caixa ATF deste login tem consulta pendente ou em conferência. "
-            f"Aguarde a leitura final ou confira o marcador {marcador} antes de agendar novamente."
-        ) from erro
-    return marcador
+        try:
+            # Até a publicação, uma interrupção só pode deixar um arquivo temporário.
+            with NamedTemporaryFile(mode="w", encoding="ascii", dir=pasta, prefix=".reserva-", delete=False) as arquivo:
+                temporario = Path(arquivo.name)
+                arquivo.write(f"execucao={execucao_id}\n")
+            identidade = temporario.stat()
+            try:
+                if os.name == "nt":
+                    temporario.rename(marcador)  # no Windows, falha se o destino já existe
+                else:
+                    os.link(temporario, marcador)  # publicação exclusiva em POSIX
+            except FileExistsError as erro:
+                raise ArmazenamentoOcupado(
+                    "A caixa ATF deste login tem consulta pendente ou em conferência. "
+                    f"Aguarde a leitura final ou confira o marcador {marcador} antes de agendar novamente."
+                ) from erro
+        finally:
+            if temporario is not None:
+                temporario.unlink(missing_ok=True)
+        return marcador
+    except BaseException:
+        # O sinal pode ter chegado logo depois da publicação. Só retire nosso próprio arquivo.
+        if identidade and identidade.st_ino:
+            try:
+                atual = marcador.lstat()
+            except FileNotFoundError:
+                pass
+            else:
+                if os.path.samestat(identidade, atual):
+                    marcador.unlink()
+        raise

@@ -40,9 +40,11 @@ A chave não aparece no comando de conferência.
 
 Novos meses usam MMAAAA; meses existentes em AAAA-MM continuam nesse caminho.
 Os dois formatos para o mesmo mês/identidade bloqueiam a rodada antes da consulta.
-No Windows, o resolvedor reserva espaço para a pasta do serviço e o PDF com a
-chave completa. Se uma pasta já existente não couber, a execução pede uma raiz
-mais curta; não tenta renomear ou mover os dados automaticamente.
+No Windows, o nome de uma pasta nova de escritório deixa espaço para o caminho
+mais longo entre ATF e NFS-e. Pastas já criadas são reutilizadas. Antes de
+consultar o ATF, o robô verifica a folga para os XML e respectivos PDFs quando
+a geração de PDF está ativa. Se o caminho for longo demais, informa a necessidade
+de uma raiz mais curta e preserva o histórico no local.
 
 ## Caixa postal e arquivos
 
@@ -56,9 +58,18 @@ Essas mensagens ficam fora da coleta nova. Enquanto A aguarda resposta, outra
 rodada B do mesmo login é recusada, inclusive em outro processo na mesma raiz.
 Trocar de sessão ou de escritório não cria outra caixa. A leitura final de A pode
 concluir a pendência e liberar a reserva; só depois B deve ser reagendada.
+O marcador é publicado com seu identificador completo, de forma exclusiva.
+Uma recusa confirmada, sem outro envio pendente, libera a caixa. Uma queda
+logo após a publicação ou um envio incerto ainda pode exigir conferência.
 
-Ausência de notas exige HTML com zero ou resposta final explícita e válida.
-ZIP truncado/parcial, aviso de anexo sem download e mensagens excedentes ficam
+O código da tela localiza as mensagens. A conclusão é registrada por inscrição
+estadual e tipo de consulta na competência da rodada. Um aviso de ausência
+precisa identificar a consulta ou ser confirmado no HTML. A entrega de uma
+empresa não atribui um aviso genérico à empresa que ainda aguarda.
+A leitura final conserva as mensagens já lidas, mesmo ao reabrir o Chrome.
+Um pacote com os mesmos XML já recebidos não ocupa a pendência de outra
+consulta. Se a divergência persistir, o painel apresenta um erro de conferência.
+ZIP truncado/parcial, aviso de anexo sem download e entregas conflitantes ficam
 para conferência, preservam os originais e mantêm a reserva. Não viram receita
 zero nem serviço sem movimento.
 

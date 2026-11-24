@@ -43,7 +43,7 @@ from uuid import uuid4
 from armazenamento import (ArmazenamentoOcupado, ContextoArmazenamento,
                            IdentidadeArmazenamentoInvalida, PASTA_CONTEXTOS, abrir_empresa,
                            area_do_contexto, arquivo_validado, pasta_da_competencia,
-                           publicar_arquivo, reservar_caixa_atf)
+                           publicar_arquivo, reservar_caixa_atf, validar_espaco_atf)
 
 
 import requests
@@ -53,7 +53,7 @@ import mei
 import config
 import cripto
 import planilha
-from atf_pb import (MENSAGEM_INDICA_ANEXO, MENSAGEM_SEM_NOTAS, RespostaATF, SERVICOS, TIPO_TELA, MensagensIndisponiveis, AtfPB, Diagnostico, Emissao, Envio, EtapaNaoConcluida, Recolha,
+from atf_pb import (MENSAGEM_INDICA_ANEXO, MENSAGEM_SEM_NOTAS, RespostaATF, SERVICOS, TIPO_TELA, MensagensIndisponiveis, AtfPB, ConsultaATF, Diagnostico, Emissao, Envio, EtapaNaoConcluida, Recolha,
                     SenhaInvalida, SessaoExpirada, SiteForaDoAr)
 from navegador import Chrome, ChromeIndisponivel
 
@@ -82,17 +82,14 @@ class Pendencia:
     senha: str
     envios: dict
     emissoes: dict
-    esperadas: dict
+    consultas: dict[str, set[ConsultaATF]]
     desde: datetime
     relevante: object
     alvos: list
     recolha: Recolha
     marcador_caixa: Path | None = None
-    anteriores: frozenset[str] | None = None
-
-    def faltam(self) -> dict[str, int]:
-        return {c: n - self.recolha.recebidas.get(c, 0) for c, n in self.esperadas.items()
-                if n - self.recolha.recebidas.get(c, 0) > 0}
+    anteriores: frozenset[str] = frozenset()
+    envio_incerto: bool = False
 
 
 @dataclass
@@ -175,7 +172,7 @@ class Executor:
             except Exception as e:  # o andamento é só informação: nunca para a rodada
                 log.debug("andamento não enviado: %s", e)
 
-    def _conferir_em_html(self, envios: dict, por_ie: dict, com_sessao):
+    def _conferir_em_html(self, envios: dict, por_ie: dict, com_sessao, solicitar):
         """Consulta em XML sem resposta a tempo, ou com um "Nenhum registro" que chegou atrasado (pode ser de outra
         consulta): refaz em HTML, que responde na hora. 0 registro = sem movimento; havendo notas, espera o XML
         (e pede de novo se o ATF não confirmou o envio para a caixa de mensagens)."""
@@ -199,22 +196,21 @@ class Executor:
                 log.info("   %s IE %s: não deu para conferir em HTML; fica como o ATF respondeu", nome, ie)
             elif n == 0:
                 envio.sem_notas = True
+                envio.notas_html = 0
             else:
                 envio.sem_notas = False
+                envio.notas_html = n
                 if not envio.confirmada and t.confirmar_reserva():
                     log.info("   %s IE %s: %d nota(s) no HTML; pedindo o XML de novo", nome, ie, n)
-                    novo = com_sessao(atf.solicitar, tipo, ie, t.inicio, t.fim, nome)
+                    novo = solicitar(tipo, ie, t.inicio, t.fim, nome, notas_html=n)
                     atf.esperar_respostas_atrasadas(0)  # o HTML já respondeu: um alerta atrasado não vale mais
-                    if novo.ok and novo.sem_notas:  # o ATF respondeu na hora que não há notas: vale a resposta
-                        log.info("   %s IE %s: o XML pedido de novo voltou sem notas; fica sem movimento", nome, ie)
-                        envio = envios[chave] = novo
-                    elif novo.ok:
+                    if novo.ok:
                         novo.sem_notas = False
                         novo.hora = min(h for h in (envio.hora, novo.hora) if h) if (envio.hora or novo.hora) else None
                         envio = envios[chave] = novo
             if not envio.ok:
                 self._progresso(t, tipo, "erro", envio.resposta or "consulta não aceita")
-            elif envio.sem_notas:
+            elif envio.sem_notas and (envio.notas_html == 0 or not envio.atrasada):
                 self._progresso(t, tipo, "sem_movimento", "sem notas no período (conferido em HTML)" if n == 0
                                 else "sem notas no período")
             else:
@@ -262,6 +258,8 @@ class Executor:
                         falhas[i] = Resultado("erro", "Reserva da tarefa ATF encerrada.")
                         continue
                     with self._pasta_empresa(t) as pasta:
+                        if arquivos.GERAR_PDF and any(tipo in TIPO_TELA for tipo in t.tipos):
+                            validar_espaco_atf(pasta)
                         # Recusa competências ambíguas antes de enviar consultas ou publicar documentos.
                         if any(tipo != "mei" for tipo in t.tipos):
                             pasta_da_competencia(pasta, f"{t.inicio:%Y-%m}")
@@ -280,23 +278,31 @@ class Executor:
             self.atf.entrar(t.login, t.senha)
 
     def _rodada(self, trabalhos: list[Trabalho]) -> list[Resultado]:
+        marcador = None
+        envios_xml: list[Envio] = []
+        try:
+            if any(tipo in TIPO_TELA for t in trabalhos for tipo in t.tipos):
+                # O login identifica a caixa real. Trocar de organização não cria outra caixa postal.
+                t0 = trabalhos[0]
+                marcador = reservar_caixa_atf(self.cfg["pastas"]["destino"], t0.login, t0.execucao_id)
+            resultados, liberar = self._rodada_com_caixa(trabalhos, marcador, envios_xml)
+        except BaseException:
+            # Inclui a interrupção do robô antes do primeiro envio.
+            if marcador and not any(envio.pode_gerar_mensagem for envio in envios_xml):
+                marcador.unlink()
+            raise
+        if marcador and liberar:
+            marcador.unlink()
+        return resultados
+
+    def _rodada_com_caixa(self, trabalhos: list[Trabalho], marcador: Path | None,
+                         envios_xml: list[Envio]) -> tuple[list[Resultado], bool]:
         atf = self.atf
         t0 = trabalhos[0]
-        marcador = None
-        anteriores = frozenset()
-        if any(tipo in TIPO_TELA for t in trabalhos for tipo in t.tipos):
-            # O login identifica a caixa real. Trocar de organização não cria outra caixa postal.
-            marcador = reservar_caixa_atf(self.cfg["pastas"]["destino"], t0.login, t0.execucao_id)
-        try:
-            self._entrar(t0)
-            if any(tipo in ("cartao", "mei") for t in trabalhos for tipo in t.tipos):
-                atf.limpar_cache_dossie()
-            if marcador:
-                anteriores = frozenset(m["id"] for m in atf.listar_mensagens())
-        except Exception:
-            if marcador:
-                marcador.unlink()
-            raise  # Nenhuma consulta foi enviada ainda.
+        self._entrar(t0)
+        if any(tipo in ("cartao", "mei") for t in trabalhos for tipo in t.tipos):
+            atf.limpar_cache_dossie()
+        anteriores = frozenset(m["id"] for m in atf.listar_mensagens()) if marcador else frozenset()
 
         def com_sessao(funcao, *args, **kw):
             for tentativa in (1, 2):
@@ -308,6 +314,13 @@ class Executor:
                     self._entrar(t0)
                     if tentativa == 2:
                         raise EtapaNaoConcluida("a sessão do ATF expirou duas vezes")
+
+        def solicitar(tipo, ie, inicio, fim, nome, *, notas_html):
+            def registrar(envio):
+                envio.notas_html = notas_html
+                envios_xml.append(envio)
+
+            return com_sessao(atf.solicitar, tipo, ie, inicio, fim, nome, registrar_envio=registrar)
 
         # 1) envia as consultas de XML (uma por empresa e tipo; Emitente OU Destinatário)
         html_antes = atf.atf.get("conferir_em_html", True)
@@ -339,13 +352,12 @@ class Executor:
                         continue
                     if not t.confirmar_reserva():
                         break
-                    envio = envios[(t.ie, tipo)] = com_sessao(atf.solicitar, tipo, t.ie, t.inicio, t.fim, nome)
-                    envio.notas_html = n
+                    envio = envios[(t.ie, tipo)] = solicitar(tipo, t.ie, t.inicio, t.fim, nome, notas_html=n)
                     if atf.bloqueada(t.ie):
                         envio.ok, envio.resposta = False, sem_permissao(atf.bloqueada(t.ie))
                     if not envio.ok:
                         self._progresso(t, tipo, "erro", envio.resposta or "consulta não aceita")
-                    elif envio.sem_notas:
+                    elif envio.sem_notas and not envio.notas_html and not envio.atrasada:
                         self._progresso(t, tipo, "sem_movimento", "sem notas no período")
                     else:
                         self._progresso(t, tipo, "aguardando", "consulta enviada; o ATF entrega em Minhas Mensagens")
@@ -389,51 +401,88 @@ class Executor:
         atf.esperar_respostas_atrasadas(atf.atf["segundos_resposta"])
         por_ie = {t.ie: t for t in trabalhos}
         for envio in envios.values():  # o HTML mostrou notas: um "Nenhum registro" atrasado não vale
-            if envio.notas_html and envio.atrasada and envio.sem_notas:
+            if envio.notas_html and envio.sem_notas:
                 envio.sem_notas = False
-                log.info("   %s IE %s: alerta atrasado ignorado (o HTML mostrou %d nota(s))", envio.tipo, envio.ie,
+                envio.atrasada = True
+                log.info("   %s IE %s: alerta de ausência ignorado (o HTML mostrou %d nota(s))", envio.tipo, envio.ie,
                          envio.notas_html)
         if html_antes:
-            self._conferir_em_html(envios, por_ie, com_sessao)
+            self._conferir_em_html(envios, por_ie, com_sessao, solicitar)
         for (ie, tipo), envio in envios.items():
+            if envio.sem_notas and envio.atrasada and envio.notas_html != 0:
+                envio.sem_notas = False  # um alerta tardio sem confirmação em HTML pode ser de outra consulta
             if envio.ok and envio.sem_notas and ie in por_ie:
                 self._progresso(por_ie[ie], tipo, "sem_movimento", "sem notas no período")
-        esperadas: dict[str, int] = {}
-        for (ie, tipo), envio in envios.items():
-            if envio.ok and not envio.sem_notas:
-                codigo = atf.atf["telas"][TIPO_TELA[tipo][0]]["funcao"]
-                esperadas[codigo] = esperadas.get(codigo, 0) + 1
+        em_caixa = {chave: envio for chave, envio in envios.items() if envio.ok and not envio.sem_notas}
+        aguardados = {id(envio) for envio in em_caixa.values()}
+        # Uma consulta reenviada ou inconclusiva ainda pode produzir mensagens fora da contagem.
+        envio_incerto = any(envio.pode_gerar_mensagem and id(envio) not in aguardados for envio in envios_xml)
+        consultas: dict[str, set[ConsultaATF]] = {}
+        for ie, tipo in em_caixa:
+            codigo = atf.atf["telas"][TIPO_TELA[tipo][0]]["funcao"]
+            consultas.setdefault(codigo, set()).add((ie, tipo))
         alvos = [arquivos.Alvo(t.ie, t.cnpj, t.tipos) for t in trabalhos]
-
         periodo = (f"{t0.inicio:%d/%m/%Y}", f"{t0.fim:%d/%m/%Y}")
+        intervalo = (t0.inicio.isoformat(), t0.fim.isoformat())
 
-        def relevante(anexos: list, texto: str) -> RespostaATF:
-            # "Período solicitado: 01/09/2026 a 30/09/2026": resposta de outra competência não conta
-            # (CT-e: "Data emissão: 01/09/2026 à 30/09/2026")
+        def relevante(codigo: str, anexos: list, texto: str,
+                      recebida_em: datetime | None) -> tuple[RespostaATF, set[ConsultaATF]]:
+            # Uma mensagem pode informar o período ou a IE, mas nem sempre informa ambos.
             m = re.search(r"(?:per[ií]odo\s+solicitado|data\s+emiss[aã]o):?\s*(\d{2}/\d{2}/\d{4})\s*[aà]\s*(\d{2}/\d{2}/\d{4})",
                           texto, re.I)
             if m and (m.group(1), m.group(2)) != periodo:
-                return RespostaATF.OUTRA_CONSULTA
+                return RespostaATF.OUTRA_CONSULTA, set()
+            papel = r"emitente|destinat[aá]rio|remetente"
+            documento = re.search(
+                rf"\b(?:(?:inscri[cç][aã]o\s+estadual|IE)\s*(?:({papel})\s*)?:\s*|({papel})\s+)([0-9][0-9.\-]*)",
+                texto, re.I,
+            )
+            candidatas = {
+                chave for chave in consultas[codigo]
+                if not recebida_em or not em_caixa[chave].hora
+                or recebida_em >= em_caixa[chave].hora - timedelta(seconds=5)
+            }
+            if documento:
+                inscricao = re.sub(r"[^0-9]", "", documento[3])
+                papel_informado = (documento[1] or documento[2] or "").lower().replace("á", "a")
+                candidatas = {(ie, tipo) for ie, tipo in candidatas if ie == inscricao and (
+                    not papel_informado or TIPO_TELA[tipo][1].lower().replace("á", "a") == papel_informado
+                )}
+            if not candidatas:
+                return RespostaATF.OUTRA_CONSULTA, set()
             if not anexos:
                 if MENSAGEM_SEM_NOTAS.search(texto) and not MENSAGEM_INDICA_ANEXO.search(texto):
-                    return RespostaATF.SEM_DADOS
-                return RespostaATF.CONFERENCIA
-            xmls = []
+                    if documento and len(candidatas) == 1 and not any(em_caixa[c].notas_html for c in candidatas):
+                        return RespostaATF.SEM_DADOS, candidatas
+                    return RespostaATF.AUSENCIA_AMBIGUA, candidatas
+                return RespostaATF.CONFERENCIA, candidatas
+            xmls, datas = [], []
             for nome, dados in anexos:
                 lidos, incompleto = arquivos.inspecionar_anexo(dados, nome)
-                if incompleto or not lidos or any(arquivos.ler_xml(xml) is None for _, xml in lidos):
-                    return RespostaATF.CONFERENCIA
+                notas = [arquivos.ler_xml(xml) for _, xml in lidos]
+                if incompleto or not notas or None in notas:
+                    return RespostaATF.CONFERENCIA, candidatas
+                datas.extend(nota.emissao for nota in notas if not nota.evento)
                 xmls.extend(lidos)
-            identificados, _ = arquivos.distribuir(xmls, alvos)
-            return RespostaATF.DOCUMENTOS if identificados else RespostaATF.OUTRA_CONSULTA
+            if datas and any(not intervalo[0] <= data <= intervalo[1] for data in datas):
+                if all(not intervalo[0] <= data <= intervalo[1] for data in datas):
+                    return RespostaATF.OUTRA_CONSULTA, set()
+                return RespostaATF.CONFERENCIA, candidatas
+            alvos_mensagem = [arquivos.Alvo(ie, por_ie[ie].cnpj, [tipo]) for ie, tipo in candidatas]
+            identificados, _ = arquivos.distribuir(xmls, alvos_mensagem)
+            chaves = set(identificados)
+            if not chaves:
+                return RespostaATF.OUTRA_CONSULTA, set()
+            return RespostaATF.DOCUMENTOS, chaves
         # as respostas chegam depois do clique em Consultar (hora do próprio ATF)
         horas = [e.hora for e in envios.values() if e.hora]
         desde = min(horas) if horas else datetime.now() - timedelta(minutes=1)
         recolha = Recolha()
-        if esperadas:
+        if consultas:
             try:
-                recolha = atf.recolher(esperadas, desde, self.cfg["atf"]["minutos_espera_mensagens"], relevante,
-                                       leituras=self.cfg["atf"]["leituras_mensagens"], anteriores=anteriores)
+                recolha = atf.recolher(consultas, desde, self.cfg["atf"]["minutos_espera_mensagens"], relevante,
+                                      leituras=self.cfg["atf"]["leituras_mensagens"], anteriores=anteriores,
+                                      recolha=recolha)
             except MensagensIndisponiveis as e:
                 if e.recolha is not None:
                     self._salvar_recolha(trabalhos, alvos, e.recolha)
@@ -441,102 +490,97 @@ class Executor:
             except SessaoExpirada as erro:
                 parcial = getattr(erro, "recolha", None)
                 if parcial is not None:
-                    parcial.conferencia.extend(parcial.arquivos)
-                    parcial.arquivos.clear()
                     self._salvar_recolha(trabalhos, alvos, parcial, salvar_empresas=False)
                 raise EtapaNaoConcluida("A sessão expirou durante a leitura. A caixa foi mantida para conferência.") from erro
 
         # 3) distribui os XML pelo conteúdo e salva
         por_destino = self._salvar_recolha(trabalhos, alvos, recolha, salvar_empresas=False)
-        completas = not recolha.tempo_esgotado
-        resultados = [self._resultado(t, envios, por_destino, recolha, completas, emissoes, final=False)
+        faltam = recolha.pendentes(consultas)
+        resultados = [self._resultado(t, envios, por_destino, recolha, faltam, emissoes, final=False)
                       for t in trabalhos]
-        if any(r.pendente for r in resultados):
-            log.info("   Minhas Mensagens: faltam %s depois de %d leitura(s); segue para as próximas tarefas e "
-                     "volta às mensagens no final", {c: n - recolha.recebidas.get(c, 0) for c, n in esperadas.items()
-                                                     if n > recolha.recebidas.get(c, 0)},
-                     self.cfg["atf"]["leituras_mensagens"])
-            recolha.ignorados = []  # já salvos em _sem_empresa
-            self.pendencias.append(Pendencia(trabalhos, t0.senha, envios, emissoes, esperadas, desde, relevante,
-                                             alvos, recolha, marcador, anteriores))
-        elif (marcador and completas and not recolha.incertas and all(e.ok for e in envios.values())
-              and not any(t.reserva_perdida for t in trabalhos)):
-            marcador.unlink()
-        return resultados
-
+        if faltam:
+            log.info("   Minhas Mensagens: faltam %s depois de %d leitura(s); volta às mensagens no final",
+                     sorted(faltam), self.cfg["atf"]["leituras_mensagens"])
+            recolha.ignorados.clear()
+            recolha.conferencia.clear()
+            self.pendencias.append(Pendencia(trabalhos, t0.senha, envios, emissoes, consultas, desde,
+                                             relevante, alvos, recolha, marcador, anteriores, envio_incerto))
+            return resultados, False
+        return resultados, self._caixa_pode_ser_liberada(trabalhos, envios, recolha, faltam, envio_incerto)
 
     def repescar(self, ler: bool = True) -> tuple[list[tuple[list, list[Resultado]]], bool]:
-        """Final da execução: lê Minhas Mensagens mais uma vez para cada rodada pendente. Devolve
-        ([(trabalhos, resultados)], tudo_chegou). Se ainda faltar, o robô deve parar de vez.
-        ler=False só fecha as pendências com o que já chegou (o robô já está parando)."""
+        """Relê os códigos de consultas pendentes com as evidências já registradas na rodada."""
         pendencias, self.pendencias = self.pendencias, []
         saida, tudo = [], True
-        parou = "" if ler else "parando"
+        parou = not ler
         for p in pendencias:
             t0 = p.trabalhos[0]
-            if p.faltam() and not parou:
-                log.info("Última leitura de Minhas Mensagens para o login %s (faltam %s)", t0.login, p.faltam())
+            faltam = p.recolha.pendentes(p.consultas)
+            # Os resultados de empresas já concluídas não são publicados nem regravados na releitura.
+            ies_pendentes = {ie for ie, _ in faltam}
+            ies_pendentes.update(ie for (ie, _), anexos in p.recolha.respostas.items() if not anexos)
+            trabalhos = [t for t in p.trabalhos if t.ie in ies_pendentes]
+            if faltam and not parou:
+                log.info("Última leitura de Minhas Mensagens para o login %s (faltam %s)", t0.login, sorted(faltam))
                 try:
                     self._garantir_chrome(self._diagnostico(t0))
                     t0.senha = t0.senha or p.senha
                     self._entrar(t0)
-                    nova = self.atf.recolher(p.faltam(), p.desde, self.cfg["atf"]["minutos_espera_mensagens"],
-                                             p.relevante, leituras=1, anteriores=p.anteriores,
-                                             incertas_anteriores=frozenset(p.recolha.incertas))
-                    p.recolha.arquivos.extend(nova.arquivos)
-                    for c, n in nova.recebidas.items():
-                        p.recolha.recebidas[c] = p.recolha.recebidas.get(c, 0) + n
-                    for c, n in nova.sem_dados.items():
-                        p.recolha.sem_dados[c] = p.recolha.sem_dados.get(c, 0) + n
-                    p.recolha.incertas.update(nova.incertas)
-                    p.recolha.conferencia.extend(nova.conferencia)
-                    p.recolha.ignorados = nova.ignorados
-                except MensagensIndisponiveis as e:
-                    parou = str(e)
-                    if e.recolha is not None:
-                        p.recolha.arquivos.extend(e.recolha.arquivos)
-                        p.recolha.conferencia.extend(e.recolha.conferencia)
-                        p.recolha.incertas.update(e.recolha.incertas)
+                    self.atf.recolher(p.consultas, p.desde, self.cfg["atf"]["minutos_espera_mensagens"],
+                                     p.relevante, leituras=1, anteriores=p.anteriores, recolha=p.recolha)
+                except MensagensIndisponiveis:
+                    parou = True
                 except (SenhaInvalida, SiteForaDoAr, EtapaNaoConcluida, SessaoExpirada, ChromeIndisponivel) as e:
-                    parcial = getattr(e, "recolha", None)
-                    if parcial is not None:
-                        p.recolha.conferencia.extend(parcial.arquivos + parcial.conferencia)
-                        p.recolha.incertas.update(p.faltam())
                     log.info("   não consegui ler as mensagens de novo: %s", e)
                 except Exception:
                     log.exception("   falha inesperada na última leitura das mensagens")
-            completa = not p.faltam()
-            tudo = tudo and completa
-            p.recolha.tempo_esgotado = not completa
             try:
                 por_destino = self._salvar_recolha(p.trabalhos, p.alvos, p.recolha, salvar_empresas=False)
-                rs = [self._resultado(t, p.envios, por_destino, p.recolha, completa, p.emissoes)
-                      for t in p.trabalhos]
-                if (p.marcador_caixa and completa and not p.recolha.incertas and all(e.ok for e in p.envios.values())
-                        and all(r.status in ("concluido", "sem_notas") for r in rs)):
+                faltam = p.recolha.pendentes(p.consultas)
+                tudo = tudo and not faltam
+                rs = [self._resultado(t, p.envios, por_destino, p.recolha, faltam, p.emissoes) for t in trabalhos]
+                if p.marcador_caixa and self._caixa_pode_ser_liberada(
+                    p.trabalhos, p.envios, p.recolha, faltam, p.envio_incerto
+                ):
                     p.marcador_caixa.unlink()
             except ERROS_ARMAZENAMENTO as erro:
-                rs = [Resultado("erro", str(erro)) for _ in p.trabalhos]
-            saida.append((p.trabalhos, rs))
+                tudo = False
+                rs = [Resultado("erro", str(erro)) for _ in trabalhos]
+            saida.append((trabalhos, rs))
             p.senha = ""
             for trabalho in p.trabalhos:
                 trabalho.senha = ""
         return saida, tudo
 
 
+    @staticmethod
+    def _caixa_pode_ser_liberada(trabalhos, envios, recolha, faltam, envio_incerto) -> bool:
+        if envio_incerto or faltam or recolha.incertas:
+            return False
+        ies_enviadas = {envio.ie for envio in envios.values() if envio.pode_gerar_mensagem}
+        # Uma tentativa vencida com documentos baixados ainda exige conferência.
+        return not any(t.reserva_perdida and t.ie in ies_enviadas for t in trabalhos)
+
     def _salvar_recolha(self, trabalhos: list[Trabalho], alvos, recolha: Recolha, salvar_empresas: bool = True):
         """Distribui os arquivos baixados pelo conteúdo, cada um INTEIRO (o ZIP continua ZIP). Nada se
         perde: arquivo de empresa fora da rodada vai para _sem_empresa e o que não é XML/ZIP vai para
         _nao_identificados."""
         t0 = trabalhos[0]
-        por_destino, sem_empresa, brutos = arquivos.distribuir_por_empresa(recolha.arquivos, alvos)
-        brutos.extend(recolha.conferencia)
+        por_destino = {}
+        sem_empresa = list(recolha.ignorados)
+        brutos = list(recolha.conferencia)
+        for chave, anexos in recolha.respostas.items():
+            if anexos:
+                por_empresa, sobras, conferir = arquivos.distribuir_por_empresa(anexos, alvos)
+                por_destino[chave] = por_empresa.get(chave, [])
+                sem_empresa.extend(sobras)
+                brutos.extend(conferir)
         if brutos:
             pasta = self._area(t0, "_nao_identificados")
+            brutos = list(dict.fromkeys(brutos))
             for caminho, (nome, dados) in zip(arquivos.salvar_nao_identificados(brutos, pasta), brutos):
                 log.warning("   ATENÇÃO: o arquivo baixado '%s' (%s, %d bytes) ficou para conferência em %s",
                             nome, arquivos.tipo_de_arquivo(dados), len(dados), caminho)
-        sem_empresa = sem_empresa + list(recolha.ignorados)
         if sem_empresa:
             pasta = self._area(t0, "_sem_empresa")
             n = len(arquivos.salvar_nao_identificados(sem_empresa, pasta))
@@ -546,18 +590,20 @@ class Executor:
             for t in trabalhos:
                 for tipo in t.tipos:
                     baixados = por_destino.get((t.ie, tipo))
-                    if baixados:
+                    if baixados and recolha.respostas.get((t.ie, tipo)):
                         if t.confirmar_reserva():
                             self._salvar_originais(t, tipo, baixados)
                         else:
                             self._guardar_para_conferencia(t, baixados)
         return por_destino
 
-    def _resultado(self, t: Trabalho, envios, por_destino, recolha: Recolha, completas: bool,
-                   emissoes: dict | None = None, final: bool = True) -> Resultado:
+    def _resultado(self, t: Trabalho, envios, por_destino, recolha: Recolha, faltam: set[ConsultaATF],
+                   emissoes: dict | None = None,
+                   final: bool = True) -> Resultado:
         if not t.confirmar_reserva():
             for tipo in t.tipos:
-                self._guardar_para_conferencia(t, por_destino.get((t.ie, tipo), []))
+                if recolha.respostas.get((t.ie, tipo)):
+                    self._guardar_para_conferencia(t, por_destino.get((t.ie, tipo), []))
             return Resultado("erro", "Reserva ATF encerrada. Confira os anexos e a caixa da rodada.")
         detalhes: dict = {}
         sem_notas, faltando, falhas, partes = [], [], [], []
@@ -603,21 +649,17 @@ class Executor:
                 else:
                     falhas.append(f"{nome}: {e.resposta or 'o ATF não devolveu o arquivo'}")
                 continue
-            envio = envios.get((t.ie, tipo))
+            chave = (t.ie, tipo)
+            envio = envios.get(chave)
             if envio is None:
                 continue
-            baixados = por_destino.get((t.ie, tipo), [])
+            resposta = recolha.respostas.get(chave)
+            baixados = por_destino.get(chave, []) if resposta else []
             r = self._salvar_originais(t, tipo, baixados) if baixados else None
-            vazio = r is None
-            codigo = self.cfg["atf"]["telas"][TIPO_TELA[tipo][0]]["funcao"]
-            incerta = envio.ok and not envio.sem_notas and codigo in recolha.incertas
-            sem_arquivo = sum(
-                1 for chave, consulta in envios.items() if consulta.ok and not consulta.sem_notas
-                and self.cfg["atf"]["telas"][TIPO_TELA[chave[1]][0]]["funcao"] == codigo
-                and not por_destino.get(chave)
-            )
-            sem_confirmadas = completas and recolha.sem_dados.get(codigo, 0) >= sem_arquivo
-            sem = vazio and envio.ok and (envio.sem_notas or (sem_confirmadas and not incerta))
+            incerta = chave in recolha.incertas
+            # Na releitura ainda pode chegar um XML que contradiga uma ausência da caixa.
+            sem = envio.ok and (envio.sem_notas or (resposta == [] and (final or not faltam)))
+            ausencia_inconsistente = chave in recolha.ausencias_ambiguas
             detalhes[tipo] = {"arquivos": r["novos"] if r else 0, "repetidos": r["repetidos"] if r else 0,
                               "notas": r["notas"] if r else 0, "valor": r["valor"] if r else 0.0, "sem_notas": bool(sem)}
             if r:
@@ -629,7 +671,13 @@ class Executor:
             elif not final:
                 detalhes[tipo].update(situacao="aguardando", mensagem="aguardando o ATF; o robô lê as mensagens de novo no final")
             else:
-                detalhes[tipo].update(situacao="erro", mensagem="o ATF não entregou em Minhas Mensagens")
+                aviso = "o ATF não entregou em Minhas Mensagens"
+                if ausencia_inconsistente:
+                    aviso = ("A caixa informou ausência, mas o HTML mostrou notas. Confira a divergência."
+                             if envio.notas_html else "A caixa informou ausência sem identificar a consulta. Confira.")
+                detalhes[tipo].update(situacao="erro", mensagem=aviso)
+                if ausencia_inconsistente:
+                    falhas.append(f"{nome}: {aviso}")
             if r:
                 total_notas += r["notas"]
                 partes.append(f"{nome}: {r['notas']} nota(s), {arquivos.reais(r['valor'])}")
@@ -647,8 +695,6 @@ class Executor:
                 detalhes[tipo].update(situacao="erro", mensagem=aviso, sem_notas=False)
                 falhas.append(f"{nome}: {aviso}")
                 exige_conferencia = True
-            if envio.ok and not envio.sem_notas and not completas and nome not in faltando:
-                faltando.append(nome)
 
         destino = self.cfg["pastas"]["destino"]
         with self._pasta_empresa(t) as resolvida:

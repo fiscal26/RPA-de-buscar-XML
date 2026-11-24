@@ -79,6 +79,58 @@ def test_rotulos_longos_e_prefixo_parecido_nao_alteram_identidade(destino):
         assert tamanho + armazenamento.RESERVA_ARQUIVOS <= armazenamento.LIMITE_CAMINHO
 
 
+@pytest.mark.parametrize("nfse_primeiro", [False, True])
+def test_pasta_compartilhada_reserva_espaco_independente_da_ordem(destino, monkeypatch, nfse_primeiro):
+    raiz = destino / ("a" * max(1, 56 - armazenamento._unidades_windows(str(destino))))
+    if armazenamento._unidades_windows(str(raiz)) != 57:
+        # Reproduz o orçamento de uma raiz de 57 caracteres quando o pytest usa uma raiz mais longa.
+        monkeypatch.setattr(armazenamento, "LIMITE_CAMINHO",
+                            259 + armazenamento._unidades_windows(str(raiz)) - 57)
+    atf = replace(EMPRESA, nome_contexto="Escritório com nome longo")
+    nfse = replace(atf, origem="nfse_nacional", tipo_documento="cnpj", documento="11222333000181")
+    contextos = (nfse, atf) if nfse_primeiro else (atf, nfse)
+    pastas = {}
+    for contexto in contextos:
+        with abrir_empresa(raiz, contexto) as pasta:
+            pastas[contexto.origem] = pasta
+
+    assert pastas["sefaz_pb"].parent.parent == pastas["nfse_nacional"].parent.parent
+    with abrir_empresa(raiz, atf) as pasta:
+        pdf = armazenamento.criar_subpasta_validada(pasta, "092026", "CT-e Destinatario - R$ 12.345,67", "PDF")
+        arquivo = armazenamento.arquivo_validado(pdf, "0" * 44 + ".pdf")
+        arquivo.write_bytes(b"%PDF-1.4 exemplo")
+        assert arquivo.is_file()
+
+
+@pytest.mark.parametrize("folga_atf", [3, -3])
+def test_escritorio_preexistente_da_nfse_preserva_identidade_e_historico(destino, monkeypatch, folga_atf):
+    nfse = replace(EMPRESA, origem="nfse_nacional", tipo_documento="cnpj", documento="11222333000181",
+                   nome="", codigo="")
+    escritorio = destino / PASTA_CONTEXTOS / "portal" / f"org_{ORG_A}--Nome_anterior_da_NFSe"
+    escritorio.mkdir(parents=True)
+    with abrir_empresa(destino, nfse) as pasta_nfse:
+        assert pasta_nfse.parent.parent == escritorio
+        metadados = (pasta_nfse / "empresa.json").read_bytes()
+        historico = pasta_nfse / "historico.xml"
+        historico.write_bytes(b"<historico/>")
+
+    caminho_atf = escritorio / "sefaz_pb" / f"ie_{EMPRESA.documento}"
+    limite = armazenamento._unidades_windows(str(caminho_atf)) + armazenamento.RESERVA_ARQUIVOS_ATF + folga_atf
+    monkeypatch.setattr(armazenamento, "LIMITE_CAMINHO", limite)
+    if folga_atf > 0:
+        with abrir_empresa(destino, EMPRESA) as pasta_atf:
+            assert pasta_atf.parent.parent == escritorio
+    else:
+        with pytest.raises(IdentidadeArmazenamentoInvalida, match="longo demais"):
+            with abrir_empresa(destino, EMPRESA):
+                pass
+    with abrir_empresa(destino, nfse, somente_leitura=True) as reaberta:
+        assert reaberta == pasta_nfse
+        assert (reaberta / "empresa.json").read_bytes() == metadados
+        assert historico.read_bytes() == b"<historico/>"
+    assert [p.name for p in escritorio.parent.iterdir()] == [escritorio.name]
+
+
 @pytest.mark.parametrize("mudanca", [
     {"contexto_id": ""}, {"contexto_id": "00000000-0000-0000-0000-000000000000"},
     {"documento": "16012345A"}, {"documento": "160123450"}, {"documento": 160123453},
@@ -298,3 +350,49 @@ def test_contexto_local_invalido_ou_sem_gravacao_nao_e_aceito(tmp_path, monkeypa
     assert arquivo.read_bytes() == b"{}"
     with armazenamento.trava_exclusiva(arquivo.with_suffix(".local-id.lock")):
         pass
+
+
+
+@pytest.mark.parametrize("apos_publicar", [False, True])
+def test_interrupcao_da_reserva_remove_so_o_marcador_proprio(destino, monkeypatch, apos_publicar):
+    outro = armazenamento.reservar_caixa_atf(destino, "outro-login", ORG_B)
+    dados_outro = outro.read_bytes()
+    if apos_publicar:
+        if os.name == "nt":
+            publicar = Path.rename
+
+            def interromper(temporario, marcador):
+                publicar(temporario, marcador)
+                raise KeyboardInterrupt
+
+            alvo, nome = Path, "rename"
+        else:
+            publicar = os.link
+
+            def interromper(temporario, marcador):
+                publicar(temporario, marcador)
+                raise KeyboardInterrupt
+
+            alvo, nome = os, "link"
+    else:
+        abrir_temporario = armazenamento.NamedTemporaryFile
+
+        def interromper(*args, **kwargs):
+            arquivo = abrir_temporario(*args, **kwargs)
+
+            def escrever(_):
+                raise KeyboardInterrupt
+
+            arquivo.write = escrever
+            return arquivo
+
+        alvo, nome = armazenamento, "NamedTemporaryFile"
+    with monkeypatch.context() as m:
+        m.setattr(alvo, nome, interromper)
+        with pytest.raises(KeyboardInterrupt):
+            armazenamento.reservar_caixa_atf(destino, "mesmo-login", ORG_A)
+
+    assert list(outro.parent.iterdir()) == [outro]
+    assert outro.read_bytes() == dados_outro
+    marcador = armazenamento.reservar_caixa_atf(destino, "mesmo-login", ORG_A)
+    assert marcador.read_text(encoding="ascii") == f"execucao={ORG_A}\n"

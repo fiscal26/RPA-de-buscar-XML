@@ -308,6 +308,16 @@ class Envio:
     hora: datetime | None = None   # hora do ATF ao clicar em Consultar (as mensagens chegam depois dela)
     atrasada: bool = False         # a resposta chegou depois da espera (pode ser de outra consulta)
     notas_html: int | None = None  # "(N) registro(s) encontrado(s)" da consulta em HTML (None = não conferida)
+    envio_iniciado: bool = False  # o clique ou o modo assistido pode ter enviado o XML
+
+    @property
+    def pode_gerar_mensagem(self) -> bool:
+        # O alerta atrasado pode ser de outra consulta. Confirme o zero antes de liberar a caixa.
+        sem_envio = (
+            self.sem_notas and not self.notas_html and (not self.atrasada or self.notas_html == 0)
+            and bool(_SEM_NOTAS.search(self.resposta))
+        )
+        return self.envio_iniciado and (self.confirmada or not sem_envio)
 
     @property
     def duvidoso(self) -> bool:
@@ -332,18 +342,22 @@ class Emissao:
     resposta: str = ""
 
 
+ConsultaATF = tuple[str, str]  # inscrição estadual e tipo, na competência da rodada
+
+
 @dataclass
 class Recolha:
     """O que veio de Minhas Mensagens nesta rodada."""
-    arquivos: list[tuple[str, bytes]] = field(default_factory=list)
-    textos: list[tuple[str, str]] = field(default_factory=list)   # (código FIS, texto da mensagem)
-    recebidas: dict[str, int] = field(default_factory=dict)       # código FIS -> mensagens lidas
-    ignorados: list[tuple[str, bytes]] = field(default_factory=list)  # anexos de outra competência/empresa
-    # as mesmas mensagens, inteiras (código, anexos, texto): podem ser de uma rodada anterior que ficou pendente
-    sem_dados: dict[str, int] = field(default_factory=dict)
-    incertas: set[str] = field(default_factory=set)
+    # Só uma confirmação por consulta. Uma lista vazia é uma ausência identificada.
+    respostas: dict[ConsultaATF, list[tuple[str, bytes]]] = field(default_factory=dict)
+    ids_lidos: set[str] = field(default_factory=set)
+    ignorados: list[tuple[str, bytes]] = field(default_factory=list)
     conferencia: list[tuple[str, bytes]] = field(default_factory=list)
-    tempo_esgotado: bool = False   # nem todas as respostas chegaram (tempo ou leituras esgotados)
+    ausencias_ambiguas: set[ConsultaATF] = field(default_factory=set)
+    incertas: set[ConsultaATF] = field(default_factory=set)
+
+    def pendentes(self, consultas: dict[str, set[ConsultaATF]]) -> set[ConsultaATF]:
+        return {chave for chaves in consultas.values() for chave in chaves if chave not in self.respostas}
 
 
 MENSAGEM_SEM_NOTAS = re.compile(r"n[aã]o\s+existem\s+dados|nenhum\s+registro\s+satisfaz", re.I)
@@ -353,6 +367,7 @@ MENSAGEM_INDICA_ANEXO = re.compile(r"abra\s+o\s+arquivo\s+em\s+anexo|arquivo\s+d
 class RespostaATF(Enum):
     DOCUMENTOS = "documentos"
     SEM_DADOS = "sem_dados"
+    AUSENCIA_AMBIGUA = "ausencia_ambigua"
     CONFERENCIA = "conferencia"
     OUTRA_CONSULTA = "outra_consulta"
 
@@ -837,7 +852,8 @@ class AtfPB:
         except ValueError:
             return None
 
-    def solicitar(self, tipo: str, ie: str, inicio: date, fim: date, nome_tipo: str) -> Envio:
+    def solicitar(self, tipo: str, ie: str, inicio: date, fim: date, nome_tipo: str,
+                  *, registrar_envio: Callable[[Envio], None] | None = None) -> Envio:
         """Preenche a consulta de UMA empresa e UM bloco (Emitente ou Destinatário, nunca os dois),
         escolhe Tipo de Exibição = XML e clica em Consultar. O ATF entrega o XML depois, em
         Minhas Mensagens."""
@@ -845,6 +861,8 @@ class AtfPB:
         self._hora_consulta = None
         envio = Envio(ie=ie, tipo=tipo)
         self._envio_em_preparo = envio
+        if registrar_envio is not None:
+            registrar_envio(envio)
         try:
             if not self.atf["tentar_automatico"]:
                 raise EtapaNaoConcluida("modo automático desligado")
@@ -861,6 +879,7 @@ class AtfPB:
         except Exception as e:
             self._log(f"{nome_tipo} IE {ie}: automático parou: {e}")
             self.diag.salvar(self.page, f"consulta-{tipo}")
+            envio.envio_iniciado = True
             self.aviso(f"Não consegui seguir sozinho ({e}). Faça no Chrome a consulta {nome_tipo} da IE {ie} "
                        f"({inicio:%d/%m/%Y} a {fim:%d/%m/%Y}), Tipo de Exibição XML, e clique em Consultar.")
             resposta = self._esperar_resposta(self.segundos_assistido)
@@ -877,7 +896,8 @@ class AtfPB:
             envio.sem_notas = True
         elif _ERRO_CONSULTA.search(resposta):
             envio.ok = False
-            self._ver_permissao(ie, resposta)
+            if self._ver_permissao(ie, resposta):
+                envio.envio_iniciado = False
         self._log(f"{nome_tipo} IE {ie}: consulta enviada" + (f" — ATF: {resposta[:120]}" if resposta else ""))
         return envio
 
@@ -1073,7 +1093,10 @@ class AtfPB:
         self._log(f"Consultando {bloco} IE {ie}, {inicio:%d/%m/%Y} a {fim:%d/%m/%Y}, exibição {formato.upper()}")
         if formato == "xml":
             self._hora_consulta = self.hora_servidor() or datetime.now()
-            self._envio_aguardando = self._envio_em_preparo  # daqui em diante, a resposta (mesmo atrasada) é desta consulta
+            self._envio_aguardando = self._envio_em_preparo
+            if self._envio_aguardando is not None:
+                # Se o clique falhar ou a sessão cair, o pedido pode já ter chegado ao ATF.
+                self._envio_aguardando.envio_iniciado = True
         self._clicar_botao(consultar)
 
     def _campo_do_bloco(self, bloco: str, css: str, ordem: int = 1, texto: str = ""):
@@ -1591,93 +1614,102 @@ class AtfPB:
         self.ultimo_uso = time.time()
         return "\n".join(textos), capt.recebidos[antes:], final, faltou_anexo
 
-    def recolher(self, esperadas: dict[str, int], desde: datetime, minutos: int,
-                 relevante: Callable[[list, str], RespostaATF], leituras: int | None = None,
-                 *, anteriores: frozenset[str],
-                 incertas_anteriores: frozenset[str] = frozenset()) -> Recolha:
-        """Acompanha Minhas Mensagens até chegarem as respostas finais esperadas ({código FIS: quantas})
-        das consultas feitas a partir de 'desde' (hora do ATF ao clicar em Consultar), ou até o tempo
-        acabar. Cada consulta gera uma mensagem mãe com 3 filhas; a final ("Tarefa executada...") traz o
-        anexo ou a ausência de dados. A classificação separa respostas válidas, consultas de outras
-        empresas ou períodos e mensagens para conferência. 'leituras' limita as tentativas nesta rodada."""
-        recolha = Recolha()
-        recolha.incertas.update(incertas_anteriores)
-        aceitos: dict[str, list] = {}
-        lidas = 0
+    def recolher(self, consultas: dict[str, set[ConsultaATF]], desde: datetime, minutos: int,
+                 relevante: Callable[[str, list, str, datetime | None], tuple[RespostaATF, set[ConsultaATF]]],
+                 leituras: int | None = None, *, anteriores: frozenset[str], recolha: Recolha) -> Recolha:
+        """Lê a caixa até resolver as consultas ou esgotar a espera. O código FIS só localiza as mensagens."""
+        from arquivos import inspecionar_anexo
+
+        def conteudo(anexos):
+            return frozenset(xml for nome, dados in anexos for _, xml in inspecionar_anexo(dados, nome)[0])
+
+        pendentes_iniciais = recolha.pendentes(consultas)
+        codigos = {codigo for codigo, chaves in consultas.items() if chaves & pendentes_iniciais}
+        respostas_anteriores = recolha.respostas.copy()
         capt = CapturadorArquivos(self.contexto, self.cfg["chrome"]["pasta_downloads"], log=self.aviso)
         limite = time.time() + minutos * 60
+        lidas = 0
+        sessao_expirou = False
         try:
             while True:
                 if self._senha_na_tela() is not None:
                     raise SessaoExpirada("o ATF voltou para a tela de login.")
                 lista = self.listar_mensagens()
                 lidas += 1
-                maes = [m for m in lista
-                        if m["codigo"] in esperadas and m["id"] not in self._mensagens_lidas
-                        and m["id"] not in anteriores
-                        and (not m["data"] or _data_br(m["data"]) >= desde - timedelta(seconds=5))]
-                for mae in maes:
-                    textos, anexos, final, faltou_anexo = self.ler_consulta(mae, capt)
-                    recolha.textos.append((mae["codigo"], textos))
-                    if not final and not faltou_anexo:
-                        continue  # ainda processando: volta nela na próxima leitura da caixa
-                    self._mensagens_lidas.add(mae["id"])
-                    classe = relevante(anexos, textos)
-                    codigo = mae["codigo"]
-                    if classe is not RespostaATF.OUTRA_CONSULTA and (
-                        faltou_anexo or codigo in recolha.incertas or recolha.recebidas.get(codigo, 0) >= esperadas[codigo]
-                    ):
-                        classe = RespostaATF.CONFERENCIA
-                    if classe in (RespostaATF.DOCUMENTOS, RespostaATF.SEM_DADOS):
-                        recolha.recebidas[codigo] = recolha.recebidas.get(codigo, 0) + 1
-                        aceitos.setdefault(codigo, []).extend(anexos)
-                        if classe is RespostaATF.SEM_DADOS:
-                            recolha.sem_dados[codigo] = recolha.sem_dados.get(codigo, 0) + 1
+                for mae in lista:
+                    codigo, mid = mae["codigo"], mae["id"]
+                    if (codigo not in codigos or mid in anteriores or mid in recolha.ids_lidos
+                            or mid in self._mensagens_lidas):
                         continue
-                    if classe is RespostaATF.CONFERENCIA:
-                        self._log("Resposta sem evidência de conclusão: mantida para conferência")
-                        recolha.incertas.add(codigo)
-                        recolha.recebidas.pop(codigo, None)
-                        recolha.sem_dados.pop(codigo, None)
-                        anexos = aceitos.pop(codigo, []) + anexos
-                        recolha.conferencia.extend(anexos)
-                    else:
-                        self._log("Consulta de outra empresa ou competência: não conta")
-                        # o anexo não vai para a pasta de nenhuma empresa da rodada (fica em _sem_empresa)
-                        recolha.ignorados.extend(anexos)
+                    recebida_em = _data_br(mae["data"]) if mae["data"] else None
+                    if recebida_em and recebida_em < desde - timedelta(seconds=5):
+                        continue
+                    textos, anexos, final, faltou_anexo = self.ler_consulta(mae, capt)
+                    if not final and not faltou_anexo:
+                        continue
+                    self._mensagens_lidas.add(mid)
+                    recolha.ids_lidos.add(mid)
                     for anexo in anexos:
                         if anexo in capt.recebidos:
                             capt.recebidos.remove(anexo)
-                if all(recolha.recebidas.get(c, 0) >= n for c, n in esperadas.items()):
+
+                    classe, chaves = relevante(codigo, anexos, textos, recebida_em)
+                    if classe is RespostaATF.OUTRA_CONSULTA:
+                        recolha.ignorados.extend(anexos)
+                        continue
+                    if classe is RespostaATF.AUSENCIA_AMBIGUA and not faltou_anexo:
+                        recolha.ausencias_ambiguas.update(chaves)
+                        continue
+                    if classe is RespostaATF.DOCUMENTOS and len(chaves) > 1 and not faltou_anexo:
+                        assinatura = conteudo(anexos)
+                        if any(recolha.respostas.get(c) and conteudo(recolha.respostas[c]) == assinatura for c in chaves):
+                            continue  # não atribui a outra consulta um pacote já conhecido
+                    if len(chaves) == 1 and not faltou_anexo:
+                        chave, = chaves
+                        anterior = recolha.respostas.get(chave)
+                        if classe is RespostaATF.SEM_DADOS and chave not in recolha.incertas:
+                            recolha.respostas.setdefault(chave, [])
+                            continue
+                        if classe is RespostaATF.DOCUMENTOS and chave not in recolha.incertas:
+                            if not anterior:
+                                recolha.respostas[chave] = anexos
+                                continue
+                            if conteudo(anterior) == conteudo(anexos):
+                                continue  # outra mensagem trouxe os mesmos documentos
+
+                    # Um conflito só invalida evidência nova da consulta identificada. Uma
+                    # mensagem sem dono não invalida entregas válidas de outras consultas.
+                    self._log("Resposta sem evidência de conclusão: mantida para conferência")
+                    recolha.conferencia.extend(anexos)
+                    if len(chaves) == 1:
+                        chave, = chaves
+                        if chave not in respostas_anteriores:
+                            recolha.conferencia.extend(recolha.respostas.pop(chave, []))
+                            recolha.incertas.add(chave)
+
+                faltam = recolha.pendentes(consultas)
+                if not faltam:
                     break
                 if time.time() >= limite or (leituras and lidas >= leituras):
-                    recolha.tempo_esgotado = True
-                    self._log(f"Mensagens incompletas depois de {lidas} leitura(s) da caixa: "
-                              f"{recolha.recebidas} de {esperadas}")
+                    self._log(f"Mensagens incompletas depois de {lidas} leitura(s): {sorted(faltam)}")
                     break
-                faltam = {c: n - recolha.recebidas.get(c, 0) for c, n in esperadas.items()}
-                self.aviso(f"Aguardando o ATF entregar os XML em Minhas Mensagens (faltam {faltam}; leitura "
-                           f"{lidas}{f' de {leituras}' if leituras else ''})...")
+                self.aviso(f"Aguardando o ATF entregar os XML em Minhas Mensagens (faltam {sorted(faltam)}; "
+                           f"leitura {lidas}{f' de {leituras}' if leituras else ''})...")
         except (MensagensIndisponiveis, SessaoExpirada) as e:
-            e.recolha = recolha  # o que já foi baixado é salvo antes de parar
+            e.recolha = recolha
+            sessao_expirou = isinstance(e, SessaoExpirada)
             raise
         finally:
             capt.verificar()
             capt.encerrar()
-            # Um download que chega fora da leitura da mensagem não tem dono identificável.
-            restantes = list(capt.recebidos)
-            arquivos_aceitos = [anexo for itens in aceitos.values() for anexo in itens]
-            for anexo in arquivos_aceitos:
-                if anexo in restantes:
-                    restantes.remove(anexo)
-            if restantes:
-                recolha.conferencia.extend(arquivos_aceitos + restantes)
-                recolha.incertas.update(esperadas)
-                recolha.recebidas.clear()
-                recolha.sem_dados.clear()
-                recolha.tempo_esgotado = True
-            else:
-                recolha.arquivos = arquivos_aceitos
+            if capt.recebidos or sessao_expirou:
+                # O que chegou fora da leitura ou de uma sessão interrompida fica em conferência.
+                recolha.conferencia.extend(capt.recebidos)
+                for chave, anexos in recolha.respostas.items():
+                    if respostas_anteriores.get(chave) is not anexos:
+                        recolha.conferencia.extend(anexos)
+                recolha.respostas = respostas_anteriores
+                recolha.incertas.update(pendentes_iniciais)
         return recolha
 
     # ------------------------------------------------------------------ saída

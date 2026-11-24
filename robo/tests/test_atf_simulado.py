@@ -121,6 +121,8 @@ def _responder(tela: str, campos: dict) -> str:
             ESTADO["html_mudo"] -= 1
             return ""
         ie = emit or dest or ESTADO["blocos"].get(f"{tela}_cmpReme", "")
+        if (tela, ie) in ESTADO.get("html_sem_resposta", ()) and not emit:
+            return ""  # para este bloco a ausência será confirmada pela caixa postal
         return f"HTML:{ESTADO.get('html_notas', {}).get(ie, 1)}"
     if ESTADO.pop("sem_notas_atrasado", False):
         return "ALERTA_ATRASADO"  # sem notas: nenhuma mensagem na caixa, só o alerta (que demora)
@@ -656,6 +658,7 @@ def _trabalho(ie, nome, tipos, senha="certa", codigo="", cnpj=""):
 def test_rodada_um_login_xml_pelas_mensagens(ambiente):
     cfg, pasta = ambiente
     ESTADO["logins"].clear()
+    ESTADO["html_sem_resposta"] = {("nfe", IE_EMPRESA)}
     # mensagem antiga (de antes da rodada) e uma de outra competência: não podem atrapalhar
     _nova_mensagem("FIS_1322", "NFe: Consulta Genérica (Ano 2026)", -3600,
                    _zip({"velha.xml": nfe(EMPRESA, FORNECEDOR, 99, ie_emit=IE_EMPRESA)}), "antiga")
@@ -844,6 +847,7 @@ def test_cte_e_conferencia_de_cartao(ambiente):
     (Dossiê > Docs fiscais > Cartão: a janela que abre vira PDF)."""
     cfg, pasta = ambiente
     executor = robo_xml.Executor(cfg)
+    ESTADO["html_sem_resposta"] = {("cte", IE_OUTRA)}
     andamento = []  # o que o portal recebe, tarefa a tarefa
     executor.ao_progresso = lambda t, tipo, situacao, msg: andamento.append((t.ie, tipo, situacao))
     try:
@@ -1034,7 +1038,7 @@ def test_passo_a_passo_no_log_e_gravado(ambiente, caplog):
 def test_login_sem_permissao_pula_o_resto_da_empresa(ambiente):
     """ "Usuário sem permissão sobre um ou mais contribuinte(s) utilizado(s).": o login não tem acesso à empresa.
     Nada dela vai sair com esse login: o robô não insiste nos outros serviços e segue para a próxima empresa."""
-    cfg, _ = ambiente
+    cfg, pasta = ambiente
     ESTADO["pesquisas"] = []
     executor = robo_xml.Executor(cfg)
     try:
@@ -1049,6 +1053,7 @@ def test_login_sem_permissao_pula_o_resto_da_empresa(ambiente):
         assert r1.detalhes[tipo]["situacao"] == "erro" and "permissão" in r1.detalhes[tipo]["mensagem"], (tipo, r1)
     assert r1.status == "erro" and not r1.pendente, r1
     assert r2.detalhes["nfce"]["notas"] == 1, r2  # a próxima empresa saiu normalmente
+    assert not list((pasta / PASTA_CONTEXTOS / "_caixas_atf").glob("*.lock"))
 
 
 def test_regime_normal_sem_linha_simei_nao_e_mei(ambiente):

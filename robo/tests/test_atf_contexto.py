@@ -90,8 +90,11 @@ class AtfFalso:
     def esperar_respostas_atrasadas(self, *args):
         pass
 
-    def solicitar(self, tipo, ie, *args):
-        return Envio(ie, tipo)
+    def solicitar(self, tipo, ie, *args, registrar_envio=None):
+        envio = Envio(ie, tipo, envio_iniciado=True)
+        if registrar_envio is not None:
+            registrar_envio(envio)
+        return envio
 
     def listar_mensagens(self, **kwargs):
         return []
@@ -139,9 +142,11 @@ def test_motor_atf_separa_totais_arquivos_e_escritorios(cfg, monkeypatch):
     zip_misto = zip_notas(nota_a, nota_b)
     zip_c = zip_notas(nota_c)
     atf = AtfFalso(cfg, [
-        Recolha(arquivos=[("misto.zip", zip_misto)], ignorados=[("ignorado.zip", b"sem dono")]),
-        Recolha(arquivos=[("repetida.xml", nota_a)]),
-        Recolha(arquivos=[("empresa.zip", zip_c)]),
+        Recolha(respostas={(IE_EMPRESA, "nfe_saida"): [("misto.zip", zip_misto)],
+                          (IE_B, "nfe_saida"): [("misto.zip", zip_misto)]},
+                ignorados=[("ignorado.zip", b"sem dono")]),
+        Recolha(respostas={(IE_EMPRESA, "nfe_saida"): [("repetida.xml", nota_a)]}),
+        Recolha(respostas={(IE_EMPRESA, "nfe_saida"): [("empresa.zip", zip_c)]}),
     ])
     decifragens = []
     atualizacoes = {}
@@ -205,12 +210,13 @@ class CaixaSimulada(AtfFalso):
     def _senha_na_tela(self):
         return None
 
-    def solicitar(self, tipo, ie, *args):
-        agora = datetime.now().replace(microsecond=0)
+    def solicitar(self, tipo, ie, *args, registrar_envio=None):
+        envio = super().solicitar(tipo, ie, *args, registrar_envio=registrar_envio)
+        envio.hora = datetime.now().replace(microsecond=0)
         self.consultas.append(ie)
         if self.ao_consultar:
             self.ao_consultar()
-        return Envio(ie, tipo, hora=agora)
+        return envio
 
     def listar_mensagens(self, **kwargs):
         return list(self.mensagens)
@@ -318,12 +324,198 @@ def test_motor_nao_confunde_respostas_de_escritorios_com_mesma_caixa(cfg, monkey
         assert [xml.read_bytes() for xml in pasta.rglob("*.xml")] == [nota]
 
 
+@pytest.mark.parametrize("mesma_rodada", [False, True])
+def test_recusa_antes_do_xml_nao_prende_a_caixa(cfg, monkeypatch, mesma_rodada):
+    caixa = CaixaSimulada(cfg)
+    cfg["atf"]["conferir_em_html"] = True
+    bloqueadas = set()
+
+    def conferir(tipo, ie, *args):
+        if ie == IE_EMPRESA:
+            bloqueadas.add(ie)
+            return None
+        return 1
+
+    caixa.conferir_html = conferir
+    caixa.bloqueada = lambda ie: "Usuário sem permissão sobre a empresa." if ie in bloqueadas else ""
+    atualizacoes = {}
+    robo = robo_com_caixa(cfg, monkeypatch, caixa, atualizacoes)
+    negada = linha("A", ORG_A, tipos=["nfe_saida"])
+    autorizada = linha("B", ORG_A, ie=IE_B, tipos=["nfe_saida"])
+    marcadores = Path(cfg["pastas"]["destino"]) / PASTA_CONTEXTOS / "_caixas_atf"
+    nota_b = nfe(CNPJ_B, CLIENTE, ie_emit=IE_B, valor=200)
+
+    if mesma_rodada:
+        robo.processar([negada, autorizada])
+        assert list(marcadores.glob("*.lock"))
+        caixa.publicar("XML-B", [("b.xml", nota_b)])
+        robo._repescar()
+    else:
+        robo.processar([negada])
+        assert not caixa.consultas
+        assert not list(marcadores.glob("*.lock"))
+        caixa.ao_consultar = lambda: caixa.publicar("XML-B", [("b.xml", nota_b)])
+        robo.processar([autorizada])
+
+    assert atualizacoes["A"]["status"] == "erro"
+    assert atualizacoes["B"]["status"] == "concluido"
+    assert atualizacoes["B"]["detalhes"]["nfe_saida"]["valor"] == 200
+    assert caixa.consultas == [IE_B]
+    assert not list(marcadores.glob("*.lock"))
+
+
+@pytest.mark.parametrize(("clicou", "alerta"), [(False, False), (True, False), (True, True)])
+def test_caixa_em_interrupcao_depende_de_envio_possivel(cfg, monkeypatch, clicou, alerta):
+    caixa = CaixaSimulada(cfg)
+    robo = robo_com_caixa(cfg, monkeypatch, caixa, {})
+
+    def interromper(tipo, ie, *args, registrar_envio):
+        envio = Envio(ie, tipo, envio_iniciado=clicou)
+        registrar_envio(envio)
+        if alerta:
+            envio.sem_notas = envio.atrasada = True
+            envio.resposta = "Nenhum registro satisfaz a pesquisa."
+        raise KeyboardInterrupt
+
+    caixa.solicitar = interromper
+    with pytest.raises(KeyboardInterrupt):
+        robo.processar([linha("A", ORG_A, tipos=["nfe_saida"])])
+    marcadores = Path(cfg["pastas"]["destino"]) / PASTA_CONTEXTOS / "_caixas_atf"
+    assert bool(list(marcadores.glob("*.lock"))) is clicou
+
+
+@pytest.mark.parametrize("chega_xml", [False, True])
+def test_zero_da_caixa_nao_invalida_html_com_notas(cfg, monkeypatch, chega_xml):
+    cfg["atf"]["conferir_em_html"] = True
+    caixa = CaixaSimulada(cfg)
+    caixa.conferir_html = lambda *args: 1
+    atualizacoes = {}
+    robo = robo_com_caixa(cfg, monkeypatch, caixa, atualizacoes)
+    caixa.ao_consultar = lambda: caixa.publicar("zero-sem-ie", [], texto="Nenhum registro satisfaz a pesquisa.")
+    robo.processar([linha("A", ORG_A, tipos=["nfe_saida"])])
+
+    assert "status" not in atualizacoes["A"]
+    assert atualizacoes["A"]["detalhes"]["nfe_saida"]["situacao"] == "aguardando"
+    marcadores = Path(cfg["pastas"]["destino"]) / PASTA_CONTEXTOS / "_caixas_atf"
+    assert list(marcadores.glob("*.lock"))
+
+    if chega_xml:
+        nota = nfe(DONO, CLIENTE, ie_emit=IE_EMPRESA, valor=100)
+        caixa.publicar("XML-A", [("a.xml", nota)])
+        robo._repescar()
+        assert atualizacoes["A"]["status"] == "concluido"
+        assert atualizacoes["A"]["detalhes"]["nfe_saida"]["valor"] == 100
+        assert not list(marcadores.glob("*.lock"))
+    else:
+        with pytest.raises(SystemExit):
+            robo._repescar()
+        assert atualizacoes["A"]["status"] == "erro"
+        detalhe = atualizacoes["A"]["detalhes"]["nfe_saida"]
+        assert detalhe["situacao"] == "erro" and "HTML mostrou notas" in detalhe["mensagem"]
+        assert list(marcadores.glob("*.lock"))
+
+
+@pytest.mark.parametrize("resposta_b", ["xml", "ausencia_identificada", "sem_resposta"])
+def test_ausencia_ambigua_na_mesma_caixa_nao_substitui_xml_de_outra_empresa(cfg, monkeypatch, resposta_b):
+    cfg["atf"]["conferir_em_html"] = True
+    caixa = CaixaSimulada(cfg)
+    caixa.conferir_html = lambda tipo, ie, *args: 1 if ie == IE_EMPRESA else None
+    atualizacoes = {}
+    robo = robo_com_caixa(cfg, monkeypatch, caixa, atualizacoes)
+    sem_notas = "Nenhum registro satisfaz a pesquisa."
+    a = linha("A", ORG_A, tipos=["nfe_saida"])
+    b = linha("B", ORG_A, ie=IE_B, tipos=["nfe_saida"])
+
+    def publicar():
+        caixa.publicar("zero-de-outro-periodo", [], texto=f"Período solicitado: 01/08/2026 a 31/08/2026. {sem_notas}")
+        caixa.publicar("zero-de-outra-ie", [], texto=f"IE: 160555558. {sem_notas}")
+        caixa.publicar("zero-de-outro-tipo", [], texto=f"IE Destinatário: {IE_EMPRESA}. {sem_notas}")
+        anterior = nfe(DONO, CLIENTE, ie_emit=IE_EMPRESA, data="2026-08-15", valor=999)
+        caixa.publicar("xml-de-outro-periodo-sem-rotulo", [("anterior.xml", anterior)])
+        caixa.publicar("zero-sem-ie", [], texto=sem_notas)
+        caixa.publicar("XML-A", [("a.xml", nfe(DONO, CLIENTE, ie_emit=IE_EMPRESA, valor=100))])
+
+    caixa.ao_consultar = lambda: publicar() if len(caixa.consultas) == 2 else None
+    robo.processar([a, b])
+    assert atualizacoes["A"]["status"] == "concluido"
+    assert atualizacoes["A"]["detalhes"]["nfe_saida"]["valor"] == 100
+    assert "status" not in atualizacoes["B"]
+    assert atualizacoes["B"]["detalhes"]["nfe_saida"]["situacao"] == "aguardando"
+    marcador = Path(cfg["pastas"]["destino"]) / PASTA_CONTEXTOS / "_caixas_atf"
+    assert list(marcador.glob("*.lock"))
+    if resposta_b == "xml":
+        caixa.publicar("XML-B", [("b.xml", nfe(CNPJ_B, CLIENTE, ie_emit=IE_B, valor=200))])
+        robo._repescar()
+        assert atualizacoes["B"]["status"] == "concluido"
+        assert atualizacoes["B"]["detalhes"]["nfe_saida"]["valor"] == 200
+    elif resposta_b == "ausencia_identificada":
+        caixa.publicar("zero-de-B", [], texto=f"IE Emitente: {IE_B}. {sem_notas}")
+        robo._repescar()
+        assert atualizacoes["B"]["status"] == "sem_notas"
+    else:
+        with pytest.raises(SystemExit):
+            robo._repescar()
+        assert atualizacoes["B"]["status"] == "erro"
+    assert bool(list(marcador.glob("*.lock"))) == (resposta_b == "sem_resposta")
+
+
+def test_zero_identificado_de_empresa_com_xml_nao_conta_para_outra(cfg, monkeypatch):
+    caixa = CaixaSimulada(cfg)
+    atualizacoes = {}
+    robo = robo_com_caixa(cfg, monkeypatch, caixa, atualizacoes)
+    a = linha("A", ORG_A, tipos=["nfe_saida"])
+    b = linha("B", ORG_A, ie=IE_B, tipos=["nfe_saida"])
+
+    def publicar():
+        if len(caixa.consultas) == 2:
+            caixa.publicar("zero-da-A", [], texto=f"IE: {IE_EMPRESA}. Nenhum registro satisfaz a pesquisa.")
+            caixa.publicar("XML-A", [("a.xml", nfe(DONO, CLIENTE, ie_emit=IE_EMPRESA, valor=100))])
+
+    caixa.ao_consultar = publicar
+    robo.processar([a, b])
+    assert "status" not in atualizacoes["B"]
+    assert atualizacoes["B"]["detalhes"]["nfe_saida"]["situacao"] == "aguardando"
+
+    caixa.publicar("XML-B", [("b.xml", nfe(CNPJ_B, CLIENTE, ie_emit=IE_B, valor=200))])
+    robo._repescar()
+    assert atualizacoes["A"]["status"] == atualizacoes["B"]["status"] == "concluido"
+    assert atualizacoes["B"]["detalhes"]["nfe_saida"]["valor"] == 200
+
+
+def test_nova_sessao_na_leitura_final_nao_conta_a_mesma_ausencia_duas_vezes(cfg, monkeypatch):
+    caixa = CaixaSimulada(cfg)
+    atualizacoes = {}
+    robo = robo_com_caixa(cfg, monkeypatch, caixa, atualizacoes)
+    a = linha("A", ORG_A, tipos=["nfe_saida"])
+    b = linha("B", ORG_A, ie=IE_B, tipos=["nfe_saida"])
+
+    def publicar():
+        if len(caixa.consultas) == 2:
+            caixa.publicar("zero-sem-ie", [], texto="Nenhum registro satisfaz a pesquisa.")
+
+    caixa.ao_consultar = publicar
+    robo.processar([a, b])
+    assert "status" not in atualizacoes["A"] and "status" not in atualizacoes["B"]
+
+    caixa._mensagens_lidas.clear()  # um novo objeto AtfPB não tem o estado da sessão anterior
+    ler_consulta = caixa.ler_consulta
+
+    def ler_so_mensagem_nova(mae, capt):
+        assert mae["id"] != "zero-sem-ie"
+        return ler_consulta(mae, capt)
+
+    caixa.ler_consulta = ler_so_mensagem_nova
+    with pytest.raises(SystemExit):
+        robo._repescar()
+    assert atualizacoes["A"]["status"] == atualizacoes["B"]["status"] == "erro"
+
+
 @pytest.mark.parametrize("caso", ["truncado", "parcial", "faltou_anexo", "sem_notas"])
 def test_motor_publica_resultado_conforme_evidencia_do_atf(cfg, monkeypatch, caso):
     caixa = CaixaSimulada(cfg)
     atualizacoes = {}
     robo = robo_com_caixa(cfg, monkeypatch, caixa, atualizacoes)
-    anexos, texto, faltou_anexo = [], "Nenhum registro satisfaz a pesquisa.", False
+    anexos, texto, faltou_anexo = [], f"IE Emitente: {IE_EMPRESA}. Nenhum registro satisfaz a pesquisa.", False
     if caso == "truncado":
         anexos = [("ruim.zip", b"PK\x03\x04truncado")]
     elif caso == "parcial":
@@ -348,6 +540,45 @@ def test_motor_publica_resultado_conforme_evidencia_do_atf(cfg, monkeypatch, cas
     if anexos:
         assert [arq.read_bytes() for arq in (destino / "_nao_identificados").rglob("*.zip")] == [anexos[0][1]]
     assert not list((destino / "portal").rglob("*.xml"))
+
+
+@pytest.mark.parametrize("duplicata_primeiro", [False, True])
+def test_releitura_aceita_xml_pendente_junto_de_duplicata(cfg, monkeypatch, duplicata_primeiro):
+    caixa = CaixaSimulada(cfg)
+    atualizacoes = {}
+    robo = robo_com_caixa(cfg, monkeypatch, caixa, atualizacoes)
+    a = linha("A", ORG_A, tipos=["nfe_saida"])
+    b = linha("B", ORG_A, ie=IE_B, tipos=["nfe_entrada"])
+    # O conteúdo dessas notas, sozinho, é compatível com as consultas de A e B.
+    nota_a = nfe(DONO, CNPJ_B, numero=1, ie_emit=IE_EMPRESA, ie_dest=IE_B, valor=100)
+    nota_b = nfe(DONO, CNPJ_B, numero=2, ie_emit=IE_EMPRESA, ie_dest=IE_B, valor=200)
+
+    def publicar_a():
+        if len(caixa.consultas) == 2:
+            caixa.publicar("primeira-A", [("a.xml", nota_a)], texto=f"IE Emitente: {IE_EMPRESA}")
+
+    caixa.ao_consultar = publicar_a
+
+    robo.processar([a, b])
+    assert atualizacoes["A"]["status"] == "concluido"
+    assert "status" not in atualizacoes["B"]
+    mensagens = [
+        ("outra-A", [("a.zip", zip_notas(nota_a))], "Tarefa executada."),
+        ("primeira-B", [("b.xml", nota_b)], f"IE Destinatário: {IE_B}"),
+    ]
+    if not duplicata_primeiro:
+        mensagens.reverse()
+    for mid, anexos, texto in mensagens:
+        caixa.publicar(mid, anexos, texto=texto)
+    robo._repescar()
+
+    destino = Path(cfg["pastas"]["destino"]) / PASTA_CONTEXTOS
+    assert atualizacoes["B"]["status"] == "concluido"
+    assert atualizacoes["B"]["detalhes"]["nfe_entrada"]["valor"] == 200
+    assert sorted(arq.read_bytes() for arq in (destino / "portal").rglob("*.xml")) == sorted([nota_a, nota_b])
+    assert not list((destino / "portal").rglob("*.zip"))
+    assert not list((destino / "_nao_identificados").rglob("*"))
+    assert not list((destino / "_caixas_atf").glob("*.lock"))
 
 
 def test_respostas_excedentes_da_mesma_consulta_ficam_para_conferencia(cfg, monkeypatch):
@@ -449,9 +680,40 @@ def test_total_no_nome_nao_move_pdf_para_caminho_acima_do_limite(cfg):
         assert not (empresa / (pasta.name + "x")).exists()
 
 
+@pytest.mark.parametrize("gera_pdf", [True, False])
+def test_motor_valida_espaco_legado_antes_de_enviar(cfg, monkeypatch, gera_pdf):
+    import arquivos
+    import armazenamento
+
+    caixa = CaixaSimulada(cfg)
+    atualizacoes = {}
+    robo = robo_com_caixa(cfg, monkeypatch, caixa, atualizacoes)
+    tarefa = linha("A", ORG_A, tipos=["nfe_saida"])
+    destino = Path(cfg["pastas"]["destino"])
+    with abrir_empresa(destino, robo_xml.contexto_portal(tarefa, "sefaz_pb", "ie")) as pasta:
+        historico = pasta / "historico.xml"
+        historico.write_bytes(b"<historico/>")
+        metadados = (pasta / "empresa.json").read_bytes()
+    limite = armazenamento._unidades_windows(str(pasta)) + armazenamento.RESERVA_ARQUIVOS
+    monkeypatch.setattr(armazenamento, "LIMITE_CAMINHO", limite)
+    monkeypatch.setattr(arquivos, "GERAR_PDF", gera_pdf)
+    nota = nfe(DONO, CLIENTE, ie_emit=IE_EMPRESA, valor=100)
+    caixa.ao_consultar = lambda: caixa.publicar("resposta", [("nota.xml", nota)])
+    robo.processar([tarefa])
+
+    assert historico.read_bytes() == b"<historico/>" and (pasta / "empresa.json").read_bytes() == metadados
+    assert not list((destino / PASTA_CONTEXTOS / "_caixas_atf").glob("*.lock"))
+    if gera_pdf:
+        assert atualizacoes["A"]["status"] == "erro"
+        assert "raiz mais curta" in atualizacoes["A"]["mensagem"]
+        assert not caixa.consultas and list(pasta.rglob("*.xml")) == [historico]
+    else:
+        assert caixa.consultas == [IE_EMPRESA] and atualizacoes["A"]["status"] == "concluido"
+
+
 def test_falha_no_retorno_ao_painel_preserva_arquivos_para_reexecucao(cfg, monkeypatch):
     nota = nfe(DONO, CLIENTE, ie_emit=IE_EMPRESA, valor=100)
-    atf = AtfFalso(cfg, [Recolha(arquivos=[("nota.xml", nota)], recebidas={"FIS_1322": 1})
+    atf = AtfFalso(cfg, [Recolha(respostas={(IE_EMPRESA, "nfe_saida"): [("nota.xml", nota)]})
                          for _ in range(2)])
     monkeypatch.setattr(robo_xml.cripto, "carregar_privada", lambda _: object())
     monkeypatch.setattr(robo_xml.cripto, "decifrar", lambda *_: "falsa")
@@ -530,7 +792,7 @@ def test_renovacao_atf_cobre_tarefa_que_espera_a_caixa(monkeypatch):
 def test_falha_no_fim_do_lote_nao_reescreve_tarefa_ja_confirmada(cfg, monkeypatch):
     notas = [("a.xml", nfe(DONO, CLIENTE, ie_emit=IE_EMPRESA, valor=100)),
              ("b.xml", nfe(CNPJ_B, CLIENTE, ie_emit=IE_B, valor=200))]
-    atf = AtfFalso(cfg, [Recolha(arquivos=notas, recebidas={"FIS_1322": 2})])
+    atf = AtfFalso(cfg, [Recolha(respostas={(IE_EMPRESA, "nfe_saida"): notas[:1], (IE_B, "nfe_saida"): notas[1:]})])
     monkeypatch.setattr(robo_xml.cripto, "carregar_privada", lambda _: object())
     monkeypatch.setattr(robo_xml.cripto, "decifrar", lambda *_: "falsa")
     robo = robo_xml.Robo(cfg)
