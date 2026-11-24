@@ -265,11 +265,8 @@ class Cache:
 
     def guardar(self, nsu: int, tipo: str, chave: str, xml: bytes):
         self.pasta.mkdir(parents=True, exist_ok=True)
-        if xml:
-            try:
-                ET.fromstring(xml)
-            except ET.ParseError as erro:
-                raise ErroADN("O portal retornou um XML ilegível. O cache foi preservado.") from erro
+        if xml or tipo.upper() == "NFSE":
+            self._validar_xml(tipo, xml)
             caminho = self._arquivo(f"{nsu}.xml")
             publicar_arquivo(caminho, lambda temporario: temporario.write_bytes(xml))
         self.indice["documentos"][str(nsu)] = {"tipo": tipo, "chave": chave, "xml": bool(xml)}
@@ -279,6 +276,19 @@ class Cache:
         self.pasta.mkdir(parents=True, exist_ok=True)
         gravar_json_atomico(self._arquivo("indice.json"), self.indice)
 
+    @staticmethod
+    def _validar_xml(tipo: str, dados: bytes):
+        if tipo.upper() == "NFSE":
+            nota = ler_nfse(dados)
+            if (nota is None or not re.fullmatch(r"[0-9]{1,50}", nota.chave)
+                    or not re.fullmatch(r"[0-9]{4}-(0[1-9]|1[0-2])", nota.competencia)):
+                raise ErroADN("Documento ausente ou inválido no cache NFS-e.")
+        else:
+            try:
+                ET.fromstring(dados)
+            except ET.ParseError as erro:
+                raise ErroADN("XML ilegível no cache por contexto. Confira os arquivos.") from erro
+
     def xmls(self):
         for nsu, info in sorted(self.indice["documentos"].items(), key=lambda x: int(x[0])):
             arq = self._arquivo(f"{nsu}.xml")
@@ -286,13 +296,10 @@ class Cache:
                 raise ErroADN("O índice aponta para um XML ausente. Confira a pasta do cache.")
             if info.get("xml"):
                 dados = arq.read_bytes()
-                try:
-                    ET.fromstring(dados)
-                except ET.ParseError as erro:
-                    raise ErroADN("XML ilegível no cache por contexto. Confira os arquivos.") from erro
-                if info["tipo"].upper() == "NFSE" and ler_nfse(dados) is None:
-                    raise ErroADN("Documento inválido no cache NFS-e.")
+                self._validar_xml(info["tipo"], dados)
                 yield int(nsu), info["tipo"], dados
+            elif info["tipo"].upper() == "NFSE":
+                raise ErroADN("O índice aponta para uma NFS-e sem XML. Confira a pasta do cache.")
 
 
 def atualizar_cache(cliente: ClienteADN, cache: Cache, *, confirmar_reserva=None) -> int:
@@ -604,10 +611,12 @@ def baixar_competencia(cliente: ClienteADN, contexto: ContextoArmazenamento, com
         pasta_mes = pasta_da_competencia(empresa, competencia)
         raiz_cache = area_do_contexto(destino, "_cache", contexto.tipo_contexto, contexto.contexto_id, contexto.documento)
         cache = Cache(raiz_cache)
-        list(cache.xmls())  # Confere documentos existentes antes de consultar ou avançar o índice.
         cnpj = contexto.documento
         res = ResultadoNfse()
         if atualizar:
+            # Confere o cache antes de consultar ou avançar o índice, lendo um XML por vez.
+            for _ in cache.xmls():
+                pass
             res.novos_documentos = atualizar_cache(cliente, cache, confirmar_reserva=confirmar_reserva)
         emitidas_mes, recebidas_mes, res.canceladas = separar(cache, cnpj, competencia)
         emitidas = emitidas_mes if com_emitidas else []

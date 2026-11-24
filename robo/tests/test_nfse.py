@@ -167,6 +167,23 @@ def test_busca_por_nsu_ate_acabar_e_continua_do_ultimo(tmp_path):
     assert portal.pedidos[0][0].endswith("/DFe/6")
 
 
+@pytest.mark.parametrize("xml_invalido", [b"", b"<raiz/>", b"<infNFSe><infDPS/></infNFSe>"])
+def test_xml_invalido_nao_avanca_nsu_e_reconsulta_o_documento(tmp_path, xml_invalido):
+    primeiro, segundo = documentos_exemplo()[:2]
+    incompleto = (*segundo[:3], xml_invalido)
+    pasta = tmp_path / DONO
+    with pytest.raises(nfse.ErroADN, match="ausente ou inválido"):
+        nfse.atualizar_cache(cliente(PortalFalso([primeiro, incompleto])), nfse.Cache(pasta))
+
+    cache = nfse.Cache(pasta)
+    assert cache.ultimo_nsu == 1
+    assert not (pasta / "2.xml").exists()
+    portal = PortalFalso([primeiro, segundo])
+    assert nfse.atualizar_cache(cliente(portal), cache) == 1
+    assert portal.pedidos[0][0].endswith("/DFe/1")
+    assert nfse.Cache(pasta).ultimo_nsu == 2
+
+
 def test_espera_e_repete_quando_o_portal_limita(tmp_path):
     esperas = []
     portal = PortalFalso(documentos_exemplo()[:1], falhas=[Resposta(429, {}, cabecalhos={"Retry-After": "3"}),

@@ -83,6 +83,8 @@ O terminal mostra uma linha `ssh-ed25519 ...` e fica aguardando.
 4. Filas deste robô (Enter aceita `sefaz,nfse`, as duas). Veja o último item de *Se algo não funcionar*.
 
 O instalador recusa o endereço do Supabase das certidões, para os dois portais não se misturarem.
+Ele grava a URL confirmada em `LOTIVISSE_XML_BANCO_CONFIRMADO` no arquivo
+`/etc/lotivisse/xml.env`. O serviço usa essa URL para confirmar o destino antes de iniciar.
 
 ## Passo 4: colar a chave privada
 O terminal pede a chave privada.
@@ -158,9 +160,11 @@ Com os dois robôs instalados, informe qual: `certidoes` ou `xml`.
 | `systemctl status lotivisse-xml-drive.service` | último envio ao Google Drive |
 
 Para atualizar uma instalação para o armazenamento por escritório, siga primeiro o
-[procedimento de transição da NFS-e](../robo/NFSE.md). A atualização da VPS exige o
-banco de destino conferido, as migrações homologadas e a configuração de
-`--confirmar-banco` no serviço antes do reinício.
+[procedimento de transição da NFS-e](../robo/NFSE.md). Com a fila pausada e as migrações
+homologadas, prepare o checkout da versão nova e execute
+`sudo bash /home/lotivisse/xml/app/servidor/instalar.sh` para registrar a URL confirmada
+no serviço antes do reinício. A partir dessa configuração, use o comando de atualização
+normal nas versões compatíveis.
 
 Para ver a tela do Chrome do robô de XML, siga a seção *Ver a tela do Chrome de um robô* do guia das certidões,
 trocando a porta 5900 por **5901**: `ssh -L 5901:localhost:5901 root@IP-DA-VPS` e o VNC em `localhost:5901`.

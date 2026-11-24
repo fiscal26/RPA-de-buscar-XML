@@ -98,6 +98,10 @@ o erro. A falha impede atualizar o faturamento como zero. Se apenas a publicaç�
 planilha falhar, uma nova tentativa pode reconstruí-la dos documentos do cache.
 Os dados do cache antigo permanecem disponíveis para uma migração planejada.
 
+Os arquivos `.lock` podem permanecer na pasta após a execução. O sistema
+operacional libera a trava quando o processo termina, inclusive após uma queda.
+Mantenha esses arquivos na pasta para que todos os processos usem a mesma trava.
+
 Na raiz da instalação, confira o banco efetivo e inicie com a URL esperada.
 `SUPABASE_URL` e `SUPABASE_SERVICE_ROLE_KEY` prevalecem sobre o JSON.
 

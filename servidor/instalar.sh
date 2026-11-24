@@ -23,6 +23,7 @@ VENV=$DIR/venv
 CHAVES=$DIR/chaves
 ARQUIVOS=$DIR/arquivos
 PORTA_CHROME=9223
+ENV_ROBO=/etc/lotivisse/$ROBO.env
 
 passo() { printf '\n\033[1;34m==> %s\033[0m\n' "$*"; }
 ok() { printf '\033[1;32m%s\033[0m\n' "$*"; }
@@ -48,16 +49,6 @@ passo "Pastas do robô de XML"
 install -d -o "$USUARIO" -g "$USUARIO" "$DIR" "$DIR/Downloads" "$DIR/chrome-perfil" "$ARQUIVOS"
 install -d -o "$USUARIO" -g "$USUARIO" -m 700 "$CHAVES"
 chown -R "$USUARIO:$USUARIO" "$APP"
-cat > /etc/lotivisse/$ROBO.env <<EOF
-# Robô de XML (RPA-de-buscar-XML). Portas reservadas: certidoes = :10/9222/5900, xml = :11/9223/5901
-DISPLAY=:11
-NAVEGADOR=/usr/bin/google-chrome-stable
-PORTA_CHROME=$PORTA_CHROME
-PORTA_VNC=5901
-PROGRAMA=robo/robo_xml.py
-LOG=$APP/robo/robo_xml.log
-CHROME_EXTRAS=
-EOF
 
 passo "Python do robô"
 [ -d "$VENV" ] || sudo -u "$USUARIO" python3 -m venv "$VENV"
@@ -79,9 +70,11 @@ pergunta() {  # pergunta <variável> <texto> <secreto 0|1> <valor atual>
 atual() { [ -f "$CONFIG" ] && python3 -c "import json,sys;c=json.load(open(sys.argv[1],encoding='utf-8-sig'));print(c.get(sys.argv[2],{}).get(sys.argv[3],''))" "$CONFIG" "$1" "$2" 2>/dev/null || true; }
 # Atenção: o portal de XML tem um Supabase próprio, diferente do portal de certidões
 pergunta SUPA "Endereço do Supabase do portal de XML (https://...supabase.co)" 0 "$(atual portal supabase_url)"
+[[ "$SUPA" =~ ^https://[a-zA-Z0-9-]+\.supabase\.co/?$ ]] \
+  || falha "o endereço do Supabase deve ser https://PROJETO.supabase.co, sem caminho ou parâmetros."
 pergunta CHAVE "Chave service_role do Supabase do portal de XML (não aparece enquanto digita)" 1 "$(atual portal chave_service_role)"
 CERT_CFG=$CASA/certidoes/app/config.json
-if [ -f "$CERT_CFG" ] && grep -q "\"supabase_url\": \"${SUPA%/}\"" "$CERT_CFG"; then
+if [ -f "$CERT_CFG" ] && grep -Fq "\"supabase_url\": \"${SUPA%/}\"" "$CERT_CFG"; then
   falha "esse é o Supabase do portal de certidões. Use o do portal de XML (o do config.json do robô de XML no computador)."
 fi
 NOME_PADRAO="$(atual portal nome_robo)"; NOME_PADRAO="${NOME_PADRAO:-vps-hostinger}"
@@ -90,7 +83,6 @@ pergunta NOME "Nome deste robô (aparece no portal)" 0 "$NOME_PADRAO"
 # e a SEFAZ com o robô do computador do escritório.
 FILAS_PADRAO="$(atual portal filas | tr -d "[]' " | tr -d '"')"; FILAS_PADRAO="${FILAS_PADRAO:-sefaz,nfse}"
 pergunta FILAS "Filas deste robô (sefaz, nfse ou sefaz,nfse)" 0 "$FILAS_PADRAO"
-case "$SUPA" in https://*.supabase.co*) ;; *) falha "o endereço do Supabase deve começar com https:// e terminar em .supabase.co";; esac
 case "$CHAVE" in
   sb_secret_*) ;;
   eyJ*) [ ${#CHAVE} -gt 100 ] || falha "a chave service_role parece incompleta (é um texto longo que começa com eyJ)." ;;
@@ -117,6 +109,26 @@ json.dump(cfg, open(caminho, "w", encoding="utf-8"), ensure_ascii=False, indent=
 PY
 chown "$USUARIO:$USUARIO" "$CONFIG"; chmod 600 "$CONFIG"
 ok "config.json salvo (só o usuário $USUARIO consegue ler)."
+
+# O serviço preserva as outras opções e leva a URL confirmada em separado do config.json.
+env_novo=$(mktemp "$ENV_ROBO.XXXXXX")
+if [ -f "$ENV_ROBO" ]; then
+  sed -E '/^[[:space:]]*(PROGRAMA|LOTIVISSE_XML_BANCO_CONFIRMADO)=/d' "$ENV_ROBO" > "$env_novo"
+  chmod --reference="$ENV_ROBO" "$env_novo"
+else
+  cat > "$env_novo" <<EOF
+# Robô de XML (RPA-de-buscar-XML). Portas reservadas: certidoes = :10/9222/5900, xml = :11/9223/5901
+DISPLAY=:11
+NAVEGADOR=/usr/bin/google-chrome-stable
+PORTA_CHROME=$PORTA_CHROME
+PORTA_VNC=5901
+LOG=$APP/robo/robo_xml.log
+CHROME_EXTRAS=
+EOF
+  chmod 644 "$env_novo"
+fi
+printf 'PROGRAMA=servidor/iniciar_xml.py\nLOTIVISSE_XML_BANCO_CONFIRMADO=%s\n' "${SUPA%/}" >> "$env_novo"
+mv -f -- "$env_novo" "$ENV_ROBO"
 
 passo "Chave privada do robô (a mesma do computador do escritório)"
 PEM=$CHAVES/robo_privada.pem

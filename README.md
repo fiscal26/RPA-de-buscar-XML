@@ -148,21 +148,32 @@ Faça uma cópia de segurança da chave privada: sem ela, as senhas precisam ser
 
 ## Robô: instalação e uso
 
-```bash
-cd robo
-pip install -r requirements.txt
-copy config.exemplo.json config.json     # e preencha o portal (a pasta destino já é a deste PC)
-gerar_chaves.bat                         # uma vez só: cria a chave e mostra a pública para a Vercel
-abrir_chrome.bat                         # Chrome com a porta 9222 e perfil próprio
-iniciar_robo.bat                         # liga o robô do portal (deixe a janela aberta)
+No Prompt de Comando do Windows, a partir da raiz do repositório:
+
+```cmd
+py -m venv .venv
+.venv\Scripts\python.exe -m pip install -r robo\requirements.txt
+if not exist robo\config.json copy robo\config.exemplo.json robo\config.json
 ```
+
+Preencha o endereço e a chave do Supabase em `robo/config.json`. Na primeira instalação,
+gere as chaves com `.venv\Scripts\python.exe robo\robo_xml.py --gerar-chaves`.
+
+```cmd
+robo\abrir_chrome.bat
+robo\iniciar_robo.bat --conferir-banco
+robo\iniciar_robo.bat --confirmar-banco https://SEU-PROJETO.supabase.co
+```
+
+Confira se o endereço mostrado é o do projeto de XML esperado e substitua
+`SEU-PROJETO` pelo identificador desse projeto. Deixe a janela do robô aberta.
 
 **Teste sem o portal**, direto da planilha (bom para a calibração):
 
-```bash
-python robo_xml.py --local empresas.xlsx --competencia 09/2026
-python robo_xml.py --local empresas.xlsx --competencia 01/2026-09/2026   # vários meses, um de cada vez
-python robo_xml.py --local empresas.xlsx --competencia 09/2026 --mei-ano  # Dossiê MEI: refaz o ano todo
+```cmd
+.venv\Scripts\python.exe robo\robo_xml.py --local empresas.xlsx --competencia 09/2026
+.venv\Scripts\python.exe robo\robo_xml.py --local empresas.xlsx --competencia 01/2026-09/2026
+.venv\Scripts\python.exe robo\robo_xml.py --local empresas.xlsx --competencia 09/2026 --mei-ano
 ```
 
 Gera um relatório em `<destino>/_relatorios/`.
