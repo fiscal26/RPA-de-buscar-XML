@@ -2,25 +2,31 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useId } from "react";
 import Icone from "./Icones";
 
 type Item = { href: string; nome: string; icone: string };
+type Grupo = { titulo: string; itens: Item[] };
 
-/** Menu do painel: o item da página aberta fica marcado. */
-export default function MenuLateral({ itens, extras }: { itens: Item[]; extras: Item[] }) {
+export default function MenuLateral({ grupos }: { grupos: Grupo[] }) {
   const caminho = usePathname();
+  const id = useId();
   const ativo = (href: string) => caminho === href || (href !== "/painel" && caminho.startsWith(`${href}/`));
-  const link = (i: Item) => (
-    <Link key={i.href} href={i.href} aria-current={ativo(i.href) ? "page" : undefined}>
-      <Icone nome={i.icone} />
-      <span>{i.nome}</span>
-    </Link>
-  );
   return (
     <nav className="lateral" aria-label="Painel">
-      {itens.map(link)}
-      {!!extras.length && <hr />}
-      {extras.map(link)}
+      {grupos.filter(({ itens }) => itens.length > 0).map(({ titulo, itens }, indice) => (
+        <div key={titulo} className="lateral-grupo" role="group" aria-labelledby={`${id}-${indice}`}>
+          <p className="lateral-titulo" id={`${id}-${indice}`}>{titulo}</p>
+          <div className="lateral-itens">
+            {itens.map(({ href, nome, icone }) => (
+              <Link key={href} href={href} aria-current={ativo(href) ? "page" : undefined}>
+                <Icone nome={icone} />
+                <span>{nome}</span>
+              </Link>
+            ))}
+          </div>
+        </div>
+      ))}
     </nav>
   );
 }

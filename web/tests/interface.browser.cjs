@@ -18,8 +18,8 @@ async function portaLivre() {
   const s = net.createServer(); await new Promise((r) => s.listen(0, '127.0.0.1', r));
   const porta = s.address().port; await new Promise((r) => s.close(r)); return porta;
 }
-async function acessivel(page) {
-  const r = await new AxeBuilder({ page }).include('main').withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze();
+async function acessivel(page, seletor = 'main') {
+  const r = await new AxeBuilder({ page }).include(seletor).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze();
   assert.deepEqual(r.violations.map((v) => ({ id: v.id, alvos: v.nodes.map((n) => n.target) })), []);
 }
 (async () => {
@@ -77,6 +77,18 @@ async function acessivel(page) {
     await tabela.getByRole('link', { name: /Ver execução de 10\/2026 · NFS-e/ }).waitFor();
     const menu = page.getByRole('navigation', { name: 'Painel', exact: true });
     assert.ok(await menu.evaluate(el => el.scrollWidth <= el.clientWidth));
+    for (const [grupo, links] of [
+      ['Operação', ['Início', 'Agendar', 'Agendamentos', 'Monitor Fiscal']],
+      ['Empresas', ['Empresas', 'Certificados', 'Monitoramento MEI']],
+      ['Administração', ['Equipe']],
+    ]) {
+      const nomes = await menu.getByRole('group', { name: grupo, exact: true }).getByRole('link').allTextContents();
+      assert.deepEqual(nomes, links);
+    }
+    assert.equal(await menu.getByRole('link', { name: 'Início', exact: true }).getAttribute('aria-current'), 'page');
+    await menu.getByRole('link', { name: 'Monitor Fiscal', exact: true }).press('Tab');
+    assert.equal(await page.evaluate(() => document.activeElement.textContent), 'Empresas');
+    await acessivel(page, '.lateral');
     await tabela.focus();
     await page.keyboard.press('End');
     assert.ok(await tabela.evaluate(el => el === document.activeElement));
@@ -100,7 +112,13 @@ async function acessivel(page) {
         await p.goto(`${url}/painel`);
         await p.getByRole('heading', { name: 'Visão geral', exact: true }).waitFor();
         if (estado) await p.getByRole('heading', { name: `Robô de consultas ${estado}`, exact: true }).waitFor();
-        else assert.equal(await p.getByRole('heading', { name: /Robô de consultas/ }).count(), 0);
+        else {
+          assert.equal(await p.getByRole('heading', { name: /Robô de consultas/ }).count(), 0);
+          const menu = p.getByRole('navigation', { name: 'Painel', exact: true });
+          assert.equal(await menu.getByRole('group').count(), 2);
+          assert.equal(await menu.getByText('Administração', { exact: true }).count(), 0);
+          assert.equal(await menu.getByRole('link', { name: 'Equipe', exact: true }).count(), 0);
+        }
         if (estado === 'Offline') {
           await p.locator('.visao-configuracao summary').click();
           assert.equal(await p.getByRole('link', { name: 'Ligar o robô', exact: true }).locator('../..').locator('span').first().innerText(), 'Concluído');

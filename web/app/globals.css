@@ -316,10 +316,17 @@ button.perigo:hover { background: var(--erro-fundo); }
 .pular-conteudo:not(:focus) { clip-path: inset(50%); }
 .lateral {
   background: var(--superficie); border-inline-end: 1px solid var(--linha); min-width: 0;
-  padding: 0.9rem 0.55rem; display: flex; flex-direction: column; gap: 0.2rem;
+  padding: 0.9rem 0.55rem; display: flex; flex-direction: column; gap: 0.65rem;
   position: sticky; top: var(--altura-barra); height: calc(100dvh - var(--altura-barra)); overflow: auto;
   scrollbar-color: var(--borda-campo) var(--superficie);
 }
+.lateral-grupo { min-width: 0; }
+.lateral-grupo + .lateral-grupo { border-block-start: 1px solid var(--linha); padding-block-start: 0.6rem; }
+.lateral-titulo {
+  color: var(--suave); font-size: 0.75rem; font-weight: 600;
+  margin: 0 0 0.25rem; padding-inline: 0.65rem;
+}
+.lateral-itens { display: grid; gap: 0.2rem; }
 .lateral a {
   display: flex; align-items: center; gap: 0.6rem; padding: 0.5rem 0.6rem; min-height: 2.5rem;
   border: 1px solid transparent; border-radius: var(--raio); color: var(--texto); font-size: 0.875rem;
@@ -329,7 +336,6 @@ button.perigo:hover { background: var(--erro-fundo); }
 .lateral a:hover { background: var(--carbono); }
 .lateral a[aria-current="page"] { background: var(--selecionado); color: var(--selecao-texto); font-weight: 600; }
 .lateral a[aria-current="page"] .icone { color: currentColor; }
-.lateral hr { border: 0; border-block-start: 1px solid var(--linha); margin: 0.55rem 0.45rem; }
 main.painel {
   min-width: 0; width: 100%; margin: 0; padding: clamp(1.15rem, 2vw, 2rem) clamp(1rem, 2.25vw, 2.75rem) 3rem;
   container: painel / inline-size; scroll-margin-top: calc(var(--altura-barra) + 0.75rem);
@@ -348,18 +354,31 @@ main.painel:focus { outline: none; }
   .painel-moldura { grid-template-columns: minmax(0, 1fr); grid-template-rows: var(--altura-barra) auto 1fr; }
   .barra { padding-inline: 0.8rem; }
   .barra-nome small { display: none; }
-  .lateral { position: static; height: auto; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); padding: 0.35rem 0.7rem; border-inline-end: 0; border-block-end: 1px solid var(--linha); }
+  .lateral {
+    position: static; height: auto; display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 1fr);
+    gap: 0.35rem 0.55rem; padding: 0.4rem 0.7rem; border-inline-end: 0; border-block-end: 1px solid var(--linha);
+  }
+  .lateral-grupo:first-child, .lateral-grupo:nth-child(2):last-child { grid-column: 1 / -1; }
+  .lateral-grupo + .lateral-grupo { padding-block-start: 0.35rem; }
+  .lateral-titulo { margin-block-end: 0.15rem; padding-inline: 0.2rem; }
+  .lateral-itens { grid-template-columns: minmax(0, 0.85fr) minmax(0, 1fr) minmax(0, 1.2fr); }
+  .lateral-grupo:first-child .lateral-itens { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .lateral-grupo:nth-child(3) .lateral-itens { grid-template-columns: minmax(0, 1fr); }
   .lateral a { line-height: 1.25; }
-  .lateral hr { display: none; }
   main.painel { padding: 1.15rem 1rem 2.5rem; }
 }
-@media (max-width: 520px) {
+@media (max-width: 640px) {
   .lateral a { justify-content: center; text-align: center; white-space: normal; padding: 0.25rem 0.2rem; font-size: 0.8rem; line-height: 1.2; }
   .lateral a .icone { display: none; }
+}
+@media (max-width: 520px) {
   .visao-cabeca .botao { font-size: 0.875rem; padding-inline: 0.65rem; }
 }
+@media (max-width: 389px) {
+  .lateral { grid-template-columns: minmax(0, 1fr); }
+  .lateral-grupo:is(:first-child, :nth-child(3)) .lateral-itens { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
 @media (max-width: 360px) {
-  .lateral { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .barra-nome { position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip-path: inset(50%); }
 }
 @media (max-width: 420px) {
