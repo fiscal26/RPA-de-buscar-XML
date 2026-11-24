@@ -66,7 +66,7 @@ export default async function MonitoramentoMei({ searchParams }: { searchParams:
           const alvo = i.id === "sem" && !conta("sem_dados") ? null : i.id;
           const ativo = filtro === i.id;
           return (
-            <Link key={i.id} href={link(ativo ? null : alvo)} scroll={false} aria-pressed={ativo}
+            <Link key={i.id} href={link(ativo ? null : alvo)} scroll={false} aria-current={ativo ? "true" : undefined}
               className={`numero-cartao numero-filtro ${i.classe} ${ativo ? "ativo" : ""}`}
               title={ativo ? "Limpar o filtro" : alvo ? `Mostrar primeiro: ${i.nome.toLowerCase()}` : "Mostrar todos"}>
               <span className="nome">{i.nome}{ativo && <span aria-hidden="true"> ✕</span>}</span>
@@ -94,45 +94,46 @@ export default async function MonitoramentoMei({ searchParams }: { searchParams:
             <Link href="/painel/mei/gerenciar" className="botao">Gerenciar acompanhamento</Link>
           </div>
         ) : (
-          <div className="ranking" role="table" aria-label="MEIs por faturamento no ano">
-            <div className="ranking-linha ranking-cabeca" role="row">
-              <span role="columnheader">#</span>
-              <span role="columnheader">MEI</span>
-              <span role="columnheader" className="ranking-eixo">
-                {escala.map((v) => <i key={v} style={{ left: x(v) }}>{mil(v)}</i>)}
-              </span>
-              <span role="columnheader" className="num">Faturamento</span>
-              <span role="columnheader" className="num">Compras</span>
-              <span role="columnheader">Situação</span>
+          <>
+            <div className="ranking" role="table" aria-label="MEIs por faturamento no ano">
+              <div className="ranking-linha ranking-cabeca" role="row">
+                <span role="columnheader">#</span>
+                <span role="columnheader">MEI</span>
+                <span role="columnheader" className="ranking-eixo">
+                  {escala.map((v) => <i key={v} style={{ left: x(v) }}>{mil(v)}</i>)}
+                </span>
+                <span role="columnheader" className="num">Faturamento</span>
+                <span role="columnheader" className="num">Compras</span>
+                <span role="columnheader">Situação</span>
+              </div>
+              {meis.map((m) => {
+                const nivel = NIVEIS[m.ano.nivel];
+                const f = m.ano.faturamento, c = m.ano.compras;
+                return (
+                  <div key={`${m.org}${m.ie}`} role="row" className={`ranking-linha ranking-empresa ${filtro && noFiltro(m) ? "linha-filtrada" : ""}`}>
+                    <span role="cell" className="ranking-pos">{posicao.get(m)}</span>
+                    <span role="cell" className="ranking-nome">
+                      <Link href={`/painel/mei/${m.ie}?ano=${ano}${admin ? `&org=${m.org}` : ""}`}>{m.nome || "MEI"}</Link>
+                      <span className="suave">{m.cnpj ? `CNPJ ${formatarDocumento(m.cnpj)}` : `IE ${formatarIe(m.ie)}`}{m.ano.primeiroMes > 0 ? ` · abriu em ${MESES_LONGOS[m.ano.primeiroMes]}` : ""}</span>
+                    </span>
+                    <span role="cell" className="ranking-barras" aria-label={`Faturamento ${reais(f.total)}, compras ${reais(c.total)}`}>
+                      {referencias.map((r) => <i key={r.classe} className={`ranking-ref ${r.classe}`} style={{ left: x(r.v) }} />)}
+                      {f.limite !== LIMITE_ANO && <i className="ranking-ref ref-proprio" style={{ left: x(f.limite) }} title={`Limite proporcional: ${reais(f.limite, 0)}`} />}
+                      <span className="ranking-barra s-fat" style={{ width: x(f.total) }} />
+                      <span className="ranking-barra s-comp" style={{ width: x(c.total) }} />
+                    </span>
+                    <span role="cell" className="num"><b>{reais(f.total, 0)}</b><span className="suave">{pct(f.pct)} do limite</span></span>
+                    <span role="cell" className="num"><b>{c.nivel === "sem_dados" ? "—" : reais(c.total, 0)}</b><span className="suave">{c.nivel === "sem_dados" ? "sem consulta" : `${pct(c.pct)} do limite`}</span></span>
+                    <span role="cell"><span className={`status ${m.ano.conferirFontes ? "st-alerta" : nivel.classe}`}>{m.ano.conferirFontes ? "Conferir fontes" : nivel.nome}</span></span>
+                  </div>
+                );
+              })}
             </div>
-            {meis.map((m) => {
-              const nivel = NIVEIS[m.ano.nivel];
-              const f = m.ano.faturamento, c = m.ano.compras;
-              return (
-                <Link key={`${m.org}${m.ie}`} role="row" className={`ranking-linha ${filtro ? (noFiltro(m) ? "linha-filtrada" : "linha-apagada") : ""}`}
-                  href={`/painel/mei/${m.ie}?ano=${ano}${admin ? `&org=${m.org}` : ""}`}>
-                  <span role="cell" className="ranking-pos">{posicao.get(m)}</span>
-                  <span role="cell" className="ranking-nome">
-                    <b>{m.nome || "MEI"}</b>
-                    <span className="suave">{m.cnpj ? `CNPJ ${formatarDocumento(m.cnpj)}` : `IE ${formatarIe(m.ie)}`}{m.ano.primeiroMes > 0 ? ` · abriu em ${MESES_LONGOS[m.ano.primeiroMes]}` : ""}</span>
-                  </span>
-                  <span role="cell" className="ranking-barras" aria-label={`Faturamento ${reais(f.total)}, compras ${reais(c.total)}`}>
-                    {referencias.map((r) => <i key={r.classe} className={`ranking-ref ${r.classe}`} style={{ left: x(r.v) }} />)}
-                    {f.limite !== LIMITE_ANO && <i className="ranking-ref ref-proprio" style={{ left: x(f.limite) }} title={`Limite proporcional: ${reais(f.limite, 0)}`} />}
-                    <span className="ranking-barra s-fat" style={{ width: x(f.total) }} />
-                    <span className="ranking-barra s-comp" style={{ width: x(c.total) }} />
-                  </span>
-                  <span role="cell" className="num"><b>{reais(f.total, 0)}</b><span className="suave">{pct(f.pct)} do limite</span></span>
-                  <span role="cell" className="num"><b>{c.nivel === "sem_dados" ? "—" : reais(c.total, 0)}</b><span className="suave">{c.nivel === "sem_dados" ? "sem consulta" : `${pct(c.pct)} do limite`}</span></span>
-                  <span role="cell"><span className={`status ${m.ano.conferirFontes ? "st-alerta" : nivel.classe}`}><span aria-hidden="true">{nivel.sinal}</span> {m.ano.conferirFontes ? "Conferir fontes" : nivel.nome}</span></span>
-                </Link>
-              );
-            })}
             <div className="ranking-legenda suave">
               {referencias.map((r) => <span key={r.classe}><i className={`ranking-ref-leg ${r.classe}`} /> {r.nome}</span>)}
               <span><i className="ranking-ref-leg ref-proprio" /> limite proporcional (ano de abertura)</span>
             </div>
-          </div>
+          </>
         )}
       </section>
       <p className="suave nota-rodape">

@@ -18,8 +18,8 @@ async function portaLivre() {
   const s = net.createServer(); await new Promise((r) => s.listen(0, '127.0.0.1', r));
   const porta = s.address().port; await new Promise((r) => s.close(r)); return porta;
 }
-async function acessivel(page) {
-  const r = await new AxeBuilder({ page }).include('main').withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze();
+async function acessivel(page, seletor = 'main') {
+  const r = await new AxeBuilder({ page }).include(seletor).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze();
   assert.deepEqual(r.violations.map((v) => ({ id: v.id, alvos: v.nodes.map((n) => n.target) })), []);
 }
 (async () => {
@@ -50,6 +50,82 @@ async function acessivel(page) {
   const contexto = await navegador.newContext({ viewport: { width: 1440, height: 1000 }, locale: 'pt-BR', reducedMotion: 'reduce' });
   const page = await contexto.newPage();
   const erros = []; page.on('pageerror', (e) => erros.push(e.message));
+  await teste('Visão geral mostra a operação e mantém tabela e navegação acessíveis em cinco larguras', async () => {
+    await page.goto(`${url}/painel`);
+    await page.getByRole('heading', { name: 'Visão geral', exact: true }).waitFor();
+    await page.keyboard.press('Tab');
+    assert.equal(await page.evaluate(() => document.activeElement.textContent.trim()), 'Pular para o conteúdo');
+    await page.keyboard.press('Enter');
+    assert.equal(await page.evaluate(() => document.activeElement.id), 'conteudo-painel');
+    await page.getByRole('heading', { name: 'Robô de consultas Online', exact: true }).waitFor();
+    assert.ok(await page.getByText('Última comunicação', { exact: false }).isVisible());
+    const pendencias = page.getByRole('region', { name: 'Pendências', exact: true });
+    assert.ok(await pendencias.getByText('Mercado Sol', { exact: true }).isVisible());
+    assert.equal(await pendencias.getByRole('link', { name: 'Agendar de novo para Mercado Sol' }).getAttribute('href'), '/painel/agendar');
+    const taxa = page.getByRole('region', { name: 'Indicadores de processamento' }).locator('.visao-taxa');
+    assert.match(await taxa.innerText(), /159 de 160 finalizadas sem erro/);
+    assert.match(await taxa.innerText(), /99%/);
+    const tabela = page.getByRole('region', { name: 'Agendamentos recentes' });
+    for (const [width, height] of [[1366,768], [1440,900], [1920,1080], [2560,1440], [390,844]]) {
+      await page.setViewportSize({ width, height });
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${width}px`);
+      const { y } = await tabela.boundingBox();
+      if (width > 390) assert.ok(y < height, `A tabela começa abaixo da primeira dobra em ${width}px`);
+    }
+    assert.equal(await tabela.evaluate(el => el.scrollWidth <= el.clientWidth), true);
+    await tabela.getByRole('link', { name: /Ver execução de 10\/2026 · SEFAZ/ }).waitFor();
+    await tabela.getByRole('link', { name: /Ver execução de 10\/2026 · NFS-e/ }).waitFor();
+    const menu = page.getByRole('navigation', { name: 'Painel', exact: true });
+    assert.ok(await menu.evaluate(el => el.scrollWidth <= el.clientWidth));
+    for (const [grupo, links] of [
+      ['Operação', ['Início', 'Agendar', 'Agendamentos', 'Monitor Fiscal']],
+      ['Empresas', ['Empresas', 'Certificados', 'Monitoramento MEI']],
+      ['Administração', ['Equipe']],
+    ]) {
+      const nomes = await menu.getByRole('group', { name: grupo, exact: true }).getByRole('link').allTextContents();
+      assert.deepEqual(nomes, links);
+    }
+    assert.equal(await menu.getByRole('link', { name: 'Início', exact: true }).getAttribute('aria-current'), 'page');
+    await menu.getByRole('link', { name: 'Monitor Fiscal', exact: true }).press('Tab');
+    assert.equal(await page.evaluate(() => document.activeElement.textContent), 'Empresas');
+    await acessivel(page, '.lateral');
+    await tabela.focus();
+    await page.keyboard.press('End');
+    assert.ok(await tabela.evaluate(el => el === document.activeElement));
+    const passos = page.locator('.visao-configuracao');
+    assert.equal(await passos.getAttribute('open'), null);
+    await passos.locator('summary').press('Enter');
+    assert.equal(await passos.getAttribute('open'), '');
+    assert.ok(await passos.getByRole('link', { name: 'Cadastrar a equipe' }).isVisible());
+    await acessivel(page);
+    await page.setViewportSize({ width: 1440, height: 1000 });
+  });
+  await teste('Conectividade distingue offline de ausência de sinal e segue as permissões do perfil', async () => {
+    for (const [headers, estado] of [
+      [{ 'x-interface-sinal': 'offline' }, 'Offline'],
+      [{ 'x-interface-sinal': 'ausente' }, 'Sem comunicação'],
+      [{ 'x-interface-papel': 'usuario' }, null],
+    ]) {
+      const sessao = await navegador.newContext({ extraHTTPHeaders: headers });
+      try {
+        const p = await sessao.newPage();
+        await p.goto(`${url}/painel`);
+        await p.getByRole('heading', { name: 'Visão geral', exact: true }).waitFor();
+        if (estado) await p.getByRole('heading', { name: `Robô de consultas ${estado}`, exact: true }).waitFor();
+        else {
+          assert.equal(await p.getByRole('heading', { name: /Robô de consultas/ }).count(), 0);
+          const menu = p.getByRole('navigation', { name: 'Painel', exact: true });
+          assert.equal(await menu.getByRole('group').count(), 2);
+          assert.equal(await menu.getByText('Administração', { exact: true }).count(), 0);
+          assert.equal(await menu.getByRole('link', { name: 'Equipe', exact: true }).count(), 0);
+        }
+        if (estado === 'Offline') {
+          await p.locator('.visao-configuracao summary').click();
+          assert.equal(await p.getByRole('link', { name: 'Ligar o robô', exact: true }).locator('../..').locator('span').first().innerText(), 'Concluído');
+        }
+      } finally { await sessao.close(); }
+    }
+  });
   await teste('Gestão MEI verifica lote, permite desmarcar e confirma só a seleção, sem dados reais', async () => {
     await page.goto(`${url}/painel/mei/gerenciar`);
     await page.getByRole('button', {name:'Trazer MEIs cadastrados', exact:true}).click();
@@ -247,6 +323,10 @@ async function acessivel(page) {
     await filtro.fill('');
     await page.getByText('1001 de 1001', { exact: true }).waitFor();
     assert.equal(await total('Notas encontradas').innerText(), '99');
+    await filtro.fill('Mercado Sol');
+    await page.getByRole('link', { name: 'Notas de Mercado Sol', exact: true }).click();
+    await page.getByRole('heading', { name: /Mercado Sol/ }).waitFor();
+    await page.getByRole('region', { name: 'Notas fiscais encontradas', exact: true }).waitFor();
   });
   await teste('Reprocessamento MEI mostra as fontes cadastradas e as fontes que entraram na fila', async () => {
     await page.setViewportSize({ width: 1440, height: 1000 });
@@ -262,11 +342,19 @@ async function acessivel(page) {
       assert.equal(await fontesDaFila.locator('strong').innerText(), fontes);
     }
   });
-  await teste('Tema escuro mantém a leitura e o menu fecha com Escape', async () => {
+  await teste('Tema escuro é o padrão, tema claro persiste e o menu fecha com Escape', async () => {
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.locator('.perfil-botao').click();
     assert.equal(await page.getByText('Usar como aplicativo', { exact: true }).count(), 0);
-    await page.getByRole('button', { name: /Tema escuro/ }).click();
+    const tema = page.getByRole('button', { name: /Tema escuro/ });
+    assert.equal(await tema.getAttribute('aria-pressed'), 'true');
+    assert.equal(await page.locator('html').getAttribute('data-tema'), 'escuro');
+    await tema.click();
+    assert.equal(await page.locator('html').getAttribute('data-tema'), 'claro');
+    await page.reload();
+    assert.equal(await page.locator('html').getAttribute('data-tema'), 'claro');
+    await page.locator('.perfil-botao').click();
+    await tema.click();
     assert.equal(await page.locator('html').getAttribute('data-tema'), 'escuro');
     await page.keyboard.press('Escape');
     assert.equal(await page.locator('.perfil-botao').getAttribute('aria-expanded'), 'false');

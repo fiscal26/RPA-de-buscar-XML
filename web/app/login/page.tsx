@@ -8,7 +8,7 @@ export default async function Login({ searchParams }: { searchParams: Promise<{ 
   const { erro, senha } = await searchParams;
   return (
     <Entrada>
-      <h1>Boas-vindas à LotiVisse</h1>
+      <h1>Entrar na LotiVisse</h1>
       <p className="entrada-sub">Entre com o e-mail e a senha do seu acesso.</p>
       {erro === "sem-acesso" && <div className="faixa erro">Seu usuário está sem acesso. Fale com o gestor do escritório.</div>}
       {erro === "inatividade" && <div className="faixa alerta">Sua sessão foi encerrada após 15 minutos sem uso. Entre de novo.</div>}
