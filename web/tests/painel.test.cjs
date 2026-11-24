@@ -43,4 +43,8 @@ test('mesmo documento em organizações distintas continua independente', () => 
 test('a ação de agendar de novo abre a origem da pendência', () => {
   const r = resumoPainel([{...nfse, status:'fora_do_ar'}, {...tarefa, status:'fora_do_ar'}], agendamentos);
   assert.deepEqual(r.acoes.map((acao) => acao.link), ['/painel/agendar?origem=nfse', '/painel/agendar']);
+  const erro = { ...nfse, status: 'erro', detalhes: { nfse_emitidas: { situacao: 'erro', mensagem: 'Sem permissão no Portal Nacional' } } };
+  const [acao] = resumoPainel([erro], agendamentos).acoes;
+  assert.equal(acao.link, '/painel/agendar?origem=nfse');
+  assert.match(acao.motivo, /Portal Nacional/);
 });

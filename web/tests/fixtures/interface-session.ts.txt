@@ -9,7 +9,13 @@ const ags=[{id:'execucao-outubro',org_id:'org-1',nome_arquivo:'empresas_outubro.
 const tarefas=empresas.map((e,i)=>({...e,empresa_id:e.id,agendamento_id:ags[0].id,status:i===1?'erro':i===2?'processando':i>40?'pendente':'concluido',qtd_xml:i<40?12:0,concluido_em:i<40?'2026-11-15T12:10:00Z':null,mensagem:'',detalhes:Object.fromEntries(e.tipos.map((tipo,j)=>[tipo,{situacao:i===1&&j===1?'erro':i===2&&j<2?'aguardando':i>40?'fila':i===2?'andamento':'concluido',mensagem:i===1&&j===1?'O ATF não entregou o XML em Minhas Mensagens. Reprocesse este serviço após a liberação.':i===2?'Consulta enviada. Aguardando o ATF disponibilizar os arquivos.':i>40?'':'Arquivos salvos na pasta da empresa.'}]))}));
 const certs=empresas.slice(0,12).map((e,i)=>({id:`cert-${i}`,org_id:e.org_id,cnpj:e.cnpj,nome:e.nome,procurador:i===0,atualizado_em:'2026-11-13T12:00:00Z',validade:i===3?'2026-10-01T00:00:00Z':'2027-10-01T00:00:00Z'}));
 const monitores=empresas.slice(0,32).map((e,i)=>({...e,ciencia:true,ativo:true,status:i===1?'erro':'ok',mensagem:i===1?'O Ambiente Nacional está temporariamente indisponível. Uma nova consulta será realizada no horário programado.':'Consulta concluída. XML e DANFE organizados na pasta da empresa.',proxima_consulta:'2026-11-16T14:00:00Z',ultima_consulta:'2026-11-15T14:00:00Z',ultima_nota_em:'2026-11-15T13:45:00Z'}));
-const dados:Record<string,any[]>={organizacoes:orgs,xml_empresas:empresas,xml_nfse_empresas:empresas.slice(0,12).map(e=>({...e,tipos:['nfse_emitidas','nfse_recebidas']})),xml_agendamentos:ags,xml_tarefas:tarefas,xml_acessos:[{id:'acesso-1',org_id:'org-1',login:'contador.exemplo',atualizado_em:'2026-11-13T12:00:00Z'}],xml_nfse_certificados:certs,xml_robos:[{id:'Robô XML',ultimo_sinal:new Date().toISOString()}],xml_nfe_monitor:monitores,xml_nfe_notas:empresas.slice(0,32).flatMap(e=>Array.from({length:3},(_,i)=>({org_id:e.org_id,cnpj:e.cnpj,valor:3200+i*173,situacao:'autorizada',emissao:'2026-11-12T12:00:00Z',encontrada_em:'2026-11-15T14:00:00Z'}))),xml_mei_cadastros:[]};
+const notasMonitor=empresas.slice(0,32).flatMap((e, j) => Array.from({length:3}, (_, i) => ({
+  org_id:e.org_id, cnpj:e.cnpj, chave:String(j*3+i+1).padStart(44,'0'), numero:String(j*3+i+1), serie:'1',
+  emitente_cnpj:empresas[0].cnpj, emitente_nome:'Fornecedor de teste', emitente_uf:'PB',
+  valor:3200+i*173, situacao:'autorizada', emissao:'2026-11-12T12:00:00Z', encontrada_em:'2026-11-15T14:00:00Z',
+  completa:true, pdf:true, manifestada_em:'2026-11-15T14:00:00Z',
+})));
+const dados:Record<string,any[]>={organizacoes:orgs,xml_empresas:empresas,xml_nfse_empresas:empresas.slice(0,12).map(e=>({...e,tipos:['nfse_emitidas','nfse_recebidas']})),xml_agendamentos:ags,xml_tarefas:tarefas,xml_acessos:[{id:'acesso-1',org_id:'org-1',login:'contador.exemplo',atualizado_em:'2026-11-13T12:00:00Z'}],xml_nfse_certificados:certs,xml_robos:[{id:'Robô XML',ultimo_sinal:new Date().toISOString()}],xml_nfe_monitor:monitores,xml_nfe_notas:notasMonitor,xml_mei_cadastros:[]};
 const fontesMei = [
   { nome: 'MEI de serviços', origens: ['nfse'] },
   { nome: 'MEI de comércio', origens: ['sefaz'] },
@@ -40,7 +46,7 @@ else {
  const hoje = new Date().toISOString();
  for (const nota of dados.xml_nfe_notas) nota.emissao = hoje;
  const mercado = dados.xml_nfe_notas.find((n) => n.cnpj === empresas[1].cnpj);
- dados.xml_nfe_notas.push({ ...mercado, emissao: '2024-01-01T12:00:00Z' }, { ...mercado, situacao: 'cancelada' });
+ dados.xml_nfe_notas.push({ ...mercado, chave:'1'.repeat(44), emissao: '2024-01-01T12:00:00Z' }, { ...mercado, chave:'2'.repeat(44), situacao: 'cancelada' });
  const modeloMonitor = dados.xml_nfe_monitor[0];
  for (let i = 0; i < 968; i++) {
    dados.xml_nfe_monitor.push({ ...modeloMonitor, id: `monitor-extra-${i}`, nome: `Monitor adicional ${i}`,

@@ -305,6 +305,10 @@ async function acessivel(page) {
     await filtro.fill('');
     await page.getByText('1001 de 1001', { exact: true }).waitFor();
     assert.equal(await total('Notas encontradas').innerText(), '99');
+    await filtro.fill('Mercado Sol');
+    await page.getByRole('link', { name: 'Notas de Mercado Sol', exact: true }).click();
+    await page.getByRole('heading', { name: /Mercado Sol/ }).waitFor();
+    await page.getByRole('region', { name: 'Notas fiscais encontradas', exact: true }).waitFor();
   });
   await teste('Reprocessamento MEI mostra as fontes cadastradas e as fontes que entraram na fila', async () => {
     await page.setViewportSize({ width: 1440, height: 1000 });
