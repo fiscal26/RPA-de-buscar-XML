@@ -1,6 +1,10 @@
 ﻿# Plano de integração do isolamento por escritório
 
-Data: 16/11/2026. Status: decisão proposta, aguardando revisão do Codex 2 e aceite. Esta entrega altera apenas documentação.
+Data: 16/11/2026. O plano e a correção NFS-e de `b9d19db` foram aprovados pelo usuário.
+A entrega ATF/MEI está implementada e aguarda revisão, na branch
+`integracao/atf-mei-por-escritorio`, partindo da NFS-e corrigida em `2af5bde`
+e da main `05d9307`.
+Monitor Fiscal e atualização operacional continuam pendentes. Nenhuma etapa foi ativada.
 
 ## Base e etapas
 
@@ -17,7 +21,7 @@ Data: 16/11/2026. Status: decisão proposta, aguardando revisão do Codex 2 e ac
 | 4. Monitor Fiscal | `integracao/monitor-fiscal-por-escritorio` | Fila própria, consulta, manifestação, persistência, retomada e painel. |
 | 5. Operação | `integracao/atualizacao-operacional` | Banco, instalação Windows/VPS, Drive, Domínio e recuperação. |
 
-Cada entrega passa pelo Codex 2, recebe correções e fica disponível para aceite. Fazer push após o aceite da revisão, conforme a autorização do usuário. Cada branch contém somente o escopo da etapa e parte da main que já inclua as dependências aprovadas. Merge e ativação dependem da autorização correspondente.
+Cada entrega passa pelo Codex 2, recebe correções e fica disponível para aceite. O aceite da revisão não torna o push automático; a publicação depende da autorização correspondente. Cada branch contém o escopo da etapa sobre as dependências aprovadas. Enquanto essas dependências ainda não estiverem na main, as branches locais ficam encadeadas e registram a base de comparação. Merge e ativação dependem da autorização correspondente.
 
 ## Garantias preservadas
 
@@ -91,4 +95,7 @@ Inventariar banco efetivo, funções/permissões, instalações Windows/VPS, ser
 
 Manter funções SQL antigas enquanto existirem consumidores não atualizados ou desconhecidos. A proposta separada `preparacao/retirada-contratos-antigos` (`67155c9`) precisa ser reavaliada contra o banco atual. Retirada exige inventário concluído, consumidores comprovadamente atualizados, homologação e recuperação com versão compatível; não integra implicitamente os fluxos.
 
-Pendências: revisão na sessão que o usuário indicar como Codex 2; aceite da decisão de caminhos; implementação e ensaios das próximas etapas. Nenhum teste funcional, migração ou acesso operacional foi executado nesta entrega documental.
+Pendências: revisão da integração ATF/MEI pelo Codex 2, implementação do Monitor Fiscal
+e preparação/ensaios operacionais. O plano original era apenas documental; as
+evidências de cada implementação ficam nos roteiros específicos em `docs/reviews/`.
+Migrações operacionais, merge e ativação dependem das autorizações correspondentes.

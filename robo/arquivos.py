@@ -1,21 +1,21 @@
-"""Arquivos baixados do ATF: guardados como vieram (ZIP continua ZIP) na pasta da empresa.
+"""Distribuição e publicação dos documentos fiscais do ATF por empresa e tipo.
 
-Pasta final:  <destino>/Arquivos baixados/<ID>-<Nome>/<MMAAAA>/<NF-e Saida | NF-e Entrada | NFC-e> - R$ <total>/
-(faturas, extrato, omissão e certidão: <MMAAAA>/<Serviço>/, com o PDF como veio do ATF)
-(ex.: ID 5 e nome "joao" -> "5-joao"; sem ID na planilha, só o nome). O conteúdo de cada arquivo é
-lido só para saber de qual empresa e tipo ele é (IE/CNPJ do emitente ou destinatário dentro das
-notas), contar as notas e somar o valor (notas autorizadas, sem as canceladas) que vai no nome da pasta.
-Arquivo de empresa fora da rodada fica em "Arquivos baixados/_sem_empresa" e o que não é XML/ZIP em
-"_nao_identificados": nada do que foi baixado é descartado.
+O chamador fornece a pasta validada e mantém a trava da identidade durante a escrita.
+ZIPs mistos são separados pelo conteúdo; totais e PDFs usam apenas notas do alvo.
+A resolução anterior de pasta/competência continua somente para o Monitor Fiscal,
+que será integrado em sua própria etapa.
 """
 from __future__ import annotations
 
 import io
+import hashlib
 import re
 import unicodedata
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
+from armazenamento import (arquivo_validado, criar_subpasta_validada, pasta_da_competencia,
+                           publicar_arquivo, renomear_subpasta_validada)
 from xml.etree import ElementTree as ET
 
 from planilha import formatar_ie
@@ -80,47 +80,37 @@ class InfoXml:
     partes: list = field(default_factory=list)  # CT-e: (CNPJ, IE) de remetente, destinatário, tomador...
 
 
-@dataclass
-class Resumo:
-    salvos: int = 0
-    repetidos: int = 0
-    conferir: int = 0
-    invalidos: int = 0
-    pastas: set[str] = field(default_factory=set)
-
-    @property
-    def total(self) -> int:
-        return self.salvos + self.repetidos
-
-    def somar(self, outro: "Resumo"):
-        self.salvos += outro.salvos
-        self.repetidos += outro.repetidos
-        self.conferir += outro.conferir
-        self.invalidos += outro.invalidos
-        self.pastas |= outro.pastas
-
-
-def extrair(dados: bytes, nome: str = "") -> list[tuple[str, bytes]]:
+def extrair(dados: bytes, nome: str = "", *, incompletos: list | None = None) -> list[tuple[str, bytes]]:
     """Devolve (nome, conteúdo) de cada XML, abrindo ZIP (inclusive ZIP dentro de ZIP) e GZIP."""
     if dados[:2] == b"\x1f\x8b":
         import gzip
         try:
-            return extrair(gzip.decompress(dados), Path(nome).stem)
+            return extrair(gzip.decompress(dados), Path(nome).stem, incompletos=incompletos)
         except Exception:
+            if incompletos is not None:
+                incompletos.append(True)
             return []
     if dados[:4] == b"PK\x03\x04":
         saida: list[tuple[str, bytes]] = []
         with zipfile.ZipFile(io.BytesIO(dados)) as z:
             for i, item in enumerate(z.infolist()):
                 if i >= _MAX_ARQUIVOS_ZIP:
+                    if incompletos is not None:
+                        incompletos.append(True)
                     break
-                if item.is_dir() or item.file_size > _MAX_TAMANHO_XML * 5:
+                if item.is_dir():
+                    continue
+                if item.file_size > _MAX_TAMANHO_XML * 5:
+                    if incompletos is not None:
+                        incompletos.append(True)
                     continue
                 conteudo = z.read(item)
-                saida.extend(extrair(conteudo, item.filename))
+                saida.extend(extrair(conteudo, item.filename, incompletos=incompletos))
         return saida
     if _parece_xml(dados):
         return [(Path(nome).name or "documento.xml", dados)]
+    if incompletos is not None:
+        incompletos.append(True)
     return []
 
 
@@ -245,55 +235,6 @@ def _mesmo_ie(a: str, b: str) -> bool:
     return bool(a) and bool(b) and a.lstrip("0") == b.lstrip("0")
 
 
-def pertence(info: InfoXml, ie: str, cnpj: str, tipo: str) -> bool:
-    """O XML é da empresa? Saída/NFC-e: ela é a emitente. Entrada: ela é a destinatária.
-    Confere pela IE e, se houver, pelo CNPJ. Evento só traz o autor e a chave (CNPJ do emitente
-    nas posições 7 a 20)."""
-    emitente_chave = info.chave[6:20]
-    if tipo != "nfe_entrada":
-        if info.evento:
-            return not cnpj or cnpj in (info.cnpj_emit, emitente_chave)
-        return _mesmo_ie(info.ie_emit, ie) or (bool(cnpj) and cnpj in (info.cnpj_emit, emitente_chave))
-    if info.evento:
-        return not cnpj or info.cnpj_emit == cnpj or emitente_chave != cnpj
-    return _mesmo_ie(info.ie_dest, ie) or (bool(cnpj) and info.cnpj_dest == cnpj)
-
-
-def salvar(arquivos: list[tuple[str, bytes]], destino: str | Path, nome: str, ie: str, cnpj: str, tipo: str,
-           codigo: str = "") -> Resumo:
-    resumo = Resumo()
-    base = pasta_empresa(destino, nome, ie, codigo)
-    nome_tipo = TIPOS.get(tipo, tipo)
-    for nome, dados in arquivos:
-        info = ler_xml(dados)
-        if not info:
-            resumo.invalidos += 1
-            continue
-        pasta = base / pasta_competencia(info.emissao[:7]) / nome_tipo
-        conferir = not pertence(info, ie, cnpj, tipo)
-        if conferir:
-            pasta = base / "_conferir"
-        if info.evento:
-            pasta = pasta / "Eventos"
-        arquivo = pasta / (f"{info.chave}-evento-{_sufixo(nome)}.xml" if info.evento else f"{info.chave}.xml")
-        resumo.pastas.add(str(base))
-        repetido = arquivo.exists() and arquivo.read_bytes() == dados
-        if not repetido:
-            pasta.mkdir(parents=True, exist_ok=True)
-            arquivo.write_bytes(dados)
-        if conferir:
-            resumo.conferir += 1  # conta sempre: o portal avisa que há XML de outro CNPJ
-        elif repetido:
-            resumo.repetidos += 1
-        else:
-            resumo.salvos += 1
-    return resumo
-
-
-def _sufixo(nome: str) -> str:
-    return re.sub(r"[^A-Za-z0-9]+", "", Path(nome).stem)[-20:] or "1"
-
-
 # ---------------------------------------------------------------------- distribuição por conteúdo
 # O ATF entrega os XML como anexos em "Minhas Mensagens", todas com o mesmo assunto e sem ordem
 # garantida. Por isso cada XML é encaminhado pelo que está DENTRO dele (IE/CNPJ de emitente e
@@ -366,35 +307,15 @@ def distribuir(arquivos: list[tuple[str, bytes]], alvos: list[Alvo]):
     return por_destino, sobras
 
 
-def salvar_sobras(arquivos: list[tuple[str, bytes]], destino: str | Path) -> int:
-    """XML que não é de nenhuma empresa da rodada (ex.: consulta feita à mão no mesmo login)."""
-    n = 0
-    for nome, dados in arquivos:
-        info = ler_xml(dados)
-        if not info:
-            continue
-        pasta = Path(destino) / PASTA_BAIXADOS / "_sem_empresa" / info.emissao[:7]
-        arquivo = pasta / (f"{info.chave}-evento-{_sufixo(nome)}.xml" if info.evento else f"{info.chave}.xml")
-        if not arquivo.exists():
-            pasta.mkdir(parents=True, exist_ok=True)
-            arquivo.write_bytes(dados)
-            n += 1
-    return n
-
-
-def salvar_nao_identificados(arquivos: list[tuple[str, bytes]], destino: str | Path,
-                              subpasta: str = "_nao_identificados") -> list[Path]:
-    """Arquivo baixado que não é XML nem ZIP de XML: guarda como veio, para conferir (nada se perde)."""
-    import hashlib
-
-    pasta = Path(destino) / PASTA_BAIXADOS / subpasta
+def salvar_nao_identificados(arquivos: list[tuple[str, bytes]], pasta: Path) -> list[Path]:
+    """Guarda os anexos como vieram na área de conferência da execução."""
     salvos = []
     for nome, dados in arquivos:
         base = Path(nome_de_pasta(Path(nome).name) or "arquivo")
-        arquivo = pasta / f"{base.stem}_{hashlib.sha1(dados).hexdigest()[:8]}{base.suffix}"
+        nome_seguro = f"{base.stem[:20]}_{hashlib.sha256(dados).hexdigest()[:24]}{extensao(dados)}"
+        arquivo = arquivo_validado(pasta, nome_seguro)
         if not arquivo.exists():
-            pasta.mkdir(parents=True, exist_ok=True)
-            arquivo.write_bytes(dados)
+            publicar_arquivo(arquivo, lambda temporario: temporario.write_bytes(dados))
         salvos.append(arquivo)
     return salvos
 
@@ -417,32 +338,6 @@ def tipo_de_arquivo(dados: bytes) -> str:
 # ---------------------------------------------------------------------- arquivos como vieram do ATF
 # O ZIP baixado é guardado do jeito que chegou (sem descompactar). O conteúdo só é lido para saber
 # de qual empresa e tipo ele é, contar as notas e somar o valor que aparece no nome da pasta.
-
-def distribuir_arquivos(brutos: list[tuple[str, bytes]], alvos: list["Alvo"]):
-    """Cada arquivo baixado (ZIP ou XML) vai inteiro para a empresa/tipo da maioria das suas notas.
-    Devolve ({(ie, tipo): [(nome, dados)]}, sem_empresa, nao_identificados)."""
-    por_destino: dict[tuple[str, str], list[tuple[str, bytes]]] = {}
-    sem_empresa, nao_identificados, empatados = [], [], []
-    for nome, dados in brutos:
-        xmls = extrair(dados, nome)
-        if not xmls:
-            nao_identificados.append((nome, dados))
-            continue
-        por, _ = distribuir(xmls, alvos)
-        if not por:
-            sem_empresa.append((nome, dados))
-            continue
-        maior = max(len(v) for v in por.values())
-        candidatos = [k for k, v in por.items() if len(v) == maior]
-        if len(candidatos) == 1:
-            por_destino.setdefault(candidatos[0], []).append((nome, dados))
-        else:  # ex.: ZIP só com notas entre duas empresas da rodada (saída de uma = entrada da outra)
-            empatados.append((nome, dados, candidatos))
-    # empate: cada consulta gera o seu arquivo, então vai para quem ainda não recebeu nenhum
-    for nome, dados, candidatos in empatados:
-        livre = next((k for k in candidatos if k not in por_destino), candidatos[0])
-        por_destino.setdefault(livre, []).append((nome, dados))
-    return por_destino, sem_empresa, nao_identificados
 
 
 def valor_total(xmls: list[tuple[str, bytes]]) -> tuple[int, float]:
@@ -475,41 +370,35 @@ def _pasta_do_tipo(pasta_mes: Path, nome_tipo: str) -> Path:
     return pasta_mes / nome_tipo
 
 
-def salvar_originais(brutos: list[tuple[str, bytes]], destino: str | Path, nome: str, ie: str, tipo: str,
-                     competencia: str, codigo: str = "") -> dict:
-    """Guarda os arquivos baixados como vieram (ZIP continua ZIP) em
-    Arquivos baixados/<ID>-<Nome>/<MMAAAA>/<tipo - R$ total>/ e devolve
-    {novos, repetidos, notas, valor, pasta}. Rodar de novo não duplica (compara o conteúdo)."""
-    import hashlib
-
+def salvar_originais(brutos: list[tuple[str, bytes]], pasta_validada: Path, alvo: Alvo, tipo: str,
+                     competencia: str) -> dict:
+    """Guarda os anexos atribuídos à empresa e calcula os totais pelo conteúdo."""
     nome_tipo = TIPOS.get(tipo, tipo)
-    pasta_mes = pasta_empresa(destino, nome, ie, codigo) / pasta_competencia(competencia)
-    pasta = _pasta_do_tipo(pasta_mes, nome_tipo)
-    existentes = {hashlib.sha1(a.read_bytes()).hexdigest() for a in pasta.iterdir() if a.is_file()} if pasta.is_dir() else set()
+    pasta_mes = pasta_da_competencia(pasta_validada, competencia)
+    pasta = criar_subpasta_validada(pasta_mes, _pasta_do_tipo(pasta_mes, nome_tipo).name)
+    existentes = {hashlib.sha1(a.read_bytes()).hexdigest() for a in _arquivos_salvos(pasta)}
     novos = repetidos = 0
-    for nome_arq, dados in brutos:
+    for _, dados in brutos:
         assinatura = hashlib.sha1(dados).hexdigest()
         if assinatura in existentes:
             repetidos += 1
             continue
         existentes.add(assinatura)
         ext = ".zip" if dados[:4] == b"PK\x03\x04" else ".gz" if dados[:2] == b"\x1f\x8b" else ".xml"
-        pasta.mkdir(parents=True, exist_ok=True)
         base = f"{nome_tipo} {competencia}"
         arquivo, n = pasta / f"{base}{ext}", 1
         while arquivo.exists():
             n += 1
             arquivo = pasta / f"{base} ({n}){ext}"
-        arquivo.write_bytes(dados)
+        arquivo = arquivo_validado(pasta, arquivo.name)
+        publicar_arquivo(arquivo, lambda temporario: temporario.write_bytes(dados))
         novos += 1
-    if not pasta.is_dir():
-        return {"novos": 0, "repetidos": repetidos, "notas": 0, "valor": 0.0, "pasta": ""}
-    # valor de tudo o que está na pasta (inclusive de rodadas anteriores) e nome da pasta com o total
-    todos = [x for a in sorted(pasta.iterdir()) if a.is_file() for x in extrair(a.read_bytes(), a.name)]
+    todos = [x for a in _arquivos_salvos(pasta) for x in extrair(a.read_bytes(), a.name)]
+    todos = distribuir(todos, [alvo])[0].get((alvo.ie, tipo), [])
     notas, valor = valor_total(todos)
     novo_nome = f"{nome_tipo} - {reais(valor)}" if notas else nome_tipo
-    if pasta.name != novo_nome and not (pasta_mes / novo_nome).exists():
-        pasta = pasta.rename(pasta_mes / novo_nome)
+    if pasta.name != novo_nome:
+        pasta = renomear_subpasta_validada(pasta, novo_nome)
     pdfs = gerar_pdfs(todos, pasta / PASTA_PDF) if GERAR_PDF else 0
     return {"novos": novos, "repetidos": repetidos, "notas": notas, "valor": valor, "pasta": str(pasta), "pdfs": pdfs}
 
@@ -531,13 +420,13 @@ def gerar_pdfs(xmls: list[tuple[str, bytes]], pasta: Path) -> int:
             notas.setdefault(info.chave, (info.modelo, dados))
     novos = 0
     for chave, (modelo, dados) in notas.items():
-        arquivo = pasta / f"{chave}.pdf"
+        arquivo = arquivo_validado(pasta, f"{chave}.pdf")
         if chave in canceladas or arquivo.exists():
             continue
         pdf = pdf_fiscal.gerar(dados, modelo)
         if pdf:
-            pasta.mkdir(parents=True, exist_ok=True)
-            arquivo.write_bytes(pdf)
+            pasta = criar_subpasta_validada(pasta.parent, pasta.name)
+            publicar_arquivo(arquivo, lambda temporario: temporario.write_bytes(pdf))
             novos += 1
     return novos
 
@@ -554,16 +443,11 @@ def extensao(dados: bytes) -> str:
     return {"XML": ".xml", "HTML": ".html"}.get(tipo_de_arquivo(dados), ".bin")
 
 
-def salvar_documentos(brutos: list[tuple[str, bytes]], destino: str | Path, nome: str, ie: str, tipo: str,
-                      competencia: str, codigo: str = "") -> dict:
-    """Faturas, extrato, omissão e certidão: guarda o PDF (ou ZIP) como veio em
-    Arquivos baixados/<ID>-<Nome>/<MMAAAA>/<Serviço>/<Serviço> <AAAA-MM>.pdf. Rodar de novo guarda o
-    novo ao lado ("(2)"), sem repetir arquivo igual. Devolve {novos, repetidos, pasta}."""
-    import hashlib
-
+def salvar_documentos(brutos: list[tuple[str, bytes]], pasta_validada: Path, tipo: str, competencia: str) -> dict:
+    """Guarda o documento como veio e reconhece arquivos repetidos pelo conteúdo."""
     nome_tipo = TIPOS.get(tipo, tipo)
-    pasta = pasta_empresa(destino, nome, ie, codigo) / pasta_competencia(competencia) / nome_tipo
-    existentes = {hashlib.sha1(a.read_bytes()).hexdigest() for a in pasta.iterdir() if a.is_file()} if pasta.is_dir() else set()
+    pasta = criar_subpasta_validada(pasta_da_competencia(pasta_validada, competencia), nome_tipo)
+    existentes = {hashlib.sha1(a.read_bytes()).hexdigest() for a in _arquivos_salvos(pasta)}
     novos = repetidos = 0
     for _, dados in brutos:
         assinatura = hashlib.sha1(dados).hexdigest()
@@ -572,38 +456,15 @@ def salvar_documentos(brutos: list[tuple[str, bytes]], destino: str | Path, nome
             continue
         existentes.add(assinatura)
         ext = extensao(dados)
-        pasta.mkdir(parents=True, exist_ok=True)
         base = f"{nome_tipo} {competencia}"
         arquivo, n = pasta / f"{base}{ext}", 1
         while arquivo.exists():
             n += 1
             arquivo = pasta / f"{base} ({n}){ext}"
-        arquivo.write_bytes(dados)
+        arquivo = arquivo_validado(pasta, arquivo.name)
+        publicar_arquivo(arquivo, lambda temporario: temporario.write_bytes(dados))
         novos += 1
     return {"novos": novos, "repetidos": repetidos, "pasta": str(pasta) if pasta.is_dir() else ""}
-
-
-def _arquivo_mei(destino, nome, ie, codigo, ano) -> Path:
-    return pasta_empresa(destino, nome, ie, codigo) / "Dossiê MEI" / f"Faturamento MEI {ano}.json"
-
-
-def periodos_mei(destino: str | Path, nome: str, ie: str, codigo: str, inicio, refazer_ano: bool = False) -> list:
-    """Meses do ano ANTES da competência que o Dossiê MEI ainda não tem (de janeiro em diante): o cliente
-    que chega sem acompanhamento já sai com o ano todo. refazer_ano=True busca todos de novo.
-    Devolve [(1º dia, último dia)]."""
-    import calendar
-    import json
-    from datetime import date
-
-    try:
-        feitos = json.loads(_arquivo_mei(destino, nome, ie, codigo, inicio.year).read_text(encoding="utf-8"))["meses"]
-    except (OSError, ValueError, KeyError):
-        feitos = {}
-    saida = []
-    for mes in range(1, inicio.month):
-        if refazer_ano or f"{inicio.year}-{mes:02d}" not in feitos:
-            saida.append((date(inicio.year, mes, 1), date(inicio.year, mes, calendar.monthrange(inicio.year, mes)[1])))
-    return saida
 
 
 def limite_mei(ano: int, inicio_atividade: str | None) -> float:
@@ -614,36 +475,75 @@ def limite_mei(ano: int, inicio_atividade: str | None) -> float:
     return LIMITE_MEI
 
 
-def salvar_faturamento_mei(destino: str | Path, nome: str, ie: str, competencia: str, dados: dict,
-                           codigo: str = "") -> dict:
-    """Dossiê MEI: guarda a tabela "Totais docs fiscais eletrônicos" do mês em
-    Arquivos baixados/<ID>-<Nome>/Dossiê MEI/Faturamento MEI <ano>.json (um mês por chave, base para o
-    painel futuro) e refaz a planilha "Faturamento MEI <ano>.xlsx". NOTAS e CARTÃO são acompanhados
-    separados (o cartão pode estar ou não dentro das notas): cada um com o seu acumulado e a sua % do
-    limite. Abas: o ano mês a mês ("sem movimento" quando tudo é zero), todas as linhas por tipo de
-    documento (inclusive as zeradas) e a tabela como veio do ATF."""
-    import json
-    from datetime import datetime
-
-    ano = competencia[:4]
-    arq_json = _arquivo_mei(destino, nome, ie, codigo, ano)
-    pasta = arq_json.parent
-    pasta.mkdir(parents=True, exist_ok=True)
+def inspecionar_anexo(dados: bytes, nome: str) -> tuple[list[tuple[str, bytes]], bool]:
+    incompletos = []
     try:
-        historico = json.loads(arq_json.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        historico = {}
-    empresa = historico.setdefault("empresa", {"ie": ie, "nome": nome, "codigo": codigo})
-    if dados.get("inicio_atividade"):
-        empresa["inicio_atividade"] = dados["inicio_atividade"]
-    limite = limite_mei(int(ano), empresa.get("inicio_atividade"))
-    empresa["limite_ano"] = limite
-    meses = historico.setdefault("meses", {})
-    meses[competencia] = {**{k: dados.get(k) for k in ("saidas", "entradas", "qtd_saidas", "qtd_entradas", "cartao",
-                                                       "sem_movimento", "simei")},
-                          "itens": dados.get("itens", []), "linhas": dados.get("linhas", []),
-                          "consultado_em": datetime.now().isoformat(timespec="seconds")}
-    arq_json.write_text(json.dumps(historico, ensure_ascii=False, indent=1, sort_keys=True), encoding="utf-8")
+        return extrair(dados, nome, incompletos=incompletos), bool(incompletos)
+    except (zipfile.BadZipFile, RuntimeError, NotImplementedError):
+        return [], True
+
+
+def distribuir_por_empresa(brutos: list[tuple[str, bytes]], alvos: list[Alvo]):
+    """Separa XMLs de ZIPs mistos e conserva o original na área de conferência."""
+    por_destino, sem_empresa, conferir = {}, [], []
+    # Eventos em anexos separados ainda seguem a nota da mesma chave.
+    todos = []
+    grupos = []
+    for nome, dados in brutos:
+        xmls, incompleto = inspecionar_anexo(dados, nome)
+        if xmls:
+            inicio = len(todos)
+            todos.extend((str(i), xml) for i, (_, xml) in enumerate(xmls, inicio))
+            grupos.append((nome, dados, xmls, inicio, incompleto))
+        else:
+            conferir.append((nome, dados))
+    por_xml, _ = distribuir(todos, alvos)
+    destinos_por_indice = {}
+    for destino, itens in por_xml.items():
+        for indice, _ in itens:
+            destinos_por_indice.setdefault(int(indice), []).append(destino)
+    for nome, dados, xmls, inicio, incompleto in grupos:
+        por_grupo = {}
+        for i, xml in enumerate(xmls, inicio):
+            for destino in destinos_por_indice.get(i, ()):
+                por_grupo.setdefault(destino, []).append(xml)
+        if not por_grupo:
+            sem_empresa.append((nome, dados))
+            continue
+        completo = False
+        for destino, itens in por_grupo.items():
+            todos_do_destino = not incompleto and len(itens) == len(xmls)
+            completo |= todos_do_destino
+            por_destino.setdefault(destino, []).extend([(nome, dados)] if todos_do_destino else itens)
+        if not completo:
+            conferir.append((nome, dados))
+    return por_destino, sem_empresa, conferir
+
+
+def _arquivos_salvos(pasta: Path):
+    for entrada in sorted(pasta.iterdir()):
+        if entrada.is_file() or entrada.is_symlink():
+            yield arquivo_validado(pasta, entrada.name)
+
+
+def meses_pendentes_mei(inicio, feitos, refazer_ano: bool = False) -> list:
+    import calendar
+    from datetime import date
+
+    saida = []
+    for mes in range(1, inicio.month):
+        if refazer_ano or f"{inicio.year}-{mes:02d}" not in feitos:
+            saida.append((date(inicio.year, mes, 1), date(inicio.year, mes, calendar.monthrange(inicio.year, mes)[1])))
+    return saida
+
+
+def montar_planilha_mei(historico: dict, competencia: str):
+    """Gera a planilha e o resumo a partir dos meses que já foram guardados."""
+    ano = competencia[:4]
+    empresa = historico["empresa"]
+    meses = historico["meses"]
+    dados = meses[competencia]
+    limite = empresa["limite_ano"]
 
     from openpyxl import Workbook
     from openpyxl.styles import Font
@@ -695,44 +595,15 @@ def salvar_faturamento_mei(destino: str | Path, nome: str, ie: str, competencia:
     for mes in sorted(meses):
         for celulas in meses[mes].get("linhas", []):
             bruto.append([mes] + list(celulas))
-    arq_xlsx = pasta / f"Faturamento MEI {ano}.xlsx"
-    try:
-        wb.save(arq_xlsx)
-    except PermissionError:  # planilha aberta no Excel: o JSON já foi salvo; a planilha sai na próxima vez
-        pass
-    return {"pasta": str(pasta), "saidas": dados.get("saidas"), "entradas": dados.get("entradas"),
+    return wb, {"saidas": dados.get("saidas"), "entradas": dados.get("entradas"),
             "cartao": (dados.get("cartao") or {}).get("valor"), "sem_movimento": dados.get("sem_movimento"),
             "limite": limite, "meses": sorted(meses),
             "notas_acumulado": round(notas_acum, 2), "notas_percentual": round(notas_acum / limite * 100, 1),
             "cartao_acumulado": round(cartao_acum, 2), "cartao_percentual": round(cartao_acum / limite * 100, 1),
             # o ano inteiro (sem a tabela bruta) para o painel de Monitoramento MEI
             "inicio_atividade": empresa.get("inicio_atividade"),
-            "historico": {mes: {k: v for k, v in m.items() if k != "linhas"} for mes, m in sorted(meses.items())}}
+            "historico": meses_mei_para_painel(meses)}
 
 
-def historicos_mei(destino: str | Path) -> list[dict]:
-    """Todos os "Faturamento MEI <ano>.json" já salvos neste PC (para mandar ao painel o que veio antes):
-    [{"ie", "nome", "inicio_atividade", "meses": {aaaa-mm: {...sem a tabela bruta}}}]."""
-    import json
-
-    saida = []
-    raiz = Path(destino)
-    # sem e com uma pasta por escritório (<destino>/<Escritório>/Arquivos baixados/...)
-    achados = list((raiz / PASTA_BAIXADOS).glob("*/Dossiê MEI/Faturamento MEI *.json")) + \
-        list(raiz.glob(f"*/{PASTA_BAIXADOS}/*/Dossiê MEI/Faturamento MEI *.json"))
-    for arq in sorted(achados):
-        try:
-            h = json.loads(arq.read_text(encoding="utf-8"))
-            emp = h["empresa"]
-        except (OSError, ValueError, KeyError):
-            continue
-        meses = {mes: {k: v for k, v in m.items() if k != "linhas"} for mes, m in sorted(h.get("meses", {}).items())}
-        if emp.get("ie") and meses:
-            saida.append({"ie": emp["ie"], "nome": emp.get("nome", ""), "inicio_atividade": emp.get("inicio_atividade"),
-                          "meses": meses})
-    return saida
-
-
-def salvar_sem_empresa(brutos: list[tuple[str, bytes]], destino: str | Path) -> int:
-    """Arquivo baixado que não é de nenhuma empresa da rodada: guardado como veio."""
-    return len(salvar_nao_identificados(brutos, destino, "_sem_empresa"))
+def meses_mei_para_painel(meses: dict) -> dict:
+    return {mes: {k: v for k, v in m.items() if k != "linhas"} for mes, m in sorted(meses.items())}

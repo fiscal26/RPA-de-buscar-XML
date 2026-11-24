@@ -6,39 +6,44 @@ faturas, extrato de pagamentos, omissão e inadimplência e certidão de débito
 e recebidas, com o relatório de retenções) vêm pela API oficial do **Portal Nacional**, com o certificado
 A1 da empresa: veja `robo/NFSE.md` e a seção 11 do `web/IMPLANTACAO.md`.
 
-**Na VPS (Hostinger, Ubuntu), ao lado do robô de certidões:** siga `servidor/LEIAME.md`. O robô roda com um
-Chrome próprio (tela virtual :11, porta 9223), religa sozinho e manda os arquivos ao Google Drive a cada 10 minutos.
+**Instalação VPS existente (Hostinger, Ubuntu):** configuração atual em `servidor/LEIAME.md`.
+A atualização dessa instalação e da cópia para o Drive será preparada na etapa operacional;
+a integração desta branch ainda não está ativada.
 
-```
-<pasta destino>/                   (padrão: a pasta Documentos do PC onde o robô roda \ RPA XML LotiVisse)
-  Arquivos baixados/
-    5-joao/                        (ID-NOME FANTASIA da planilha; sem ID, só o nome)
-      2026-09/
-        NF-e Saida - R$ 12.345,67/     NF-e Saida 2026-09.zip     (o ZIP do ATF, como veio)
-          PDF/                         <chave>.pdf de cada nota (DANFE, DANFC-e ou DACTE gerado do XML; também nos outros tipos)
-        NF-e Entrada - R$ 8.900,00/    NF-e Entrada 2026-09.zip
-        NFC-e - R$ 1.230,50/           NFC-e 2026-09.zip
-        CT-e Remetente - R$ 400,00/    CT-e Remetente 2026-09.zip        (valor da prestação, sem os cancelados)
-        CT-e Destinatario - R$ 950,00/ CT-e Destinatario 2026-09.zip
-        Faturas/                       Faturas 2026-09.pdf               (DAR/PIX dos lançamentos em aberto)
-        Extrato de Pagamentos/         Extrato de Pagamentos 2026-09.pdf
-        Omissão e Inadimplência/       Omissão e Inadimplência 2026-09.pdf   (o relatório completo)
-        Certidão de Débitos/           Certidão de Débitos 2026-09.pdf
-        Conferência Cartão de Crédito/ Conferência Cartão de Crédito 2026-09.pdf
-        NFS-e Emitidas/                XML e PDF de cada nota (Portal Nacional, sem as canceladas)
-        NFS-e Recebidas/               XML e PDF de cada nota
-        Retenções NFS-e 2026-09.xlsx   ISS, IRRF, PIS, COFINS, CSLL e INSS por nota e em totais
-      Dossiê MEI/                      Faturamento MEI 2026.xlsx e .json (um mês por linha; só Optante SIMEI)
-    _sem_empresa/        arquivo de empresa fora da rodada (ex.: consulta feita à mão no mesmo login)
-    _nao_identificados/  arquivo baixado que não é XML/ZIP (guardado como veio, para conferir)
-  _relatorios/           relatório de cada rodada
-  _diagnostico/          telas e campos quando algo não é reconhecido
+Nesta branch, ATF/MEI e NFS-e usam identidade por escritório; o Monitor Fiscal ainda
+aguarda sua etapa de integração. A ativação Windows/VPS, Drive e Domínio depende
+das validações de implantação do [plano de integração](docs/planos/integracao-isolamento-escritorios.md).
+
+```text
+<destino>/Arquivos por empresa v2/
+  portal/org_<uuid>--<rotulo>/
+    sefaz_pb/ie_<inscricao>--<rotulo>/
+      empresa.json
+      092026/<servico>/              ZIP/XML, PDFs dos serviços e PDFs das notas
+      Dossiê MEI/                   Faturamento MEI 2026.json e .xlsx
+    nfse_nacional/cnpj_<cnpj>--<rotulo>/
+      empresa.json
+      092026/                       XML/PDF individuais, lotes mensais e retenções
+  local/contexto_<uuid>--<rotulo>/   contexto persistente do modo local
+  _cache/                          cópia incremental da NFS-e por escritório/CNPJ
+  _caixas_atf/                      reserva do login enquanto a resposta está pendente
+  _travas/                         proteção das operações nos arquivos
+  _sem_empresa/                    anexos de outra empresa/período, por contexto e execução
+  _nao_identificados/               originais que precisam de conferência
+  _relatorios/                     resultado do modo local, por contexto e execução
+  _diagnostico/                    telas e passos, por contexto e execução
 ```
 
-O ZIP baixado do ATF **não é descompactado**: fica do jeito que veio. O robô só lê o conteúdo para
-saber de qual empresa e tipo ele é e para somar o **valor total** (vNF das notas autorizadas, sem as
-canceladas), que aparece no nome da pasta. Rodar de novo a mesma competência não duplica o arquivo; um
-arquivo novo soma no total e a pasta é renomeada.
+O nome e o código são rótulos; a identidade usa o UUID completo do escritório e o
+seu documento fiscal. Novas competências usam **MMAAAA**. Uma competência existente
+em **AAAA-MM** continua no mesmo caminho; encontrar os dois formatos interrompe a
+operação para conferência. Nenhuma pasta anterior é importada, movida ou apagada.
+
+Um ZIP cujas notas pertencem ao mesmo destino permanece intacto. ZIPs mistos são
+separados pelo conteúdo, e o original fica em conferência quando não pode ser
+publicado inteiro para um destino válido. Totais e PDFs consideram somente as
+notas atribuídas à empresa/tipo, sem duplicar receita em consultas repetidas.
+Detalhes de reserva, histórico MEI e recuperação: [robo/ATF.md](robo/ATF.md).
 
 O robô é ativado pelo **portal web**: o cliente envia a planilha modelo na área de agendamento,
 escolhe a competência e o horário, e o robô no seu PC executa.
@@ -115,7 +120,7 @@ em **rodadas de um login** (até 15 empresas):
    ser consultada de 1 em 1 minuto: o robô espera 65 s entre uma leitura e outra.
    **Até 3 leituras por rodada:** se a mensagem com o XML não aparecer, a rodada fica pendente e o robô
    **segue para as próximas tarefas**. No final ele lê a caixa **mais uma vez** para as pendentes (uma
-   resposta atrasada que aparecer durante outra rodada do mesmo login já vai para a empresa certa). Se
+   enquanto houver pendência, outra rodada do mesmo login é bloqueada pela reserva da caixa). Se
    mesmo assim faltar, o robô **para de vez**, com tudo o que funcionou salvo (no portal, essas tarefas
    ficam "Baixando…" até essa última leitura).
 4. **Distribui pelo conteúdo:** as mensagens têm todas o mesmo assunto e chegam fora de ordem, então cada
@@ -125,9 +130,10 @@ em **rodadas de um login** (até 15 empresas):
    no mesmo login) vai para `_sem_empresa` e não conta como resposta.
 5. **ATF lento:** se Minhas Mensagens não abrir, o robô espera 30 s e tenta de novo; depois de
    **3 tentativas** ele anuncia o erro e **para**, salvando antes o que já tinha sido baixado
-   (no portal, as tarefas voltam para a fila).
-6. Empresa/tipo sem XML: **Sem notas** se todas as respostas chegaram; **Erro** ("o ATF não entregou ...
-   em Minhas Mensagens") se nem a leitura do final trouxe.
+   (as tarefas em andamento e a reserva ficam para conferência antes da retomada).
+6. Empresa/tipo sem XML: **Sem notas** exige ausência confirmada no HTML ou numa resposta válida.
+   Anexo ausente/ilegível não comprova ausência de notas: fica como erro de conferência.
+   Se nem a leitura final trouxer a resposta, o resultado indica erro e a reserva permanece.
 
 **Proteção do login do contador:** se o ATF recusar um login, o robô não tenta de novo com a mesma
 senha nas outras empresas (tentativas repetidas podem bloquear o acesso). Elas ficam como
@@ -231,9 +237,16 @@ e `log.txt`. É com esse pacote que ajustamos o roteiro.
 
 ## Testes
 
-```bash
-cd robo && python -m pytest -q tests
+Na raiz do repositório, com a `.venv` preparada. Use uma pasta temporária curta e
+exclusiva; os testes de caminhos mantêm o limite operacional do Windows.
+
+```powershell
+$base = Join-Path $env:TEMP ('at-' + [guid]::NewGuid().ToString('N').Substring(0, 6))
+.\.venv\Scripts\python.exe -B -m pytest -q --basetemp $base robo/tests
 ```
+
+Para incluir Chrome no Windows, configure `CHROME_TESTE` com o caminho do executável.
+O teste abre um perfil descartável, sem interface, e um servidor ATF somente local.
 
 Inclui um **ATF simulado** num Chrome de verdade, com o menu, as telas FIS_1322/FIS_1484, os blocos
 Emitente/Destinatário (recusa os dois juntos) e a entrega atrasada em Minhas Mensagens, fora de ordem,

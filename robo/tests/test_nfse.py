@@ -544,8 +544,7 @@ def test_falha_ao_ler_historico_nao_consulta_api_nem_grava_zero(monkeypatch):
     def falhar(*args, **kwargs): raise RuntimeError("Banco indisponível")
     def nao_consultar(*args): raise AssertionError("Não deve consultar sem ler o histórico")
     monkeypatch.setattr(robo_xml, "executar_nfse", nao_consultar)
-    def finalizar(t, resultado, *, reservada):
-        assert reservada
+    def finalizar(t, resultado):
         finalizados.append(resultado)
         return True
     portal = SimpleNamespace(atualizar_tarefa_reservada=lambda *a: True, meses_nfse_consultados=falhar)

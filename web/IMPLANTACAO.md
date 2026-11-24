@@ -1,5 +1,10 @@
 # Implantação do LotiVisse XML
 
+Nesta branch, a integração ATF/MEI e NFS-e por escritório ainda aguarda homologação
+operacional. A atualização de VPS, Drive e Domínio será preparada na etapa própria;
+consulte o [plano de integração](../docs/planos/integracao-isolamento-escritorios.md)
+e o [procedimento ATF/MEI](../robo/ATF.md) antes de atualizar instalações existentes.
+
 Três partes: o **banco** (Supabase), o **portal** (Vercel, em `xml.lotivisse.com.br`) e o **robô** (seu PC).
 
 Na Vercel, o projeto precisa de **Root Directory = `web`** e **Framework Preset = Next.js** (o `web/vercel.json`
@@ -82,15 +87,22 @@ precisam ser enviadas de novo. Para ver a pública de novo: `python robo_xml.py 
 
 ## 6. Monitoramento de Faturamento MEI
 
-1. **Atualize o banco:** no **SQL Editor**, rode de novo todo o `web/supabase/schema.sql` (cria as tabelas
-   `xml_mei_meses` e `xml_mei_ajustes`, as funções `xml_mei_registrar`/`xml_mei_registrar_ie` e a coluna
-   `nome_fixo` das empresas; não apaga nada).
-2. **Atualize o robô** no PC (copie a pasta `robo/` nova) e ligue-o de novo. Ao ligar, ele manda ao painel o
-   faturamento MEI que já está salvo no PC (`Arquivos baixados/<empresa>/Dossiê MEI/*.json`); depois, a cada
-   Dossiê MEI, manda o ano inteiro da empresa. Para só enviar o histórico, sem processar a fila:
-   `python robo_xml.py --enviar-mei`. No log aparece "Monitoramento MEI: N de M empresa(s) enviadas ao painel".
-3. Enquanto o banco ou o robô não forem atualizados, o painel usa o resumo do mês guardado em cada execução do
-   Dossiê MEI (sem o detalhe por documento).
+1. **Integração por escritório.** Confira o histórico de migrações. Os contratos
+   de contexto de 16/11 precedem `20261123180000_reserva_tarefas_nfse.sql` e
+   `20261123181000_reserva_tarefas_atf.sql`. O robô atualizado usa as filas e
+   retornos por tentativa. Os contratos antigos permanecem disponíveis durante
+   a transição. Use as migrações pendentes do ambiente como procedimento de
+   atualização, após homologação e autorização.
+2. O robô reenvia somente históricos validados de
+   `Arquivos por empresa v2/portal/org_<uuid>--<rotulo>/sefaz_pb/ie_<ie>--<rotulo>/Dossiê MEI/`.
+   Dados locais ou anteriores sem identidade não são distribuídos por IE entre escritórios.
+   Para conferir o destino e reenviar, use `python robo_xml.py --conferir-banco` e,
+   após confirmar o ambiente pretendido,
+   `python robo_xml.py --enviar-mei --confirmar-banco https://SEU-PROJETO.supabase.co`.
+3. O JSON é a fonte local; a planilha pode ser reconstruída após falha. A reserva da caixa
+   ATF não é liberada apenas porque o processo parou ou a fila retomou uma tarefa.
+   Procedimentos e limites: [ATF/MEI](../robo/ATF.md) e
+   [plano de implantação](../docs/planos/integracao-isolamento-escritorios.md).
 4. No portal, **Monitoramento MEI** lista todos os MEIs do maior para o menor faturamento no ano (barras na
    mesma escala, com as linhas de 80%, do limite e de +20%); ao clicar, o painel do MEI mostra o uso dos
    limites de faturamento e de compras, o gráfico mês a mês/acumulado e os **lançamentos manuais**.
@@ -174,7 +186,8 @@ compartilhamento e os dados estruturados (o que é o site). A área logada e as 
    perfil da empresa no Google (Google Meu Negócio).
 
 ## Robô de XML na VPS
-Siga `servidor/LEIAME.md`. Na VPS o robô separa os arquivos por escritório (`pastas.por_escritorio`): rode o
+Siga `servidor/LEIAME.md`. A separação atual por nome (`pastas.por_escritorio`) ainda é usada pelo Monitor Fiscal;
+ATF/NFS-e usam UUID. Os scripts de instalação/Drive ainda exigem adaptação antes da troca: rode o
 `supabase/schema.sql` de novo para a fila do portal informar o escritório de cada tarefa.
 
 ## 11. NFS-e pelo Portal Nacional (certificado A1)
@@ -191,7 +204,7 @@ e sem captcha. O acesso é o **certificado digital A1 (e-CNPJ)** da empresa; o d
    1. Em **Certificados**, envie o .pfx e a senha de cada empresa. O portal confere a senha, lê o CNPJ e a validade e
       avisa quando faltar 30 dias para vencer.
    2. Em **Agendar > Portal Nacional (NFS-e)**, envie a planilha modelo da NFS-e (CNPJ, nome e os serviços).
-   3. Cada empresa ganha, em `Arquivos baixados/<ID>-<Nome>/<MMAAAA>/`, as pastas `NFS-e Emitidas` e
+   3. Cada empresa ganha, em `Arquivos por empresa v2/portal/org_<uuid>--<rotulo>/nfse_nacional/cnpj_<cnpj>--<rotulo>/<MMAAAA>/`, as pastas `NFS-e Emitidas` e
       `NFS-e Recebidas` (XML e PDF), o `Retenções NFS-e AAAA-MM.xlsx` e o mês inteiro num XML só (`NFS-e Emitidas MMAAAA.xml`
       e o das recebidas), no envelope ABRASF que a importação da Domínio lê.
 5. **Teste sem o portal:** na primeira execução, use `robo\testar_nfse.bat --criar-contexto-local`
@@ -202,8 +215,9 @@ e sem captcha. O acesso é o **certificado digital A1 (e-CNPJ)** da empresa; o d
 e-CNPJ do escritório ou o e-CPF do contador. Ele vale para todas as empresas que deram procuração eletrônica ao
 escritório no e-CAC; as empresas com certificado próprio continuam usando o delas. Rode o `supabase/schema.sql` de novo.
 
-O robô guarda no PC uma cópia das notas já recebidas (`robo/nfse_cache`, fora do git): a próxima busca traz só o
-que for novo. Endereços e regras da API: `robo/NFSE.md`.
+O robô guarda as notas já recebidas em
+`<destino>/Arquivos por empresa v2/_cache/nfse/<portal|local>/<uuid>/<cnpj>`:
+a próxima busca traz só o que for novo. O diretório anterior `robo/nfse_cache` permanece preservado e não é importado automaticamente. Endereços e regras da API: `robo/NFSE.md`.
 
 ### Páginas por assunto e Bing (Edge)
 

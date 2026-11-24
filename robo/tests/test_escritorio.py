@@ -18,8 +18,9 @@ class PortalFalso:
     def __init__(self):
         self.atualizacoes = []
 
-    def atualizar_tarefa(self, tid, campos):
-        self.atualizacoes.append((tid, campos))
+    def atualizar_tarefa_reservada(self, tarefa, campos):
+        self.atualizacoes.append((tarefa["id"], campos))
+        return True
 
 
 def test_rodada_da_sefaz_usa_a_pasta_do_escritorio(tmp_path):
@@ -29,17 +30,17 @@ def test_rodada_da_sefaz_usa_a_pasta_do_escritorio(tmp_path):
     robo.privada, robo.executor, robo.portal = privada, ExecutorFalso(), PortalFalso()
     robo.em_curso, robo.aguardando, robo.chrome_ok = {}, {}, True
     senha = cripto.cifrar("certa", cripto.publica_de(privada))
-    lote = [{"id": f"t{i}", "ie": ie, "nome": nome, "tipos": ["nfe_saida"], "data_inicio": "2026-09-01",
-             "data_fim": "2026-09-30", "login_atf": "mar00134", "senha_cifrada": senha, "org_nome": "Contábil Sousa"}
+    lote = [{"id": f"t{i}", "tentativa_id": f"reserva-{i}", "ie": ie, "nome": nome, "tipos": ["nfe_saida"], "data_inicio": "2026-09-01",
+             "data_fim": "2026-09-30", "login_atf": "mar00134", "senha_cifrada": senha, "org_nome": "Contábil Sousa", "org_id": "7b245ed0-a8a0-4242-bcf0-24c8eb2895c6"}
             for i, (ie, nome) in enumerate([("160123453", "Padaria"), ("160987652", "Mercado")])]
     robo.processar(lote)
-    assert {t.destino for t in robo.executor.trabalhos} == {str(tmp_path / "Contábil Sousa")}
+    assert {t.contexto.contexto_id for t in robo.executor.trabalhos} == {lote[0]["org_id"]}
     assert all(t.senha == "" for t in robo.executor.trabalhos)  # a senha não fica na memória depois da rodada
-    # sem a opção (robô do computador): tudo na pasta de sempre
+    # A identidade é obrigatória mesmo quando uma configuração antiga desliga por_escritorio.
     robo.cfg["pastas"]["por_escritorio"] = False
     robo.executor = ExecutorFalso()
     robo.processar(lote)
-    assert {t.destino for t in robo.executor.trabalhos} == {str(tmp_path)}
+    assert {t.contexto.contexto_id for t in robo.executor.trabalhos} == {lote[0]["org_id"]}
 
 
 def test_sinal_de_vida_continua_no_meio_da_rodada(monkeypatch):
