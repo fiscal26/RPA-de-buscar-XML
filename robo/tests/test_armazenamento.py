@@ -163,6 +163,31 @@ with trava_exclusiva(Path(sys.argv[1])):
         assert pasta.is_dir()
 
 
+def test_reabre_empresa_apos_queda_na_primeira_publicacao(destino):
+    script = """
+import os
+import sys
+import armazenamento
+
+def interromper(*args):
+    os._exit(7)
+
+armazenamento.gravar_json_atomico = interromper
+contexto = armazenamento.ContextoArmazenamento("portal", sys.argv[2], "sefaz_pb", "ie", "160123453", "Empresa")
+with armazenamento.abrir_empresa(sys.argv[1], contexto):
+    sys.exit(2)
+"""
+    processo = subprocess.run(
+        [sys.executable, "-B", "-c", script, str(destino), ORG_A],
+        cwd=Path(armazenamento.__file__).parent, timeout=10, check=False,
+    )
+    assert processo.returncode == 7
+    with abrir_empresa(destino, EMPRESA) as pasta:
+        metadados = json.loads((pasta / "empresa.json").read_text(encoding="utf-8"))
+    assert metadados["identidade"] == EMPRESA.identidade
+    assert [entrada for entrada in pasta.parent.iterdir() if entrada.name.startswith("ie_160123453")] == [pasta]
+
+
 def test_falha_ao_atualizar_metadados_preserva_versao_anterior(destino, monkeypatch):
     with abrir_empresa(destino, EMPRESA) as pasta:
         metadados = pasta / "empresa.json"

@@ -184,6 +184,40 @@ def test_xml_invalido_nao_avanca_nsu_e_reconsulta_o_documento(tmp_path, xml_inva
     assert nfse.Cache(pasta).ultimo_nsu == 2
 
 
+@pytest.mark.parametrize("valor", [b"", b"<vServ>invalido</vServ>", b"<vServ>NaN</vServ>"])
+def test_nota_sem_valor_valido_nao_avanca_nsu(tmp_path, valor):
+    nota = documentos_exemplo()[0]
+    invalida = (*nota[:3], nota[3].replace(b"<vServ>1000.00</vServ>", valor))
+    pasta = tmp_path / DONO
+    with pytest.raises(nfse.ErroADN):
+        nfse.atualizar_cache(cliente(PortalFalso([invalida])), nfse.Cache(pasta))
+
+    cache = nfse.Cache(pasta)
+    assert cache.ultimo_nsu == 0
+    assert not (pasta / "1.xml").exists()
+    zero = (*nota[:3], nota[3].replace(b"<vServ>1000.00</vServ>", b"<vServ>0.00</vServ>"))
+    assert nfse.atualizar_cache(cliente(PortalFalso([zero])), cache) == 1
+    assert nfse.resumo_mei(cache, DONO, "2026-09")["valor"] == 0
+    assert nfse.resumo_mei(cache, DONO, "2026-09")["quantidade"] == 1
+
+
+@pytest.mark.parametrize("xml_invalido", [b"", b"<raiz/>", evento_xml("")])
+def test_cancelamento_sem_dados_nao_avanca_nsu_e_pode_ser_reconsultado(tmp_path, xml_invalido):
+    nota = documentos_exemplo()[0]
+    pasta = tmp_path / DONO
+    with pytest.raises(nfse.ErroADN):
+        nfse.atualizar_cache(cliente(PortalFalso([nota, (2, "EVENTO", C1, xml_invalido)])), nfse.Cache(pasta))
+
+    cache = nfse.Cache(pasta)
+    assert cache.ultimo_nsu == 1
+    assert nfse.resumo_mei(cache, DONO, "2026-09")["valor"] == 1000
+    portal = PortalFalso([nota, (2, "EVENTO", C1, evento_xml(C1))])
+    assert nfse.atualizar_cache(cliente(portal), cache) == 1
+    assert portal.pedidos[0][0].endswith("/DFe/1")
+    assert nfse.resumo_mei(cache, DONO, "2026-09")["valor"] == 0
+    assert nfse.Cache(pasta).ultimo_nsu == 2
+
+
 def test_espera_e_repete_quando_o_portal_limita(tmp_path):
     esperas = []
     portal = PortalFalso(documentos_exemplo()[:1], falhas=[Resposta(429, {}, cabecalhos={"Retry-After": "3"}),

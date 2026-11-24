@@ -8,10 +8,11 @@ const { pgcrypto } = require('@electric-sql/pglite/contrib/pgcrypto');
 const schema = fs.readFileSync(path.join(__dirname, '../supabase/schema.sql'), 'utf8').replace(/\r\n/g, '\n');
 const migracao = fs.readFileSync(path.join(__dirname, '../supabase/migrations/20261116100000_nfse_por_contexto.sql'), 'utf8');
 const migracaoReserva = fs.readFileSync(path.join(__dirname, '../supabase/migrations/20261123180000_reserva_tarefas_nfse.sql'), 'utf8').replace(/\r\n/g, '\n');
+const migracaoLegado = fs.readFileSync(path.join(__dirname, '../supabase/migrations/20261124190000_filas_nfse_compativeis_com_reservas.sql'), 'utf8').replace(/\r\n/g, '\n');
 const id = (n) => '00000000-0000-4000-8000-' + String(n).padStart(12, '0');
 const ids = (...ns) => ns.map(n => `'${id(n)}'`).join(',');
 const cnpj = '11222333000262';
-for (const bloco of [migracao, migracaoReserva]) {
+for (const bloco of [migracao, migracaoReserva, migracaoLegado]) {
   assert.ok(schema.includes(bloco.replace(/\r\n/g, '\n')));
 }
 
@@ -22,22 +23,28 @@ test('NFS-e por contexto preserva contratos, recursos atuais e isolamento', asyn
     await db.exec(`create role anon; create role authenticated; create role service_role bypassrls;
       create schema auth; create table auth.users(id uuid primary key);
       create function auth.uid() returns uuid language sql stable as 'select null::uuid';`);
-    await db.exec(schema.replace(migracaoReserva, ''));
-    const contratos = `select oid::regprocedure::text as assinatura,pg_get_functiondef(oid) as definicao
+    await db.exec(schema.replace(migracaoReserva, '').replace(migracaoLegado, ''));
+    // No Supabase o serviço pode fazer PATCH direto. O PostgreSQL em memória não traz essa concessão padrão.
+    await db.exec('grant select, update on public.xml_tarefas to service_role');
+    const contratos = `select oid::regprocedure::text as assinatura, pg_get_function_result(oid) as retorno,
+      pg_get_functiondef(oid) as definicao
       from pg_proc where pronamespace='public'::regnamespace and proname in
-      ('xml_nfse_pegar_lote','xml_pegar_lote','xml_mei_registrar','xml_mei_registrar_ie') order by assinatura`;
+      ('xml_nfse_pegar_lote','xml_nfse_pegar_lote_v2','xml_pegar_lote','xml_mei_registrar','xml_mei_registrar_ie') order by assinatura`;
     const anteriores = await rows(contratos);
-    assert.equal(anteriores.length, 4);
+    assert.equal(anteriores.length, 5);
     const conferirContratos = async () => {
       const atuais = await rows(contratos);
-      assert.deepEqual(atuais.map(c => c.assinatura), anteriores.map(c => c.assinatura));
-      const semFilaAtf = cs => cs.filter(c => !c.assinatura.startsWith('xml_pegar_lote('));
-      assert.deepEqual(semFilaAtf(atuais), semFilaAtf(anteriores));
+      const assinaturas = cs => cs.map(({ assinatura, retorno }) => ({ assinatura, retorno }));
+      assert.deepEqual(assinaturas(atuais), assinaturas(anteriores));
+      const contratosMei = cs => cs.filter(c => c.assinatura.startsWith('xml_mei_registrar'));
+      assert.deepEqual(contratosMei(atuais), contratosMei(anteriores));
     };
     await db.exec(migracao);
     await db.exec(migracao);
     await db.exec(migracaoReserva);
     await db.exec(migracaoReserva);
+    await db.exec(migracaoLegado);
+    await db.exec(migracaoLegado);
     await conferirContratos();
     await db.exec("create view public.dependencia_ensaio as select id from public.xml_nfse_pegar_lote_v2('ensaio',1)");
     await assert.rejects(db.exec(migracao), erro => erro.code === '2BP01');
@@ -48,7 +55,8 @@ test('NFS-e por contexto preserva contratos, recursos atuais e isolamento', asyn
       has_function_privilege('authenticated','public.xml_nfse_pegar_lote_v2(text,integer)','execute') as web,
       has_function_privilege('service_role','public.xml_nfse_pegar_lote_v2(text,integer)','execute') as robo`);
     assert.deepEqual(permissoes, { anon: false, web: false, robo: true });
-    for (const assinatura of ['xml_nfse_reservar_lote(text,integer)', 'xml_atualizar_tarefa_reservada(uuid,uuid,jsonb)',
+    for (const assinatura of ['xml_nfse_pegar_lote(text,integer)', 'xml_nfse_reservar_lote(text,integer)',
+      'xml_atualizar_tarefa_reservada(uuid,uuid,jsonb)',
       'xml_devolver_tarefa_reservada(uuid,uuid)']) {
       const [p] = await rows(`select has_function_privilege('anon',$1,'execute') as anon,
         has_function_privilege('authenticated',$1,'execute') as web,
@@ -87,7 +95,7 @@ test('NFS-e por contexto preserva contratos, recursos atuais e isolamento', asyn
         (${ids(67,1,54,31)},'${cnpj}',array['nfse_emitidas']),
         (${ids(68,1,56,31)},'${cnpj}',array['nfse_emitidas']);
       insert into public.xml_tarefas(id,org_id,agendamento_id,empresa_id,ie,tipos,status,iniciado_em,robo) values
-        (${ids(69,1,55,21)},'160123453',array['mei'],'processando',now()-interval '91 minutes','atf-antigo');
+        (${ids(69,1,55,21)},'160123453',array['mei'],'processando',now()-interval '91 minutes','ensaio');
       update public.xml_tarefas set status='processando',iniciado_em=now()-interval '91 minutes',robo='nfse-antigo'
         where id=${ids(68)};
       insert into public.xml_mei_cadastros(org_id,cnpj,nome,ativo,inicio_atividade,inicio_mei) values
@@ -113,6 +121,7 @@ test('NFS-e por contexto preserva contratos, recursos atuais e isolamento', asyn
     const estados = await rows(`select id,status from public.xml_tarefas where id in (${ids(63,64,65,66,67)}) order by id`);
     assert.deepEqual(estados.map(t => t.status), ['pendente','erro','erro','erro','certificado']);
     assert.equal((await rows("select * from public.xml_nfse_reservar_lote('outro',20)")).length, 0);
+    await db.exec(`update public.xml_agendamentos set executar_em=now()+interval '1 day' where id=${ids(53)}`);
 
     const atualizar = async (tarefa, tentativa, campos) => (await rows(
       "select public.xml_atualizar_tarefa_reservada($1,$2,$3) as aceitou",
@@ -122,18 +131,40 @@ test('NFS-e por contexto preserva contratos, recursos atuais e isolamento', asyn
     await db.exec(`update public.xml_tarefas set reserva_ate = now() + interval '2 minutes',
       iniciado_em = now() - interval '91 minutes' where id = '${a.id}'`);
     const estado = async () => (await rows(
-      'select status,iniciado_em,reserva_ate,tentativa_id,robo,mensagem from public.xml_tarefas where id=$1', [a.id]))[0];
+      'select status,iniciado_em,reserva_ate,tentativa_id,tentar_novamente_em,robo,mensagem from public.xml_tarefas where id=$1', [a.id]))[0];
+    const filasAnteriores = ['xml_nfse_pegar_lote', 'xml_nfse_pegar_lote_v2'];
+    const retirarAnterior = fila => rows(`select id from public.${fila}('legado',1)`);
     const antes = await estado();
     assert.equal(await atualizar(a.id, a.tentativa_id, { mensagem: 'Em andamento' }), true);
     const renovada = await estado();
     assert.deepEqual(renovada.iniciado_em, antes.iniciado_em);
     assert.ok(renovada.reserva_ate > antes.reserva_ate);
     assert.equal((await rows("select id from public.xml_nfse_reservar_lote('outro',1)")).length, 0);
+    for (const fila of filasAnteriores) {
+      assert.deepEqual(await retirarAnterior(fila), [], `${fila} deve respeitar a reserva renovada`);
+    }
+    // O reinício antigo devolve por nome de robô, sem filtrar a origem nem a tentativa.
+    await db.exec('set role service_role');
+    try {
+      const devolvidas = await rows(`update public.xml_tarefas
+        set status='pendente', iniciado_em=null, robo=null
+        where status='processando' and robo='ensaio' returning id`);
+      assert.deepEqual(await rows("select id from public.xml_nfse_reservar_lote('depois-do-reinicio',20)"), []);
+      assert.deepEqual(devolvidas, [{ id: id(69) }]);
+      assert.deepEqual(await rows("update public.xml_tarefas set nome='Filial renomeada' where id=$1 returning id", [a.id]),
+        [{ id: a.id }]);
+    } finally {
+      await db.exec('reset role');
+    }
     assert.deepEqual(await rows("select id from public.xml_pegar_lote('ATF', '', 10)"), [{ id: id(69) }]);
     assert.deepEqual(await estado(), renovada);
 
     await db.exec(`update public.xml_tarefas set reserva_ate = now() - interval '1 second' where id = '${a.id}'`);
+    assert.deepEqual(await retirarAnterior('xml_nfse_pegar_lote'), [{ id: a.id }]);
+    assert.equal((await estado()).tentativa_id, null);
+    assert.equal((await estado()).robo, 'legado');
     assert.equal(await atualizar(a.id, a.tentativa_id, { mensagem: 'Expirada' }), false);
+    await db.query("update public.xml_tarefas set iniciado_em = now() - interval '91 minutes' where id = $1", [a.id]);
     const [nova] = await rows("select * from public.xml_nfse_reservar_lote('outro',1)");
     assert.equal(nova.id, a.id);
     assert.notEqual(nova.tentativa_id, a.tentativa_id);
@@ -147,9 +178,18 @@ test('NFS-e por contexto preserva contratos, recursos atuais e isolamento', asyn
       'select public.xml_devolver_tarefa_reservada($1,$2) as aceitou', [a.id, tentativa]))[0].aceitou;
     assert.equal(await devolver(a.tentativa_id), false);
     assert.equal(await devolver(nova.tentativa_id), true);
-    assert.equal((await estado()).status, 'pendente');
+    const reagendada = await estado();
+    assert.equal(reagendada.status, 'pendente');
+    assert.ok(reagendada.tentar_novamente_em);
     assert.equal((await rows("select id from public.xml_nfse_reservar_lote('outro',1)")).length, 0);
+    for (const fila of filasAnteriores) {
+      assert.deepEqual(await retirarAnterior(fila), [], `${fila} deve respeitar o horário da próxima tentativa`);
+    }
+    assert.deepEqual(await estado(), reagendada);
     await db.query("update public.xml_tarefas set tentar_novamente_em = now() - interval '1 second' where id = $1", [a.id]);
+    assert.deepEqual(await retirarAnterior('xml_nfse_pegar_lote_v2'), [{ id: a.id }]);
+    assert.equal((await estado()).tentar_novamente_em, null);
+    await db.query("update public.xml_tarefas set iniciado_em = now() - interval '91 minutes' where id = $1", [a.id]);
     const [retomada] = await rows("select * from public.xml_nfse_reservar_lote('outro',1)");
     assert.equal(retomada.id, a.id);
     assert.notEqual(retomada.tentativa_id, nova.tentativa_id);

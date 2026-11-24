@@ -330,11 +330,23 @@ def test_consulta_parcial_preserva_lote_da_direcao_desmarcada(
     assert lote.read_bytes() == anterior
 
 
-@pytest.mark.parametrize("servico, subpasta, prestador, tomador", [
-    ("nfse_emitidas", nfse.PASTA_EMITIDAS, DONO, CLIENTE),
-    ("nfse_recebidas", nfse.PASTA_RECEBIDAS, CLIENTE, DONO),
+@pytest.mark.parametrize("servico, subpasta, prestador, tomador, documento_invalido", [
+    pytest.param(
+        "nfse_emitidas", nfse.PASTA_EMITIDAS, DONO, CLIENTE,
+        (2, "EVENTO", C1, evento_xml(C1[:-1])),
+        id="chave-de-cancelamento-truncada",
+    ),
+    pytest.param(
+        "nfse_recebidas", nfse.PASTA_RECEBIDAS, CLIENTE, DONO,
+        (2, "NFSE", C2, documento(chave=C2, numero="2")[3].replace(
+            b"<vServ>100.00</vServ>", b"<vServ>1e30</vServ>"
+        )),
+        id="valor-em-notacao-exponencial",
+    ),
 ])
-def test_cancelamento_que_zera_mes_atualiza_lote_e_faturamento(cfg, chaves, servico, subpasta, prestador, tomador):
+def test_cancelamento_atualiza_lote_e_faturamento_apos_reconsulta(
+    cfg, chaves, servico, subpasta, prestador, tomador, documento_invalido,
+):
     import xml.etree.ElementTree as ET
 
     t = tarefa(chaves, [servico, "nfse_retencoes"])
@@ -362,7 +374,18 @@ def test_cancelamento_que_zera_mes_atualiza_lote_e_faturamento(cfg, chaves, serv
     assert r.status == "sem_notas"
     assert quantidades_e_valores() == esperado
 
-    r = robo_xml.executar_nfse(cfg, t, chaves[0], sessao_falsa=PortalFalso([(2, "EVENTO", C1, evento_xml(C1))]))
+    lote_anterior, planilha_anterior = lote.read_bytes(), planilha.read_bytes()
+    invalido = PortalFalso([documento_invalido])
+    r = robo_xml.executar_nfse(cfg, t, chaves[0], sessao_falsa=invalido)
+    assert r.status == "erro" and "mei_nfse" not in r.detalhes
+    assert lote.read_bytes() == lote_anterior and planilha.read_bytes() == planilha_anterior
+    cache = area_do_contexto(cfg["pastas"]["destino"], "_cache", "portal", ORG, DONO)
+    assert nfse.Cache(cache).ultimo_nsu == 1
+    assert not (cache / "2.xml").exists()
+
+    corrigido = PortalFalso([(2, "EVENTO", C1, evento_xml(C1))])
+    r = robo_xml.executar_nfse(cfg, t, chaves[0], sessao_falsa=corrigido)
+    assert corrigido.pedidos[0][0].endswith("/DFe/1")
     assert r.status == "sem_notas" and r.detalhes["mei_nfse"]["meses"][0]["valor"] == 0
     assert r.detalhes[servico]["situacao"] == "sem_movimento"
     assert not ET.fromstring(lote.read_bytes()).findall('.//{http://www.abrasf.org.br/nfse.xsd}CompNfse')

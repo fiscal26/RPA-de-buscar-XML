@@ -194,7 +194,9 @@ e sem captcha. O acesso é o **certificado digital A1 (e-CNPJ)** da empresa; o d
    3. Cada empresa ganha, em `Arquivos baixados/<ID>-<Nome>/<MMAAAA>/`, as pastas `NFS-e Emitidas` e
       `NFS-e Recebidas` (XML e PDF), o `Retenções NFS-e AAAA-MM.xlsx` e o mês inteiro num XML só (`NFS-e Emitidas MMAAAA.xml`
       e o das recebidas), no envelope ABRASF que a importação da Domínio lê.
-5. **Teste sem o portal:** `robo\testar_nfse.bat` (pede o .pfx e a senha na hora; nada fica gravado).
+5. **Teste sem o portal:** na primeira execução, use `robo\testar_nfse.bat --criar-contexto-local`
+   para gravar o identificador local no `config.json`. Nas próximas, use `robo\testar_nfse.bat`.
+   O atalho pede o arquivo .pfx e a senha a cada execução.
 
 **Procuração (desde 01/11/2026):** em Certificados, marque "Certificado do escritório (procuração)" ao enviar o
 e-CNPJ do escritório ou o e-CPF do contador. Ele vale para todas as empresas que deram procuração eletrônica ao

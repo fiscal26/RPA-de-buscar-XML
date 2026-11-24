@@ -118,10 +118,13 @@ config.json. Reutilize o mesmo identificador nas próximas execuções.
 .\robo\testar_nfse.bat --criar-contexto-local
 ```
 
-Confira o histórico do ambiente antes de aplicar as migrações
-`20261116100000_nfse_por_contexto.sql` e `20261123180000_reserva_tarefas_nfse.sql`.
-O robô atualizado usa as funções da segunda migração. Os contratos anteriores
-continuam disponíveis durante a transição. A fila legada de ATF só reabre
+Confira o histórico do ambiente antes de aplicar as migrações da NFS-e:
+`20261116100000_nfse_por_contexto.sql`, `20261123180000_reserva_tarefas_nfse.sql` e
+`20261124190000_filas_nfse_compativeis_com_reservas.sql`.
+O robô atualizado usa as funções da segunda migração. A terceira mantém as filas
+anteriores disponíveis e faz com que respeitem a reserva vigente e o horário da
+próxima tentativa. O reinício de um robô antigo também preserva as tarefas
+reservadas. A fila legada de ATF só reabre
 tarefas SEFAZ. Pause os consumidores de NFS-e que ainda usam o contrato anterior
 antes de iniciar o robô atualizado no mesmo banco.
 A aplicação operacional depende da revisão, da homologação e da autorização da

@@ -31,6 +31,9 @@ ADN = "https://adn.nfse.gov.br"
 PASSAGEIROS = {429, 502, 503, 504}
 PASTA_EMITIDAS = "NFS-e Emitidas"
 PASTA_RECEBIDAS = "NFS-e Recebidas"
+_CHAVE_ACESSO = re.compile(r"[0-9]{50}")
+# Formato TSDec15V2 do esquema nacional para vServ.
+_VALOR_SERVICO = re.compile(r"(?:0|[1-9][0-9]{0,14})(?:\.[0-9]{2})?")
 
 
 class ErroADN(Exception):
@@ -265,7 +268,7 @@ class Cache:
 
     def guardar(self, nsu: int, tipo: str, chave: str, xml: bytes):
         self.pasta.mkdir(parents=True, exist_ok=True)
-        if xml or tipo.upper() == "NFSE":
+        if xml or tipo.upper() in ("NFSE", "EVENTO"):
             self._validar_xml(tipo, xml)
             caminho = self._arquivo(f"{nsu}.xml")
             publicar_arquivo(caminho, lambda temporario: temporario.write_bytes(xml))
@@ -278,11 +281,16 @@ class Cache:
 
     @staticmethod
     def _validar_xml(tipo: str, dados: bytes):
-        if tipo.upper() == "NFSE":
+        tipo = tipo.upper()
+        if tipo == "NFSE":
             nota = ler_nfse(dados)
-            if (nota is None or not re.fullmatch(r"[0-9]{1,50}", nota.chave)
+            if (nota is None or not _CHAVE_ACESSO.fullmatch(nota.chave)
                     or not re.fullmatch(r"[0-9]{4}-(0[1-9]|1[0-2])", nota.competencia)):
                 raise ErroADN("Documento ausente ou inválido no cache NFS-e.")
+        elif tipo == "EVENTO":
+            chave, codigo = chave_do_evento(dados)
+            if not codigo or not _CHAVE_ACESSO.fullmatch(chave):
+                raise ErroADN("O evento da NFS-e não tem XML válido com chave e código.")
         else:
             try:
                 ET.fromstring(dados)
@@ -298,8 +306,8 @@ class Cache:
                 dados = arq.read_bytes()
                 self._validar_xml(info["tipo"], dados)
                 yield int(nsu), info["tipo"], dados
-            elif info["tipo"].upper() == "NFSE":
-                raise ErroADN("O índice aponta para uma NFS-e sem XML. Confira a pasta do cache.")
+            elif info["tipo"].upper() in ("NFSE", "EVENTO"):
+                raise ErroADN("O índice aponta para uma nota ou evento sem XML. Confira a pasta do cache.")
 
 
 def atualizar_cache(cliente: ClienteADN, cache: Cache, *, confirmar_reserva=None) -> int:
@@ -423,7 +431,10 @@ def ler_nfse(dados: bytes) -> NotaServico | None:
         n.tomador_nome = _txt(toma, "xNome")
     n.servico_codigo = _txt(dps, "cTribNac")
     n.servico_descricao = _txt(dps, "xDescServ")
-    n.valor_servico = _num(dps, "vServ")
+    valor_servico = _txt(dps, "vServPrest", "vServ")
+    if not _VALOR_SERVICO.fullmatch(valor_servico):
+        return None
+    n.valor_servico = float(valor_servico)
 
     trib_mun = _achar(dps, "tribMun")
     tp_ret_iss = _txt(trib_mun, "tpRetISSQN") if trib_mun is not None else ""
@@ -629,7 +640,7 @@ def baixar_competencia(cliente: ClienteADN, contexto: ContextoArmazenamento, com
             pasta = criar_subpasta_validada(pasta_mes, sub)
             for nota, xml in lista:
                 base = nota.chave
-                if not re.fullmatch(r"[0-9]{1,50}", base):
+                if not _CHAVE_ACESSO.fullmatch(base):
                     raise ErroADN("Chave de acesso inválida na NFS-e.")
                 publicar(arquivo_validado(pasta, f"{base}.xml"), lambda temporario: temporario.write_bytes(xml))
                 if pdf:

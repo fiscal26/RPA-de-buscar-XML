@@ -8,7 +8,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from tempfile import NamedTemporaryFile
+from tempfile import NamedTemporaryFile, TemporaryDirectory
 from uuid import UUID
 
 from documentos import cnpj_valido, ie_pb_valida
@@ -317,13 +317,16 @@ def abrir_empresa(destino: str | Path, contexto: ContextoArmazenamento, *, somen
         if pasta is None:
             if somente_leitura:
                 raise FileNotFoundError(nova_pasta)
-            pasta = _diretorio(nova_pasta)
             dados = {
                 "versao": VERSAO, "identidade": contexto.identidade,
                 "criado_em": datetime.now(timezone.utc).isoformat(),
                 "rotulos_iniciais": contexto.rotulos, "rotulos_atuais": contexto.rotulos,
             }
-            gravar_json_atomico(pasta / "empresa.json", dados)
+            # A pasta definitiva só aparece quando os metadados já estão gravados.
+            with TemporaryDirectory(prefix=".v2-empresa-", dir=origem) as temporaria:
+                preparacao = _diretorio(Path(temporaria) / "empresa")
+                gravar_json_atomico(preparacao / "empresa.json", dados)
+                pasta = preparacao.rename(nova_pasta)
         else:
             _verificar_tamanho(pasta, RESERVA_ARQUIVOS)
             dados = _ler_metadados(pasta / "empresa.json", contexto)
