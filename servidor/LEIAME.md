@@ -170,6 +170,12 @@ A VPS tem 4 GB e 4 GB de reserva (swap), e cada robô usa um Chrome. Confira de 
 - **O robô não aparece no portal:** `sudo lotivisse configurar xml` e confira o endereço e a chave do Supabase do portal de XML.
 - **"Senha não pôde ser lida" ou "certificado não pôde ser aberto" nas tarefas:** a chave privada não é a do
   computador do escritório (passo 4).
+- **O extrato de pagamentos abre em pop-up no computador e expira no robô:** em uma instalação existente,
+  abra `/etc/lotivisse/xml.env` com `sudoedit` e inclua `--disable-popup-blocking` em `CHROME_EXTRAS`.
+  Se estiver vazio, deixe `CHROME_EXTRAS=--disable-popup-blocking`. Se já houver opções, mantenha-as e acrescente
+  a nova opção à lista. Rode `sudo lotivisse reiniciar xml` quando a fila estiver ociosa e reprocese o extrato.
+  O instalador já inclui essa opção em instalações novas. `sudo lotivisse atualizar xml` preserva o conteúdo
+  de `/etc/lotivisse/xml.env`, por isso a mudança em uma instalação existente é feita uma vez nesse arquivo.
 - **O ATF não abre ou recusa a conexão:** alguns portais de governo barram IPs de datacenter. Abra a tela do
   Chrome (`sudo lotivisse ver-tela xml`) e tente entrar no ATF à mão. Se o ATF não abrir pela VPS, divida as filas:
   - na VPS: `sudo lotivisse configurar xml` e responda `nfse` na pergunta das filas;

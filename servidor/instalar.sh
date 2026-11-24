@@ -56,7 +56,8 @@ PORTA_CHROME=$PORTA_CHROME
 PORTA_VNC=5901
 PROGRAMA=robo/robo_xml.py
 LOG=$APP/robo/robo_xml.log
-CHROME_EXTRAS=
+# O ATF pode abrir o PDF em uma janela nova após responder ao formulário.
+CHROME_EXTRAS=--disable-popup-blocking
 EOF
 
 passo "Python do robô"

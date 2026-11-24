@@ -15,7 +15,7 @@
 - serviços com PDF na hora (gravações de 18/10/2026), abertos pelo campo "Função" do topo, com o
   Número/Pesquisar/Nome em componentes/CodDescLst.jsp?id=<função>_<componente>:
   faturas (ARR_278: Avançar, lista de lançamentos com DIFERIDO - VALOR MINIMO que o ATF recusa, Emitir
-  abre o PDF numa janela nova), extrato (ARR_087: período, Consultar, PDF depois de um redirecionamento),
+  abre o PDF numa janela nova), extrato (ARR_087: período, Consultar, PDF após redirecionamento ou em pop-up),
   omissão (COB_187: Consultar, PDF no quadro de conteúdo) e certidão (DIA_061: Submeter, o PDF toma a aba inteira).
 Precisa do Chromium (CHROME_TESTE ou o do Playwright).
 """
@@ -24,6 +24,7 @@ import io
 import json
 import os
 import re
+import shlex
 import shutil
 import socket
 import subprocess
@@ -488,7 +489,11 @@ class AtfFalso(BaseHTTPRequestHandler):
             self._pdf_resposta(_pdf("fatura " + ",".join(escolhidos)))
         elif funcao == "ARRf_ConsultarExtrPgtoCont":
             ESTADO["pdf_extrato"] = _pdf(f"extrato {ie} {campos.get('edtDataInicial')} {campos.get('edtDataFinal')}")
-            self._html("", status=302, local="/atf/servicos/EmitirPdf")
+            if ESTADO.get("extrato_popup"):
+                self._html("<script>setTimeout(() => window.open('/atf/servicos/EmitirPdf', 'extrato', "
+                           "'width=900,height=600'), 100)</script>")
+            else:
+                self._html("", status=302, local="/atf/servicos/EmitirPdf")
         elif funcao == "COBf_OmiGeralConsGenericaContribuinte":
             self._pdf_resposta(_pdf(f"omissos {ie} pagina 1 pagina 2"))
         else:
@@ -597,8 +602,11 @@ def ambiente(tmp_path_factory):
     servidor = ThreadingHTTPServer(("127.0.0.1", 0), AtfFalso)
     threading.Thread(target=servidor.serve_forever, daemon=True).start()
     porta_cdp = _porta_livre()
+    # Usa as opções do serviço de XML. O launch do Playwright libera pop-ups por padrão.
+    instalador = Path(__file__).resolve().parents[2] / "servidor" / "instalar.sh"
+    extras = re.search(r"^CHROME_EXTRAS=(.*)$", instalador.read_text(), re.MULTILINE)[1]
     chrome = subprocess.Popen([CHROME, "--headless=new", f"--remote-debugging-port={porta_cdp}", "--no-sandbox",
-                               f"--user-data-dir={pasta / 'perfil'}", "--no-first-run", "about:blank"],
+                               f"--user-data-dir={pasta / 'perfil'}", "--no-first-run", *shlex.split(extras), "about:blank"],
                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     for _ in range(50):
         try:
@@ -712,6 +720,26 @@ def test_caixa_nao_abre_e_o_robo_para(ambiente):
     finally:
         executor.fechar()
         ESTADO["caixa_fora"] = 0
+
+
+def test_extrato_em_popup(ambiente, monkeypatch):
+    cfg, pasta = ambiente
+    cfg = copy.deepcopy(cfg)
+    cfg["atf"]["segundos_documento"] = 8
+    monkeypatch.setitem(ESTADO, "extrato_popup", True)
+    executor = robo_xml.Executor(cfg)
+    try:
+        resultado, = executor.executar_rodada([_trabalho(IE_EMPRESA, "Padaria", ["extrato"], codigo="032")])
+    finally:
+        executor.fechar()
+
+    assert resultado.status == "concluido", resultado
+    assert resultado.detalhes["extrato"]["arquivos"] == 1
+    nome = arquivos_nome("extrato")
+    destino = pasta / "xml" / "Arquivos baixados" / "032-Padaria" / "092026" / nome
+    pdf = (destino / f"{nome} 2026-09.pdf").read_bytes()
+    assert pdf.startswith(b"%PDF-")
+    assert f"extrato {IE_EMPRESA} 01/09/2026 30/09/2026".encode() in pdf
 
 
 def test_faturas_extrato_omissao_certidao(ambiente):
