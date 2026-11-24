@@ -55,9 +55,12 @@ def resolver_pastas(cfg: dict):
     destino = Path(pedido) if pedido else DESTINO_PADRAO
     if "SEU-USUARIO" in pedido.upper() or not _pasta_gravavel(destino):
         raise ConfigInvalida(f"Escolha uma pasta de destino gravável: {destino}")
-    pastas["destino"] = str(destino.resolve())
-    diag = pastas.get("diagnostico", "")
-    pastas["diagnostico"] = diag or str(destino / "_diagnostico")
+    destino = destino.resolve()
+    pastas["destino"] = str(destino)
+    diagnostico = os.path.expandvars(os.path.expanduser(str(pastas.get("diagnostico") or "").strip()))
+    if not diagnostico or not _pasta_gravavel(Path(diagnostico)):
+        diagnostico = str(destino / "_diagnostico")
+    pastas["diagnostico"] = diagnostico
     return []
 
 PADRAO = {

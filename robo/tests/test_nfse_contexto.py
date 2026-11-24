@@ -330,11 +330,23 @@ def test_consulta_parcial_preserva_lote_da_direcao_desmarcada(
     assert lote.read_bytes() == anterior
 
 
-@pytest.mark.parametrize("servico, subpasta, prestador, tomador", [
-    ("nfse_emitidas", nfse.PASTA_EMITIDAS, DONO, CLIENTE),
-    ("nfse_recebidas", nfse.PASTA_RECEBIDAS, CLIENTE, DONO),
+@pytest.mark.parametrize("servico, subpasta, prestador, tomador, documento_invalido", [
+    pytest.param(
+        "nfse_emitidas", nfse.PASTA_EMITIDAS, DONO, CLIENTE,
+        (2, "EVENTO", C1, evento_xml(C1[:-1])),
+        id="chave-de-cancelamento-truncada",
+    ),
+    pytest.param(
+        "nfse_recebidas", nfse.PASTA_RECEBIDAS, CLIENTE, DONO,
+        (2, "NFSE", C2, documento(chave=C2, numero="2")[3].replace(
+            b"<vServ>100.00</vServ>", b"<vServ>1e30</vServ>"
+        )),
+        id="valor-em-notacao-exponencial",
+    ),
 ])
-def test_cancelamento_que_zera_mes_atualiza_lote_e_faturamento(cfg, chaves, servico, subpasta, prestador, tomador):
+def test_cancelamento_atualiza_lote_e_faturamento_apos_reconsulta(
+    cfg, chaves, servico, subpasta, prestador, tomador, documento_invalido,
+):
     import xml.etree.ElementTree as ET
 
     t = tarefa(chaves, [servico, "nfse_retencoes"])
@@ -342,9 +354,39 @@ def test_cancelamento_que_zera_mes_atualiza_lote_e_faturamento(cfg, chaves, serv
     r = robo_xml.executar_nfse(cfg, t, chaves[0], sessao_falsa=PortalFalso([(1, "NFSE", C1, xml)]))
     pasta = Path(cfg["pastas"]["destino"]) / r.pasta / "092026"
     lote = pasta / f"{subpasta} 092026.xml"
+    planilha = pasta / "Retenções NFS-e 2026-09.xlsx"
+
+    def quantidades_e_valores():
+        wb = load_workbook(planilha, read_only=True)
+        try:
+            return list(wb["Resumo"].iter_rows(min_row=5, max_row=6, min_col=2, max_col=3, values_only=True))
+        finally:
+            wb.close()
+
     assert r.status == "concluido" and r.qtd_xml == 1
     assert b"<CompNfse>" in lote.read_bytes()
-    r = robo_xml.executar_nfse(cfg, t, chaves[0], sessao_falsa=PortalFalso([(2, "EVENTO", C1, evento_xml(C1))]))
+    esperado = [(1, 0), (100, 0)] if servico == "nfse_emitidas" else [(0, 1), (0, 100)]
+    assert quantidades_e_valores() == esperado
+
+    outra_direcao = "nfse_recebidas" if servico == "nfse_emitidas" else "nfse_emitidas"
+    parcial = tarefa(chaves, [outra_direcao, "nfse_retencoes"])
+    r = robo_xml.executar_nfse(cfg, parcial, chaves[0], sessao_falsa=PortalFalso([]))
+    assert r.status == "sem_notas"
+    assert quantidades_e_valores() == esperado
+
+    lote_anterior, planilha_anterior = lote.read_bytes(), planilha.read_bytes()
+    invalido = PortalFalso([documento_invalido])
+    r = robo_xml.executar_nfse(cfg, t, chaves[0], sessao_falsa=invalido)
+    assert r.status == "erro" and "mei_nfse" not in r.detalhes
+    assert lote.read_bytes() == lote_anterior and planilha.read_bytes() == planilha_anterior
+    cache = area_do_contexto(cfg["pastas"]["destino"], "_cache", "portal", ORG, DONO)
+    assert nfse.Cache(cache).ultimo_nsu == 1
+    assert not (cache / "2.xml").exists()
+
+    corrigido = PortalFalso([(2, "EVENTO", C1, evento_xml(C1))])
+    r = robo_xml.executar_nfse(cfg, t, chaves[0], sessao_falsa=corrigido)
+    assert corrigido.pedidos[0][0].endswith("/DFe/1")
     assert r.status == "sem_notas" and r.detalhes["mei_nfse"]["meses"][0]["valor"] == 0
     assert r.detalhes[servico]["situacao"] == "sem_movimento"
     assert not ET.fromstring(lote.read_bytes()).findall('.//{http://www.abrasf.org.br/nfse.xsd}CompNfse')
+    assert quantidades_e_valores() == [(0, 0), (0, 0)]

@@ -98,6 +98,10 @@ o erro. A falha impede atualizar o faturamento como zero. Se apenas a publicaç�
 planilha falhar, uma nova tentativa pode reconstruí-la dos documentos do cache.
 Os dados do cache antigo permanecem disponíveis para uma migração planejada.
 
+Os arquivos `.lock` podem permanecer na pasta após a execução. O sistema
+operacional libera a trava quando o processo termina, inclusive após uma queda.
+Mantenha esses arquivos na pasta para que todos os processos usem a mesma trava.
+
 Na raiz da instalação, confira o banco efetivo e inicie com a URL esperada.
 `SUPABASE_URL` e `SUPABASE_SERVICE_ROLE_KEY` prevalecem sobre o JSON.
 
@@ -114,10 +118,13 @@ config.json. Reutilize o mesmo identificador nas próximas execuções.
 .\robo\testar_nfse.bat --criar-contexto-local
 ```
 
-Confira o histórico do ambiente antes de aplicar as migrações
-`20261116100000_nfse_por_contexto.sql` e `20261123180000_reserva_tarefas_nfse.sql`.
-O robô atualizado usa as funções da segunda migração. Os contratos anteriores
-continuam disponíveis durante a transição. A fila legada de ATF só reabre
+Confira o histórico do ambiente antes de aplicar as migrações da NFS-e:
+`20261116100000_nfse_por_contexto.sql`, `20261123180000_reserva_tarefas_nfse.sql` e
+`20261124190000_filas_nfse_compativeis_com_reservas.sql`.
+O robô atualizado usa as funções da segunda migração. A terceira mantém as filas
+anteriores disponíveis e faz com que respeitem a reserva vigente e o horário da
+próxima tentativa. O reinício de um robô antigo também preserva as tarefas
+reservadas. A fila legada de ATF só reabre
 tarefas SEFAZ. Pause os consumidores de NFS-e que ainda usam o contrato anterior
 antes de iniciar o robô atualizado no mesmo banco.
 A aplicação operacional depende da revisão, da homologação e da autorização da

@@ -30,8 +30,11 @@ test('ATF/MEI por contexto preserva fila, períodos, decisões e contratos anter
     const anteriores = await rows(contratos);
     await db.exec(migracao);
     await db.exec(migracao);
+    const retornoV2 = () => rows("select pg_get_function_result('public.xml_pegar_lote_v2(text,text,integer)'::regprocedure) as retorno");
+    const retornoLegado = await retornoV2();
     await db.exec(migracaoReserva);
     await db.exec(migracaoReserva);
+    assert.deepEqual(await retornoV2(), retornoLegado);
     assert.deepEqual(await rows(contratos), anteriores);
 
     await t.test('somente service_role pode retirar tarefas e registrar MEI', async () => {
@@ -143,22 +146,39 @@ test('ATF/MEI por contexto preserva fila, períodos, decisões e contratos anter
       assert.deepEqual(await rows(contratos), anteriores);
 
       const antiga = tentativas.get(id(61));
-      await db.exec(`update public.xml_tarefas set reserva_ate=now()+interval '1 minute'
+      await db.exec(`update public.xml_tarefas set reserva_ate=now()+interval '1 minute',
+        iniciado_em=now()-interval '91 minutes'
         where id = ${ids(61)}`);
       const [antes] = await rows('select iniciado_em,reserva_ate from public.xml_tarefas where id=$1', [id(61)]);
       await db.query('select public.xml_renovar_reservas_atf($1::uuid[])', [[antiga]]);
       const [renovada] = await rows('select iniciado_em,reserva_ate from public.xml_tarefas where id=$1', [id(61)]);
       assert.deepEqual(antes.iniciado_em, renovada.iniciado_em);
       assert.ok(renovada.reserva_ate > antes.reserva_ate);
+      await db.exec('set role service_role');
+      try {
+        assert.deepEqual(await rows("select id from public.xml_pegar_lote_v2('legado','',1)"), []);
+      } finally {
+        await db.exec('reset role');
+      }
+      assert.deepEqual(await rows('select iniciado_em,reserva_ate from public.xml_tarefas where id=$1', [id(61)]), [renovada]);
       await db.exec(`update public.xml_tarefas set reserva_ate=now()-interval '1 second'
         where id = ${ids(61)}`);
       await db.query('select public.xml_renovar_reservas_atf($1::uuid[])', [[antiga]]);
       assert.equal(await callback(61,1,ie,'2026-10-01T15:00:02Z',999,antiga), null);
+      assert.deepEqual(await rows("select id from public.xml_pegar_lote_v2('legado','',1)"), [{ id: id(61) }]);
+      assert.deepEqual(await rows('select tentativa_id, reserva_ate from public.xml_tarefas where id=$1', [id(61)]),
+        [{ tentativa_id: null, reserva_ate: null }]);
+      await db.query("update public.xml_tarefas set iniciado_em=now()-interval '91 minutes' where id=$1", [id(61)]);
       const [nova] = await retirar('retomada', 1);
       assert.equal(nova.id, id(61));
       assert.notEqual(nova.tentativa_id, antiga);
       assert.equal(await callback(61,1,ie,'2026-10-01T15:00:02Z',999,antiga), null);
       assert.equal(await callback(61,1,ie,'2026-10-01T15:00:03Z',300), 1);
+      assert.deepEqual(await rows('select public.xml_devolver_tarefa_reservada($1,$2) as devolvida',
+        [nova.id, nova.tentativa_id]), [{ devolvida: true }]);
+      assert.deepEqual(await rows("select id from public.xml_pegar_lote_v2('legado','',1)"), []);
+      await db.query("update public.xml_tarefas set tentar_novamente_em=now()-interval '1 second' where id=$1", [nova.id]);
+      assert.deepEqual(await rows("select id from public.xml_pegar_lote_v2('legado','',1)"), [{ id: nova.id }]);
     });
   } finally { await db.close(); }
 });

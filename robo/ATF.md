@@ -102,6 +102,8 @@ escritório. Depois da migração de reserva da NFS-e, aplique
 e renova as tarefas em andamento e as que aguardam Minhas Mensagens.
 Progresso, conclusão e a gravação MEI exigem a tentativa vigente.
 O reenvio de históricos usa `xml_mei_registrar_contexto`.
+A fila de compatibilidade `xml_pegar_lote_v2` respeita a reserva vigente e a espera
+do reagendamento. Se atender uma reserva vencida, invalida a tentativa anterior.
 O SQL preserva contratos anteriores, a fila NFS-e e os gatilhos de complemento
 NFS-e e reprocessamento. A aplicação operacional aguarda homologação e autorização.
 Pause versões anteriores de ATF e NFS-e que consomem o mesmo banco antes da troca.

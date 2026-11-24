@@ -135,7 +135,57 @@ except ArmazenamentoOcupado:
             raise RuntimeError("interrompido")
     with abrir_empresa(destino, EMPRESA) as pasta:
         assert pasta.is_dir()
-    assert not list((destino / PASTA_CONTEXTOS / "_travas").iterdir())
+
+
+@pytest.mark.parametrize("alvo", ["escritorio", "empresa"])
+def test_reabre_empresa_apos_queda_do_processo_com_trava(destino, alvo):
+    with abrir_empresa(destino, EMPRESA):
+        pass
+    nome = f"org_{ORG_A}"
+    if alvo == "empresa":
+        nome += f"-{EMPRESA.origem}-{EMPRESA.tipo_documento}_{EMPRESA.documento}"
+    trava = destino / PASTA_CONTEXTOS / "_travas" / f"{nome}.lock"
+    script = """
+import os
+import sys
+from pathlib import Path
+from armazenamento import trava_exclusiva
+with trava_exclusiva(Path(sys.argv[1])):
+    os._exit(7)
+"""
+    processo = subprocess.run(
+        [sys.executable, "-B", "-c", script, str(trava)],
+        cwd=Path(armazenamento.__file__).parent, timeout=10, check=False,
+    )
+    assert processo.returncode == 7
+    assert trava.is_file()
+    with abrir_empresa(destino, EMPRESA) as pasta:
+        assert pasta.is_dir()
+
+
+def test_reabre_empresa_apos_queda_na_primeira_publicacao(destino):
+    script = """
+import os
+import sys
+import armazenamento
+
+def interromper(*args):
+    os._exit(7)
+
+armazenamento.gravar_json_atomico = interromper
+contexto = armazenamento.ContextoArmazenamento("portal", sys.argv[2], "sefaz_pb", "ie", "160123453", "Empresa")
+with armazenamento.abrir_empresa(sys.argv[1], contexto):
+    sys.exit(2)
+"""
+    processo = subprocess.run(
+        [sys.executable, "-B", "-c", script, str(destino), ORG_A],
+        cwd=Path(armazenamento.__file__).parent, timeout=10, check=False,
+    )
+    assert processo.returncode == 7
+    with abrir_empresa(destino, EMPRESA) as pasta:
+        metadados = json.loads((pasta / "empresa.json").read_text(encoding="utf-8"))
+    assert metadados["identidade"] == EMPRESA.identidade
+    assert [entrada for entrada in pasta.parent.iterdir() if entrada.name.startswith("ie_160123453")] == [pasta]
 
 
 def test_falha_ao_atualizar_metadados_preserva_versao_anterior(destino, monkeypatch):
@@ -246,4 +296,5 @@ def test_contexto_local_invalido_ou_sem_gravacao_nao_e_aceito(tmp_path, monkeypa
     with pytest.raises(config.ConfigInvalida, match="somente leitura"):
         config.carregar_contexto_local(confirmar_criacao=True)
     assert arquivo.read_bytes() == b"{}"
-    assert not list(tmp_path.glob("*.lock"))
+    with armazenamento.trava_exclusiva(arquivo.with_suffix(".local-id.lock")):
+        pass

@@ -1,4 +1,5 @@
 """Identidade e resolução de pastas do armazenamento v2."""
+import errno
 import json
 import hashlib
 import os
@@ -8,7 +9,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from tempfile import NamedTemporaryFile
+from tempfile import NamedTemporaryFile, TemporaryDirectory
 from uuid import UUID
 
 from documentos import cnpj_valido, ie_pb_valida
@@ -212,17 +213,27 @@ def _buscar_pasta(pai: Path, prefixo: str) -> Path | None:
 
 @contextmanager
 def trava_exclusiva(caminho: Path):
-    """Falha imediatamente em conflito. Uma trava abandonada exige intervenção."""
+    """Falha imediatamente em conflito e libera o bloqueio ao fechar o descritor."""
+    caminho = arquivo_validado(caminho.parent, caminho.name)
+    fd = os.open(caminho, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
     try:
-        arquivo = caminho.open("x", encoding="ascii")
-    except FileExistsError as erro:
-        raise ArmazenamentoOcupado(f"Já existe uma trava em {caminho}.") from erro
-    try:
-        with arquivo:
-            arquivo.write(f"pid={os.getpid()}\n")
+        try:
+            if os.name == "nt":
+                import msvcrt
+
+                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as erro:
+            if erro.errno not in (errno.EACCES, errno.EAGAIN, errno.EDEADLK):
+                raise
+            raise ArmazenamentoOcupado(f"Trava em uso em {caminho}.") from erro
         yield
     finally:
-        caminho.unlink()
+        # O arquivo é reaproveitado. Apagá-lo permitiria que dois processos bloqueassem arquivos diferentes.
+        os.close(fd)
 
 
 def gravar_json_atomico(caminho: Path, dados: dict):
@@ -309,13 +320,16 @@ def abrir_empresa(destino: str | Path, contexto: ContextoArmazenamento, *, somen
         if pasta is None:
             if somente_leitura:
                 raise FileNotFoundError(nova_pasta)
-            pasta = _diretorio(nova_pasta)
             dados = {
                 "versao": VERSAO, "identidade": contexto.identidade,
                 "criado_em": datetime.now(timezone.utc).isoformat(),
                 "rotulos_iniciais": contexto.rotulos, "rotulos_atuais": contexto.rotulos,
             }
-            gravar_json_atomico(pasta / "empresa.json", dados)
+            # A pasta definitiva só aparece quando os metadados já estão gravados.
+            with TemporaryDirectory(prefix=".v2-empresa-", dir=origem) as temporaria:
+                preparacao = _diretorio(Path(temporaria) / "empresa")
+                gravar_json_atomico(preparacao / "empresa.json", dados)
+                pasta = preparacao.rename(nova_pasta)
         else:
             # Preserva históricos válidos de pastas anteriores; cada publicação confere seu caminho completo.
             _verificar_tamanho(pasta, RESERVA_ARQUIVOS)

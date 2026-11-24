@@ -1,8 +1,7 @@
 # Revisão da integração ATF/MEI por escritório
 
-Branch `integracao/atf-mei-por-escritorio`. Comparar a entrega com `2af5bde`, a
-NFS-e corrigida sobre a main `05d9307`. Para revisar só a reserva ATF, comparar
-com o merge local `b7ed335`.
+Branch `integracao/atf-mei-por-escritorio`. Compare a entrega com a main
+em `23c8d51`, que já inclui o PR #62 da NFS-e.
 As garantias anteriores têm referência em `5f76f92`; os arquivos atuais do ATF
 foram evoluídos para manter HTML, permissões, PDFs e os serviços recentes.
 
@@ -50,7 +49,7 @@ foram evoluídos para manter HTML, permissões, PDFs e os serviços recentes.
 
 ## Roteiro para o Codex 2
 
-1. Conferir o diff contra `2af5bde` e os recursos atuais da main; não substituir o
+1. Conferir o diff contra `23c8d51` e os recursos atuais da main; não substituir o
    ATF atual pelo arquivo inteiro da referência anterior.
 2. Conferir tarefa sem UUID/IE válida antes da senha; mesmo nome, mesma IE em dois
    escritórios, IEs repetidas e períodos diferentes. Conferir arquivos, totais e

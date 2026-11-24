@@ -52,7 +52,7 @@ o trabalho (pessoa ou nova sessão do Claude).
 
 | Quando | O que fazer |
 |---|---|
-| Depois de cada merge que mexe em `robo/` | Na VPS: `sudo lotivisse atualizar xml` |
+| Após a liberação operacional de uma versão do robô | Siga o [procedimento da VPS](servidor/LEIAME.md) para atualizar a instalação |
 | Depois de merge com biblioteca nova em `robo/requirements.txt` | `sudo -u lotivisse /home/lotivisse/xml/venv/bin/pip install -q -r /home/lotivisse/xml/app/servidor/requirements.txt` e `sudo systemctl restart lotivisse-robo@xml` |
 | Depois de merge que mexe em `web/supabase/schema.sql` | Colar o arquivo inteiro no SQL Editor do Supabase do portal de XML e clicar em Run. Depois, se precisar: `notify pgrst, 'reload schema';` |
 | Merge só de `web/` | Nada: a Vercel publica sozinha |
