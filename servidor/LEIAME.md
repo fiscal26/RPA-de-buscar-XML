@@ -152,10 +152,15 @@ Com os dois robôs instalados, informe qual: `certidoes` ou `xml`.
 | `lotivisse status` | os dois robôs: serviços, Chrome, memória, disco e últimas linhas do log |
 | `lotivisse log xml` | acompanhar o robô de XML ao vivo (Ctrl+C sai) |
 | `sudo lotivisse reiniciar xml` | reiniciar o Chrome e o robô de XML |
-| `sudo lotivisse atualizar xml` | **depois de cada merge que mexe no robô de XML**: baixa a versão nova e reinicia |
+| `sudo lotivisse atualizar xml` | baixa a versão nova e reinicia o robô de XML após a liberação operacional |
 | `sudo lotivisse configurar xml` | trocar a chave do Supabase, o nome do robô ou a chave privada |
 | `sudo lotivisse ver-tela xml` | ver o Chrome do robô de XML pelo seu computador (porta **5901**) |
 | `systemctl status lotivisse-xml-drive.service` | último envio ao Google Drive |
+
+Para atualizar uma instalação para o armazenamento por escritório, siga primeiro o
+[procedimento de transição da NFS-e](../robo/NFSE.md). A atualização da VPS exige o
+banco de destino conferido, as migrações homologadas e a configuração de
+`--confirmar-banco` no serviço antes do reinício.
 
 Para ver a tela do Chrome do robô de XML, siga a seção *Ver a tela do Chrome de um robô* do guia das certidões,
 trocando a porta 5900 por **5901**: `ssh -L 5901:localhost:5901 root@IP-DA-VPS` e o VNC em `localhost:5901`.
