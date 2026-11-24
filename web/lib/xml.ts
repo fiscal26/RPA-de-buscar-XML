@@ -1,3 +1,5 @@
+export const ROBO_ONLINE_SEGUNDOS = 120;
+
 // Serviços do robô (as colunas da planilha modelo) e situações das tarefas — os mesmos do banco e do robô.
 
 export const TIPOS = [

@@ -22,13 +22,14 @@ function acaoDe(t: TarefaPainel): Omit<Acao, "ie" | "nome" | "quando"> | null {
       oQueFazer: "Envie a planilha de novo com a senha atual desse login.", link: "/painel/agendar", botao: "Atualizar a senha" };
   }
   const nfse = t.tipos.some((tipo) => tipo.startsWith("nfse"));
+  const agendar = nfse ? "/painel/agendar?origem=nfse" : "/painel/agendar";
   if (t.status === "certificado") {
     return { motivo: t.mensagem || "O certificado A1 da empresa está ausente, vencido ou foi recusado.",
       oQueFazer: "Envie o certificado A1 atual da empresa (ou da matriz) e agende de novo.", link: "/painel/certificados", botao: "Enviar o certificado" };
   }
   if (t.status === "fora_do_ar") {
     return { motivo: nfse ? "O Portal Nacional da NFS-e estava fora do ar ou instável." : "A SEFAZ estava fora do ar ou instável.",
-      oQueFazer: "Agende essa competência de novo daqui a algumas horas.", link: "/painel/agendar", botao: "Agendar de novo" };
+      oQueFazer: "Agende essa competência de novo daqui a algumas horas.", link: agendar, botao: "Agendar de novo" };
   }
   const tipos = expandirTipos(t.tipos);
   const erros = tipos.map((tipo) => ({ tipo, ...situacaoTarefa(t, tipo) })).filter((s) => s.chave === "erro");
@@ -45,7 +46,7 @@ function acaoDe(t: TarefaPainel): Omit<Acao, "ie" | "nome" | "quando"> | null {
   }
   if (erros.length && t.status !== "pendente" && t.status !== "processando") {
     return { motivo: `${erros.map((e) => nomeTipo(e.tipo)).join(", ")} não ${erros.length > 1 ? "saíram" : "saiu"}.`,
-      oQueFazer: "Agende de novo. Se o erro se repetir, fale com a LotiVisse.", link: "/painel/agendar", botao: "Agendar de novo" };
+      oQueFazer: "Agende de novo. Se o erro se repetir, fale com a LotiVisse.", link: agendar, botao: "Agendar de novo" };
   }
   return null;
 }

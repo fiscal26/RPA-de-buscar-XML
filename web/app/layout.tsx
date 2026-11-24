@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import "./fontes.css";
 import "./globals.css";
 import { DESCRICAO, SITE_URL, TITULO } from "@/lib/site";
 
@@ -20,22 +21,17 @@ export const metadata: Metadata = {
   category: "business",
 };
 
-export const viewport: Viewport = { themeColor: "#13294B" };
+export const viewport: Viewport = { themeColor: "#181b1c" };
 
-// Antes de pintar a página: o tema escolhido (guardado no navegador) ou o do sistema, sem piscar.
-const TEMA_INICIAL = `try{var t=localStorage.getItem("tema");if(t!=="claro"&&t!=="escuro")t=matchMedia("(prefers-color-scheme: dark)").matches?"escuro":"claro";document.documentElement.dataset.tema=t}catch(e){}`;
+// O tema escolhido é aplicado antes da primeira pintura.
+const TEMA_INICIAL = `try{if(localStorage.getItem("tema")==="claro")document.documentElement.dataset.tema="claro"}catch(e){}`;
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="pt-BR" suppressHydrationWarning>
+    <html lang="pt-BR" data-tema="escuro" suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: TEMA_INICIAL }} />
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="" />
-        <link
-          rel="stylesheet"
-          href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
-        />
+        <link rel="preload" href="/fontes/ibm-plex-sans-latin.woff2" as="font" type="font/woff2" crossOrigin="anonymous" />
       </head>
       <body>{children}</body>
     </html>

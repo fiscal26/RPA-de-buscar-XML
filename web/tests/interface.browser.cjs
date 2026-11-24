@@ -50,6 +50,64 @@ async function acessivel(page) {
   const contexto = await navegador.newContext({ viewport: { width: 1440, height: 1000 }, locale: 'pt-BR', reducedMotion: 'reduce' });
   const page = await contexto.newPage();
   const erros = []; page.on('pageerror', (e) => erros.push(e.message));
+  await teste('Visão geral mostra a operação e mantém tabela e navegação acessíveis em cinco larguras', async () => {
+    await page.goto(`${url}/painel`);
+    await page.getByRole('heading', { name: 'Visão geral', exact: true }).waitFor();
+    await page.keyboard.press('Tab');
+    assert.equal(await page.evaluate(() => document.activeElement.textContent.trim()), 'Pular para o conteúdo');
+    await page.keyboard.press('Enter');
+    assert.equal(await page.evaluate(() => document.activeElement.id), 'conteudo-painel');
+    await page.getByRole('heading', { name: 'Robô de consultas Online', exact: true }).waitFor();
+    assert.ok(await page.getByText('Última comunicação', { exact: false }).isVisible());
+    const pendencias = page.getByRole('region', { name: 'Pendências', exact: true });
+    assert.ok(await pendencias.getByText('Mercado Sol', { exact: true }).isVisible());
+    assert.equal(await pendencias.getByRole('link', { name: 'Agendar de novo para Mercado Sol' }).getAttribute('href'), '/painel/agendar');
+    const taxa = page.getByRole('region', { name: 'Indicadores de processamento' }).locator('.visao-taxa');
+    assert.match(await taxa.innerText(), /159 de 160 finalizadas sem erro/);
+    assert.match(await taxa.innerText(), /99%/);
+    const tabela = page.getByRole('region', { name: 'Agendamentos recentes' });
+    for (const [width, height] of [[1366,768], [1440,900], [1920,1080], [2560,1440], [390,844]]) {
+      await page.setViewportSize({ width, height });
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${width}px`);
+      const { y } = await tabela.boundingBox();
+      if (width > 390) assert.ok(y < height, `A tabela começa abaixo da primeira dobra em ${width}px`);
+    }
+    assert.equal(await tabela.evaluate(el => el.scrollWidth <= el.clientWidth), true);
+    await tabela.getByRole('link', { name: /Ver execução de 10\/2026 · SEFAZ/ }).waitFor();
+    await tabela.getByRole('link', { name: /Ver execução de 10\/2026 · NFS-e/ }).waitFor();
+    const menu = page.getByRole('navigation', { name: 'Painel', exact: true });
+    assert.ok(await menu.evaluate(el => el.scrollWidth <= el.clientWidth));
+    await tabela.focus();
+    await page.keyboard.press('End');
+    assert.ok(await tabela.evaluate(el => el === document.activeElement));
+    const passos = page.locator('.visao-configuracao');
+    assert.equal(await passos.getAttribute('open'), null);
+    await passos.locator('summary').press('Enter');
+    assert.equal(await passos.getAttribute('open'), '');
+    assert.ok(await passos.getByRole('link', { name: 'Cadastrar a equipe' }).isVisible());
+    await acessivel(page);
+    await page.setViewportSize({ width: 1440, height: 1000 });
+  });
+  await teste('Conectividade distingue offline de ausência de sinal e segue as permissões do perfil', async () => {
+    for (const [headers, estado] of [
+      [{ 'x-interface-sinal': 'offline' }, 'Offline'],
+      [{ 'x-interface-sinal': 'ausente' }, 'Sem comunicação'],
+      [{ 'x-interface-papel': 'usuario' }, null],
+    ]) {
+      const sessao = await navegador.newContext({ extraHTTPHeaders: headers });
+      try {
+        const p = await sessao.newPage();
+        await p.goto(`${url}/painel`);
+        await p.getByRole('heading', { name: 'Visão geral', exact: true }).waitFor();
+        if (estado) await p.getByRole('heading', { name: `Robô de consultas ${estado}`, exact: true }).waitFor();
+        else assert.equal(await p.getByRole('heading', { name: /Robô de consultas/ }).count(), 0);
+        if (estado === 'Offline') {
+          await p.locator('.visao-configuracao summary').click();
+          assert.equal(await p.getByRole('link', { name: 'Ligar o robô', exact: true }).locator('../..').locator('span').first().innerText(), 'Concluído');
+        }
+      } finally { await sessao.close(); }
+    }
+  });
   await teste('Gestão MEI verifica lote, permite desmarcar e confirma só a seleção, sem dados reais', async () => {
     await page.goto(`${url}/painel/mei/gerenciar`);
     await page.getByRole('button', {name:'Trazer MEIs cadastrados', exact:true}).click();
@@ -262,11 +320,19 @@ async function acessivel(page) {
       assert.equal(await fontesDaFila.locator('strong').innerText(), fontes);
     }
   });
-  await teste('Tema escuro mantém a leitura e o menu fecha com Escape', async () => {
+  await teste('Tema escuro é o padrão, tema claro persiste e o menu fecha com Escape', async () => {
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.locator('.perfil-botao').click();
     assert.equal(await page.getByText('Usar como aplicativo', { exact: true }).count(), 0);
-    await page.getByRole('button', { name: /Tema escuro/ }).click();
+    const tema = page.getByRole('button', { name: /Tema escuro/ });
+    assert.equal(await tema.getAttribute('aria-pressed'), 'true');
+    assert.equal(await page.locator('html').getAttribute('data-tema'), 'escuro');
+    await tema.click();
+    assert.equal(await page.locator('html').getAttribute('data-tema'), 'claro');
+    await page.reload();
+    assert.equal(await page.locator('html').getAttribute('data-tema'), 'claro');
+    await page.locator('.perfil-botao').click();
+    await tema.click();
     assert.equal(await page.locator('html').getAttribute('data-tema'), 'escuro');
     await page.keyboard.press('Escape');
     assert.equal(await page.locator('.perfil-botao').getAttribute('aria-expanded'), 'false');

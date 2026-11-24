@@ -40,3 +40,7 @@ test('mesmo documento em organizações distintas continua independente', () => 
   const r = resumoPainel([nfse,{...tarefa,empresaChave:outra}], agendamentos);
   assert.equal(r.empresasProcessadas, 2);
 });
+test('a ação de agendar de novo abre a origem da pendência', () => {
+  const r = resumoPainel([{...nfse, status:'fora_do_ar'}, {...tarefa, status:'fora_do_ar'}], agendamentos);
+  assert.deepEqual(r.acoes.map((acao) => acao.link), ['/painel/agendar?origem=nfse', '/painel/agendar']);
+});

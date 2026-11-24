@@ -25,6 +25,7 @@ export default async function LayoutPainel({ children }: { children: React.React
   const nome = perfil.nome || perfil.email;
   return (
     <div className="painel-moldura">
+      <a className="pular-conteudo" href="#conteudo-painel">Pular para o conteúdo</a>
       <header className="barra">
         <Link href="/painel" className="marca marca-clara" aria-label="LotiVisse, início do painel"><Logo /></Link>
         <div className="barra-direita">
@@ -33,7 +34,7 @@ export default async function LayoutPainel({ children }: { children: React.React
         </div>
       </header>
       <MenuLateral itens={ITENS} extras={gerencia ? [{ href: "/painel/equipe", nome: "Equipe", icone: "equipe" }] : []} />
-      <main className="painel">
+      <main className="painel" id="conteudo-painel" tabIndex={-1}>
         {org && !org.ativo && <div className="faixa erro">Acesso suspenso. Fale com o responsável pelo site.</div>}
         {children}
       </main>

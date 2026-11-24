@@ -4,15 +4,13 @@ import Link from "next/link";
 import AutoRefresh from "@/components/AutoRefresh";
 import { contexto } from "@/lib/sessao";
 import { competenciaBR, dataHoraBR } from "@/lib/documentos";
-import { EM_ANDAMENTO } from "@/lib/xml";
+import { EM_ANDAMENTO, ROBO_ONLINE_SEGUNDOS } from "@/lib/xml";
 
 type Agendamento = {
   id: string; nome_arquivo: string; competencia: string; origem: string;
   executar_em: string; total: number; criado_em: string; organizacoes?: { nome: string } | null;
 };
 type Contagem = { prontas: number; fila: number; problemas: number; xml: number };
-
-const ROBO_ONLINE_SEGUNDOS = 120;
 
 export default async function Agendamentos() {
   const { supabase, admin } = await contexto();

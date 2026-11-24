@@ -46,18 +46,19 @@ export default async function MonitorFiscal() {
         <div>
           <h1>Monitor Fiscal</h1>
           <p className="suave">
-            Todo dia, às {hora}, o robô consulta o Ambiente Nacional da NF-e
-            e traz as notas destinadas a cada empresa monitorada, de qualquer estado, com o XML e o PDF (DANFE).
+            O robô consulta o Ambiente Nacional às {hora} (horário de Brasília) e traz o XML e o DANFE das NF-e destinadas às empresas monitoradas.
           </p>
         </div>
       </div>
       {gerencia && (
-        <section className="cartao config-monitor">
-          <h2 className="titulo-cartao">Configurações</h2>
-          <HorarioMonitor hora={configOrg?.monitor_hora ?? null} />
-        </section>
+        <div className="monitor-ferramentas">
+          <details className="config-monitor">
+            <summary>Horário de consulta</summary>
+            <HorarioMonitor hora={configOrg?.monitor_hora ?? null} />
+          </details>
+          <AdicionarMonitor empresas={candidatas} organizacoes={admin ? orgs.map(({ id, nome }) => ({ id, nome })) : undefined} />
+        </div>
       )}
-      {gerencia && <AdicionarMonitor empresas={candidatas} organizacoes={admin ? orgs.map(({ id, nome }) => ({ id, nome })) : undefined} />}
 
       <TabelaMonitor linhas={linhas} gerencia={gerencia} admin={admin} resumoGeral={somarNotasMonitor([...porEmpresa.values()])}
         clientesMonitorados={monitores.filter((x) => x.ativo).length} vazio={

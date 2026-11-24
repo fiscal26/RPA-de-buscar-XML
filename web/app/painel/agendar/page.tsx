@@ -46,14 +46,17 @@ export default async function Agendar({ searchParams }: { searchParams: Promise<
       </nav>
       {nfse ? (
         <div className="passo-form">
-          <section className="cartao">
+          <div className="agendamento-formulario">
+            <FormAgendamentoNfse organizacoes={organizacoes} competencia={mesAnterior()} empresas={empresasNfse} certificados={certificadosNfse} fonteInicial={sp.fonte === "cadastro" ? "cadastro" : "planilha"} orgInicial={sp.org} empresaInicial={sp.empresa} />
+          </div>
+          <section className="agendamento-instrucoes">
             <h2 className="titulo-cartao">Antes de enviar</h2>
             <ol className="preparo">
-              <li>Em <Link href="/painel/certificados">Certificados</Link>, envie o certificado do escritório (vale para as empresas que deram procuração no e-CAC) ou o A1 de cada empresa (o da matriz serve às filiais).</li>
-              <li>Escolha <b>Escolher entre as cadastradas</b> e marque as empresas (ou Selecionar todas), sem planilha; ou baixe a planilha modelo da NFS-e e preencha uma empresa por linha: CNPJ e nome.</li>
-              <li>Apague o X dos serviços de que a empresa não precisa.</li>
+              <li>Em <Link href="/painel/certificados">Certificados</Link>, envie o A1 da empresa, da matriz ou do escritório, se houver procuração no e-CAC.</li>
+              <li>Selecione as empresas cadastradas ou use a planilha modelo. Preencha um CNPJ e nome por linha.</li>
+              <li>Na planilha, apague o X dos serviços que não se aplicam.</li>
             </ol>
-            <a className="botao" href="/modelos/modelo_empresas_nfse.xlsx" download>Baixar a planilha modelo da NFS-e</a>
+            <a className="botao secundario" href="/modelos/modelo_empresas_nfse.xlsx" download>Baixar a planilha modelo da NFS-e</a>
             {ultima}
             <details className="duvidas">
               <summary>Dúvidas comuns</summary>
@@ -71,20 +74,20 @@ export default async function Agendar({ searchParams }: { searchParams: Promise<
               </dl>
             </details>
           </section>
-          <div className="cartao">
-            <FormAgendamentoNfse organizacoes={organizacoes} competencia={mesAnterior()} empresas={empresasNfse} certificados={certificadosNfse} fonteInicial={sp.fonte === "cadastro" ? "cadastro" : "planilha"} orgInicial={sp.org} empresaInicial={sp.empresa} />
-          </div>
         </div>
       ) : (
         <div className="passo-form">
-          <section className="cartao">
+          <div className="agendamento-formulario">
+            {empresasSefaz.error ? <p className="faixa erro">Não foi possível carregar as empresas cadastradas. Atualize a página.</p> : <FormAgendamento organizacoes={organizacoes} competencia={mesAnterior()} empresas={empresasSefaz.data} fonteInicial={sp.fonte === "cadastro" ? "cadastro" : "planilha"} orgInicial={sp.org} empresaInicial={sp.empresa} />}
+          </div>
+          <section className="agendamento-instrucoes">
             <h2 className="titulo-cartao">Antes de enviar</h2>
             <ol className="preparo">
               <li>Escolha as empresas já cadastradas ou envie uma planilha.</li>
-              <li>Para uma nova empresa, use <Link href="/painel/empresas/nova?origem=sefaz">Cadastrar empresa</Link>: inscrição estadual, nome e login ATF.</li>
-              <li>Apague o X dos serviços de que a empresa não precisa.</li>
+              <li>Para <Link href="/painel/empresas/nova?origem=sefaz">cadastrar uma empresa</Link>, informe o nome, a IE e o login do ATF.</li>
+              <li>Na planilha, apague o X dos serviços que não se aplicam.</li>
             </ol>
-            <a className="botao" href="/modelos/modelo_empresas_sefaz_pb.xlsx" download>Baixar a planilha modelo</a>
+            <a className="botao secundario" href="/modelos/modelo_empresas_sefaz_pb.xlsx" download>Baixar a planilha modelo</a>
             {ultima}
             <details className="duvidas">
               <summary>Dúvidas comuns</summary>
@@ -104,9 +107,6 @@ export default async function Agendar({ searchParams }: { searchParams: Promise<
               </dl>
             </details>
           </section>
-          <div className="cartao">
-            {empresasSefaz.error ? <p className="faixa erro">Não foi possível carregar as empresas cadastradas. Atualize a página.</p> : <FormAgendamento organizacoes={organizacoes} competencia={mesAnterior()} empresas={empresasSefaz.data} fonteInicial={sp.fonte === "cadastro" ? "cadastro" : "planilha"} orgInicial={sp.org} empresaInicial={sp.empresa} />}
-          </div>
         </div>
       )}
     </>

@@ -7,7 +7,7 @@ import Link from "next/link";
 import { useDeferredValue, useState, type ReactNode } from "react";
 import Icone from "@/components/Icones";
 import BotaoRemover from "../empresas/BotaoRemover";
-import { dataBR, dataHoraBR, formatarDocumento, iniciais } from "@/lib/documentos";
+import { dataBR, dataHoraBR, formatarDocumento } from "@/lib/documentos";
 import { SITUACAO_MONITOR, reaisMonitor, somarNotasMonitor, type MonitorLinha, type ResumoNotasMonitor } from "@/lib/monitor";
 import { consultarAgora, removerMonitor } from "./actions";
 
@@ -32,30 +32,26 @@ export default function TabelaMonitor({ linhas, gerencia, admin, resumoGeral, cl
   const resumo = termo ? somarNotasMonitor(visiveis) : resumoGeral;
   return (
     <>
-      <div className="painel-numeros monitor-numeros">
+      <dl className="painel-numeros monitor-numeros">
         <div className="numero-cartao">
-          <span className="numero-icone"><Icone nome="empresas" /></span>
-          <span className="nome">Clientes monitorados</span>
-          <span className="valor">{numero(clientesMonitorados)}</span>
+          <dt className="nome">Clientes monitorados</dt>
+          <dd className="valor">{numero(clientesMonitorados)}</dd>
         </div>
         <div className="numero-cartao">
-          <span className="numero-icone"><Icone nome="tarefas" /></span>
-          <span className="nome">Notas encontradas</span>
-          <span className="valor">{numero(resumo.notasEncontradas)}</span>
-          <span className="suave">desde o início do monitoramento</span>
+          <dt className="nome">Notas encontradas</dt>
+          <dd className="valor">{numero(resumo.notasEncontradas)}</dd>
+          <dd className="suave">desde o início do monitoramento</dd>
         </div>
         <div className="numero-cartao">
-          <span className="numero-icone"><Icone nome="agendar" /></span>
-          <span className="nome">Notas no mês</span>
-          <span className="valor">{numero(resumo.notasMes)}</span>
+          <dt className="nome">Notas no mês</dt>
+          <dd className="valor">{numero(resumo.notasMes)}</dd>
         </div>
         <div className="numero-cartao">
-          <span className="numero-icone"><Icone nome="mei" /></span>
-          <span className="nome">Compras no mês</span>
-          <span className="valor valor-moeda">{reaisMonitor(resumo.comprasMes)}</span>
+          <dt className="nome">Compras no mês</dt>
+          <dd className="valor valor-moeda">{reaisMonitor(resumo.comprasMes)}</dd>
         </div>
-      </div>
-      <section className="cartao">
+      </dl>
+      <section className="monitor-listagem" aria-label="Empresas monitoradas">
         {linhas.length ? (
           <ListaMonitor linhas={linhas} visiveis={visiveis} filtro={filtro} pagina={atual} gerencia={gerencia} admin={admin}
             aoFiltrar={(valor) => { setFiltro(valor); setPagina(1); }} aoPaginar={setPagina} />
@@ -91,13 +87,12 @@ function ListaMonitor({ linhas, visiveis, filtro, pagina, gerencia, admin, aoFil
               const s = SITUACAO_MONITOR[x.status] ?? SITUACAO_MONITOR.fila;
               return (
                 <tr key={x.id} className={x.ativo ? "" : "inativo"}>
-                  {admin && <td>{x.organizacao}</td>}
+                  {admin && <td className="monitor-org">{x.organizacao}</td>}
                   <td><span className="compras-mes">{reaisMonitor(x.comprasMes)}</span>
                     {x.notasMes > 0 && <small className="suave"> {x.notasMes} nota{x.notasMes > 1 ? "s" : ""}</small>}</td>
                   <td className="doc">{formatarDocumento(x.cnpj)}</td>
                   <td className="nome-empresa">
-                    <span className="com-avatar"><span className="avatar-q" aria-hidden="true">{iniciais(x.nome)}</span>
-                      <span>{x.nome}{x.codigo && <small className="suave"> ID {x.codigo}</small>}</span></span>
+                    <b>{x.nome}</b>{x.codigo && <small className="suave"> ID {x.codigo}</small>}
                   </td>
                   <td>
                     {x.certificado
@@ -106,12 +101,12 @@ function ListaMonitor({ linhas, visiveis, filtro, pagina, gerencia, admin, aoFil
                         </span>
                       : <Link href="/painel/certificados" className="status st-erro">Falta o certificado</Link>}
                   </td>
-                  <td>{x.ultima_nota_em ? dataHoraBR(x.ultima_nota_em) : <span className="suave">—</span>}</td>
+                  <td className="monitor-data">{x.ultima_nota_em ? <time dateTime={x.ultima_nota_em}>{dataHoraBR(x.ultima_nota_em)}</time> : <span className="suave">—</span>}</td>
                   <td>
                     <span className={`status ${s.classe}`}>{s.nome}</span>
                     {x.mensagem && <details className="tarefa-detalhe"><summary>Ver detalhe<span className="sr"> de {x.nome}</span></summary><p>{x.mensagem}</p></details>}
                   </td>
-                  <td>{x.status === "processando" ? <span className="suave">agora</span> : dataHoraBR(x.proxima_consulta)}</td>
+                  <td className="monitor-data">{x.status === "processando" ? <span className="suave">agora</span> : dataHoraBR(x.proxima_consulta)}</td>
                   <td>
                     <span className="acoes-icone">
                       <form action={consultarAgora}>

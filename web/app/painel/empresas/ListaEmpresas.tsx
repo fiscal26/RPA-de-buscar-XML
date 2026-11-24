@@ -85,7 +85,7 @@ export default function ListaEmpresas({ empresas }: { empresas: EmpresaAgrupada[
           <td className="empresa-identidade"><strong>{x.nome}</strong><span>{formatarDocumento(x.cnpj) || "Documento não informado"}</span>
             <small>{[x.escritorio, x.codigo && `Cód. ${x.codigo}`, x.ie && `IE ${formatarIe(x.ie)}`].filter(Boolean).join(" · ")}</small></td>
           <td data-label="Origem e serviços"><span className="empresa-origem">{[...new Set(x.cadastros.map((c) => c.origem === "sefaz" ? "SEFAZ" : "NFS-e"))].join(" & ")}</span></td>
-          <td data-label="Acesso do robô">{x.cadastros.map((c) => <div key={`${c.origem}-${c.id}`}><span className={`status ${c.acessoClasse}`}>{c.acesso}</span><span className="empresa-apoio">{x.cadastros.length > 1 && `${c.origem === "sefaz" ? "SEFAZ" : "NFS-e"} · `}{c.acessoDetalhe}</span></div>)}</td>
+          <td data-label="Acesso do robô">{x.cadastros.map((c) => <div className="empresa-acesso" key={`${c.origem}-${c.id}`}><span className={`status ${c.acessoClasse}`}>{c.acesso}</span><span className="empresa-apoio">{x.cadastros.length > 1 && `${c.origem === "sefaz" ? "SEFAZ" : "NFS-e"} · `}{c.acessoDetalhe}</span></div>)}</td>
           <td data-label="Monitoramento MEI">{x.mei === "ativo" ? <><span className="status st-ok">Acompanhando</span><span className="empresa-apoio">Cadastro MEI ativo</span></>
             : x.mei === "ignorado" ? <span className="status st-neutro">Ignorado</span>
             : x.mei === "pausado" ? <span className="status st-neutro">Pausado</span>

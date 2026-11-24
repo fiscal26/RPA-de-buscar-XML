@@ -5,6 +5,7 @@ import { formatarDocumento, formatarIe, dataHoraBR } from "@/lib/documentos";
 import { NIVEIS, pct } from "@/lib/mei";
 import { carregarMeis } from "@/lib/mei-dados";
 import { situacaoValidade } from "@/lib/nfse";
+import { ROBO_ONLINE_SEGUNDOS } from "@/lib/xml";
 import { resumoPainel, type AgendamentoPainel, type TarefaPainel } from "@/lib/painel";
 
 export type Notificacao = {
@@ -16,8 +17,6 @@ export type Notificacao = {
   link: string;
   quando: string | null;
 };
-
-const ROBO_ONLINE_SEGUNDOS = 120;
 
 /** Tudo o que pede atenção do escritório: empresas que dependem de um ajuste, MEIs perto ou acima do limite,
  *  certificados vencendo e (para o administrador) o robô desligado. Do mais grave ao mais leve. */
