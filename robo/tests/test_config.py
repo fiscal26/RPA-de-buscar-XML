@@ -34,6 +34,29 @@ def test_pasta_antiga_permanece_intacta(tmp_path, monkeypatch):
     config.resolver_pastas(cfg)
     assert antiga.is_dir() and nova.is_dir() and not list(nova.iterdir())
 
+
+def test_diagnostico_indisponivel_usa_a_pasta_padrao(tmp_path):
+    destino = tmp_path / "xml"
+    arquivo = tmp_path / "indisponivel"
+    arquivo.write_text("não é uma pasta", encoding="utf-8")
+    cfg = {"pastas": {"destino": str(destino), "diagnostico": str(arquivo / "ATF")}}
+
+    config.resolver_pastas(cfg)
+
+    assert cfg["pastas"]["diagnostico"] == str(destino.resolve() / "_diagnostico")
+
+
+def test_diagnostico_personalizado_expande_variaveis(tmp_path, monkeypatch):
+    logs = tmp_path / "logs"
+    monkeypatch.setenv("TESTE_DIRETORIO_DIAGNOSTICO", str(logs))
+    cfg = {"pastas": {"destino": str(tmp_path / "xml"), "diagnostico": "$TESTE_DIRETORIO_DIAGNOSTICO"}}
+
+    config.resolver_pastas(cfg)
+
+    assert cfg["pastas"]["diagnostico"] == str(logs)
+    assert logs.is_dir()
+
+
 def test_filas_do_robo(tmp_path, monkeypatch):
     import json
     import pytest

@@ -609,9 +609,9 @@ def baixar_competencia(cliente: ClienteADN, contexto: ContextoArmazenamento, com
         res = ResultadoNfse()
         if atualizar:
             res.novos_documentos = atualizar_cache(cliente, cache, confirmar_reserva=confirmar_reserva)
-        emitidas, recebidas, res.canceladas = separar(cache, cnpj, competencia)
-        emitidas = emitidas if com_emitidas else []
-        recebidas = recebidas if com_recebidas else []
+        emitidas_mes, recebidas_mes, res.canceladas = separar(cache, cnpj, competencia)
+        emitidas = emitidas_mes if com_emitidas else []
+        recebidas = recebidas_mes if com_recebidas else []
         sem_pdf_no_portal = False  # o portal não entregou o PDF das primeiras notas: não insiste nas outras
         res.pasta = pasta_mes
         for lista, sub in ((emitidas, PASTA_EMITIDAS), (recebidas, PASTA_RECEBIDAS)):
@@ -655,10 +655,12 @@ def baixar_competencia(cliente: ClienteADN, contexto: ContextoArmazenamento, com
                 publicar(arquivo, lambda temporario: temporario.write_bytes(lote_abrasf([xml for _, xml in lista], competencia)))
                 res.lotes.append(arquivo)
         arquivo_relatorio = arquivo_validado(pasta_mes, f"Retenções NFS-e {competencia}.xlsx")
-        if relatorio and (res.emitidas or res.recebidas or arquivo_relatorio.exists()):
+        # A planilha mensal consolida as duas direções. A seleção só limita os documentos publicados.
+        if relatorio and (emitidas_mes or recebidas_mes or arquivo_relatorio.exists()):
             res.relatorio = arquivo_relatorio
             publicar(res.relatorio, lambda temporario: relatorio_retencoes(
-                res.emitidas, res.recebidas, temporario, contexto.nome, competencia))
+                [nota for nota, _ in emitidas_mes], [nota for nota, _ in recebidas_mes],
+                temporario, contexto.nome, competencia))
         res.resumo_mei = resumo_mei(cache, cnpj, competencia)
         res.detectado_mei = eh_mei(cache, cnpj)
         return res
