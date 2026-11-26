@@ -51,6 +51,8 @@ escolhe a competência e o horário, e o robô no seu PC executa.
 
 Passo a passo de implantação: **[web/IMPLANTACAO.md](web/IMPLANTACAO.md)**.
 
+Apresentação do projeto (lógica contábil, arquitetura, fluxo de cada ferramenta e telas): **[docs/apresentacao](docs/apresentacao/README.md)**.
+
 ## Planilha modelo
 
 O modelo já vem com **X** em todas as opções (ATIVA e serviços) nas linhas 2 a 101: o cliente

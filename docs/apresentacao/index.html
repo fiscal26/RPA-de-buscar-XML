@@ -1,0 +1,707 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>LotiVisse XML por dentro</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@600;700;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: índice fixo à esquerda (desktop) + coluna de leitura; cada ferramenta segue o mesmo molde
+   Acionamento → Sequência → Recebimento → Tela → Para revisar */
+:root{
+  --bg:#f6f7fa; --surface:#ffffff; --ink:#14223d; --muted:#56627a; --line:#dde2ec;
+  --navy:#16294d; --accent:#e0a412; --accent-soft:#fdf3d6; --chip:#e9eef7;
+  --ok:#1d7a46; --ok-bg:#e3f3e9; --warn:#9a6400; --warn-bg:#fbefd5; --bad:#b42323; --bad-bg:#fbe5e5;
+  --code-bg:#eef1f7;
+  --f-head:"Manrope",system-ui,sans-serif; --f-body:"IBM Plex Sans",system-ui,sans-serif; --f-mono:"IBM Plex Mono",ui-monospace,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#0e1524; --surface:#152039; --ink:#e6ebf5; --muted:#9aa6bf; --line:#263452;
+  --navy:#c9d6f0; --accent:#f2bd3c; --accent-soft:#3a2f12; --chip:#1f2c4a;
+  --ok:#6fd39a; --ok-bg:#163527; --warn:#f2c66a; --warn-bg:#3a2d10; --bad:#f19494; --bad-bg:#3d1b1f; --code-bg:#1b2742; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0e1524; --surface:#152039; --ink:#e6ebf5; --muted:#9aa6bf; --line:#263452;
+  --navy:#c9d6f0; --accent:#f2bd3c; --accent-soft:#3a2f12; --chip:#1f2c4a;
+  --ok:#6fd39a; --ok-bg:#163527; --warn:#f2c66a; --warn-bg:#3a2d10; --bad:#f19494; --bad-bg:#3d1b1f; --code-bg:#1b2742; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font:16px/1.65 var(--f-body)}
+a{color:var(--navy);text-underline-offset:3px}
+a:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+code,.mono{font-family:var(--f-mono);font-size:.86em}
+code{background:var(--code-bg);padding:.1em .35em;border-radius:4px;overflow-wrap:anywhere}
+h1,h2,h3,h4{font-family:var(--f-head);line-height:1.2;text-wrap:balance;color:var(--navy);margin:0}
+h1{font-size:clamp(2rem,4.5vw,3rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:1.75rem;font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.2rem;font-weight:700}
+h4{font-size:.78rem;font-weight:700;text-transform:uppercase;letter-spacing:.09em;color:var(--muted)}
+p{margin:0}
+.wrap{display:grid;grid-template-columns:240px minmax(0,1fr);gap:48px;max-width:1240px;margin:0 auto;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:40px 80px}
+nav.toc{position:sticky;top:calc(env(safe-area-inset-top,0px) + 24px);align-self:start;font-size:.9rem}
+nav.toc .marca{display:flex;align-items:center;gap:8px;font-family:var(--f-head);font-weight:800;color:var(--navy);margin-bottom:18px}
+nav.toc .marca i{width:22px;height:22px;border-radius:6px;background:var(--accent);display:inline-block}
+nav.toc ol{list-style:none;margin:0;padding:0;display:grid;gap:2px}
+nav.toc a{display:block;padding:5px 10px;border-radius:6px;text-decoration:none;color:var(--muted)}
+nav.toc a:hover{background:var(--chip);color:var(--ink)}
+nav.toc .sub a{padding-left:22px;font-size:.85rem}
+main{min-width:0;display:grid;gap:72px}
+section{display:grid;gap:20px;scroll-margin-top:24px}
+.lead{font-size:1.15rem;color:var(--muted);max-width:68ch}
+.prosa{max-width:72ch;display:grid;gap:12px}
+.hero{display:grid;gap:18px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+.eyebrow{font:600 .78rem var(--f-mono);letter-spacing:.08em;text-transform:uppercase;color:var(--warn)}
+.meta{display:flex;flex-wrap:wrap;gap:8px}
+.chip{display:inline-flex;align-items:center;gap:6px;background:var(--chip);color:var(--ink);border-radius:999px;padding:3px 12px;font-size:.82rem}
+.grid3{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}
+.peca{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:18px;display:grid;gap:8px;align-content:start}
+.peca .onde{font:500 .75rem var(--f-mono);color:var(--muted)}
+.diagrama{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:18px;overflow-x:auto}
+.diagrama pre.mermaid{margin:0;background:transparent;display:flex;justify-content:center;min-width:640px}
+.legenda{font-size:.85rem;color:var(--muted)}
+table{border-collapse:collapse;width:100%;font-size:.92rem}
+.tabela{overflow-x:auto;background:var(--surface);border:1px solid var(--line);border-radius:10px}
+th,td{text-align:left;padding:10px 14px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-family:var(--f-head);font-size:.8rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);background:var(--chip)}
+tr:last-child td{border-bottom:0}
+.ferramenta{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:28px;display:grid;gap:22px}
+.ferramenta header{display:grid;gap:8px}
+.ferramenta .tag{font:500 .78rem var(--f-mono);color:var(--muted)}
+.etapas{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px}
+.etapa{border-top:3px solid var(--accent);padding-top:12px;display:grid;gap:8px;align-content:start}
+.etapa ul,.prosa ul,.rev ul{margin:0;padding-left:1.15em;display:grid;gap:5px}
+.etapa li,.rev li{font-size:.94rem}
+figure{margin:0;display:grid;gap:8px}
+figure img{border:1px solid var(--line);border-radius:10px;display:block;width:100%;height:auto;background:var(--surface)}
+figcaption{font-size:.85rem;color:var(--muted)}
+.rotina{border:1px solid var(--line);border-radius:10px;padding:12px 16px;font-size:.95rem;max-width:80ch}
+.rotina strong{color:var(--navy);font-family:var(--f-head)}
+.rev{background:var(--accent-soft);border-radius:10px;padding:16px 18px;display:grid;gap:8px}
+.rev h4{color:var(--warn)}
+.estado{display:inline-block;border-radius:6px;padding:1px 8px;font-size:.8rem;font-weight:600}
+.e-ok{background:var(--ok-bg);color:var(--ok)} .e-warn{background:var(--warn-bg);color:var(--warn)} .e-bad{background:var(--bad-bg);color:var(--bad)} .e-n{background:var(--chip);color:var(--ink)}
+.galeria{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:18px}
+.arvore{background:var(--code-bg);border-radius:10px;padding:16px 18px;font:13px/1.6 var(--f-mono);overflow-x:auto;white-space:pre;margin:0}
+details{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px 16px}
+summary{cursor:pointer;font-weight:600;font-family:var(--f-head);color:var(--navy)}
+details[open] summary{margin-bottom:10px}
+.aviso{border-left:3px solid var(--accent);padding:4px 0 4px 14px;color:var(--muted);font-size:.92rem;max-width:72ch}
+@media (max-width:900px){.wrap{grid-template-columns:minmax(0,1fr);gap:28px}nav.toc{position:static}nav.toc ol{grid-template-columns:repeat(auto-fill,minmax(160px,1fr))}nav.toc .sub a{padding-left:10px}.ferramenta{padding:18px}}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+html{scroll-behavior:smooth}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+<nav class="toc" aria-label="Índice">
+  <div class="marca"><i aria-hidden="true"></i>LotiVisse XML</div>
+  <ol>
+    <li><a href="#visao">Visão geral</a></li>
+    <li><a href="#logica">Lógica contábil</a></li>
+    <li><a href="#arquitetura">Arquitetura</a></li>
+    <li><a href="#tarefa">Vida de uma tarefa</a></li>
+    <li><a href="#ferramentas">As ferramentas</a></li>
+    <li class="sub"><a href="#sefaz">1. SEFAZ-PB: XML</a></li>
+    <li class="sub"><a href="#pdfs">2. SEFAZ-PB: PDFs e Dossiê MEI</a></li>
+    <li class="sub"><a href="#nfse">3. NFS-e Portal Nacional</a></li>
+    <li class="sub"><a href="#monitor">4. Monitor Fiscal</a></li>
+    <li class="sub"><a href="#mei">5. Monitoramento MEI</a></li>
+    <li class="sub"><a href="#drive">6. Entrega no Drive</a></li>
+    <li><a href="#seguranca">Segurança e cifragem</a></li>
+    <li><a href="#banco">Banco de dados</a></li>
+    <li><a href="#telas">Galeria de telas</a></li>
+    <li><a href="#mapa">Mapa do código</a></li>
+    <li><a href="#revisao">Pauta de revisão</a></li>
+  </ol>
+</nav>
+
+<main>
+<!-- ============ VISÃO GERAL ============ -->
+<section id="visao" class="hero">
+  <span class="eyebrow">Documentação técnica · para revisão do Monoblocs</span>
+  <h1>LotiVisse XML por dentro</h1>
+  <p class="lead">Um portal onde escritórios contábeis agendam competências e um robô que vai buscar, sozinho, os documentos fiscais de cada cliente: XML de NF-e, NFC-e e CT-e na SEFAZ-PB, NFS-e no Portal Nacional, notas destinadas no Ambiente Nacional, guias, certidões e o faturamento dos MEI. Tudo chega organizado em pastas por empresa e competência, no formato que a Domínio importa.</p>
+  <div class="meta">
+    <span class="chip">Repositório <code>fiscal26/RPA-de-buscar-XML</code></span>
+    <span class="chip">Base: <code>main</code> em <code>23c8d51</code> (PR 62)</span>
+    <span class="chip">Situação em 26/11/2026</span>
+  </div>
+  <div class="grid3">
+    <div class="peca"><span class="onde">web/ · Vercel</span><h3>Portal</h3><p>Next.js 15 com Supabase. Login, cadastro de empresas e certificados, agendamento, acompanhamento, Monitor Fiscal, Monitoramento MEI e equipe. Endereço <code>xml.lotivisse.com.br</code>.</p></div>
+    <div class="peca"><span class="onde">web/supabase/schema.sql</span><h3>Banco</h3><p>PostgreSQL do Supabase. Tabelas, regras de acesso por escritório (RLS) e as funções que funcionam como <strong>filas</strong> entre o portal e o robô.</p></div>
+    <div class="peca"><span class="onde">robo/ · VPS Hostinger</span><h3>Robô</h3><p>Python com Playwright controlando um Chrome real (ATF) e clientes HTTP com certificado A1 (NFS-e e NF-e). Pega trabalho no banco, executa e devolve o resultado.</p></div>
+    <div class="peca"><span class="onde">servidor/</span><h3>Instalação na VPS</h3><p>Serviços systemd (tela virtual, Chrome, robô, worker MEI), envio ao Google Drive por rclone a cada 10 minutos e o comando <code>lotivisse</code>.</p></div>
+  </div>
+  <p class="aviso">As telas desta página foram capturadas do próprio portal rodando localmente com a sessão e as empresas fictícias da suíte de testes (<code>web/tests/fixtures/interface-session.ts.txt</code>). Nenhum dado de cliente aparece aqui.</p>
+</section>
+
+<!-- ============ LÓGICA CONTÁBIL ============ -->
+<section id="logica">
+  <h2>Por que o sistema existe: a lógica contábil</h2>
+  <div class="prosa">
+    <p>O trabalho de um escritório contábil se resume a três entregas: <strong>escriturar</strong> as operações do cliente, <strong>declarar</strong> ao fisco o que foi escriturado e apurado, e <strong>produzir as informações contábeis</strong> (balancete, demonstrações, conciliações) que sustentam as decisões do cliente.</p>
+    <p>As três dependem de um passo anterior que consome boa parte do tempo da equipe fiscal: <strong>localizar e reunir os documentos</strong>. São notas fiscais espalhadas em portais diferentes (SEFAZ do estado, Portal Nacional da NFS-e, Ambiente Nacional da NF-e), guias, extratos e certidões que precisam ser buscados empresa por empresa, mês a mês, com o login do contador ou o certificado de cada cliente.</p>
+    <p>O LotiVisse XML automatiza esse passo. O robô faz a busca, confere de qual empresa é cada documento pelo conteúdo do XML e entrega tudo na pasta do cliente e da competência, no caminho que o sistema contábil (Domínio) importa. A equipe deixa de procurar e passa a conferir, escriturar e analisar.</p>
+  </div>
+  <div class="diagrama">
+<pre class="mermaid">
+flowchart LR
+  L["1 · Localizar<br/>documentos<br/><b>(o robô faz)</b>"] --> E["2 · Escriturar<br/>livros de entradas,<br/>saídas e serviços"]
+  E --> A["3 · Apurar e declarar<br/>ICMS, ISS, Simples,<br/>retenções, MEI"]
+  A --> C["4 · Produzir a<br/>informação contábil<br/>balancete, conciliações"]
+  C -.->|"divergência encontrada"| L
+</pre>
+  </div>
+  <p class="legenda">O ciclo mensal de cada cliente. O sistema atua na etapa 1 e entrega insumos de conferência (extratos, cartão, omissões) que apoiam as etapas 2 a 4.</p>
+
+  <div class="tabela"><table>
+    <thead><tr><th>Documento que o robô traz</th><th>Para que a equipe usa</th><th>Etapa que alimenta</th></tr></thead>
+    <tbody>
+      <tr><td>XML de NF-e de saída, NFC-e e NFS-e emitidas</td><td>Registrar as receitas e as saídas; base de cálculo do ICMS, do ISS e da receita bruta do Simples Nacional</td><td>Escrituração · apuração · PGDAS-D, EFD</td></tr>
+      <tr><td>XML de NF-e de entrada e NFS-e recebidas</td><td>Registrar compras, custos e despesas; aproveitamento de créditos quando o regime permite</td><td>Escrituração · apuração</td></tr>
+      <tr><td>CT-e (remetente e destinatário)</td><td>Fretes contratados e prestados, com o imposto destacado no conhecimento</td><td>Escrituração · apuração</td></tr>
+      <tr><td>NF-e destinadas (Monitor Fiscal)</td><td>Encontrar compras emitidas contra o CNPJ do cliente que ele não enviou ao escritório, antes do fechamento do mês</td><td>Conferência da escrituração</td></tr>
+      <tr><td>Relatório de retenções da NFS-e</td><td>ISS, IRRF, PIS, COFINS, CSLL e INSS retidos, nota a nota e em totais</td><td>Declaração das retenções (EFD-Reinf, DCTFWeb, ISS municipal)</td></tr>
+      <tr><td>Faturas (DAR em aberto)</td><td>Guias do ICMS para pagamento, enviadas ao cliente</td><td>Cumprimento da obrigação principal</td></tr>
+      <tr><td>Extrato de pagamentos</td><td>Confirmar o que foi recolhido e contabilizar o pagamento</td><td>Informação contábil · conciliação</td></tr>
+      <tr><td>Omissão e inadimplência · Certidão de débitos</td><td>Ver o que a SEFAZ aponta como pendente e comprovar a regularidade do cliente</td><td>Controle das declarações e da regularidade fiscal</td></tr>
+      <tr><td>Conferência cartão de crédito</td><td>Cruzar as vendas no cartão informadas pelas administradoras com as notas emitidas, para identificar receita sem nota</td><td>Conferência da escrituração</td></tr>
+      <tr><td>Dossiê MEI e faturamento NFS-e do MEI</td><td>Acompanhar o limite anual do MEI e antecipar o desenquadramento</td><td>Declaração anual do MEI (DASN-SIMEI) · orientação ao cliente</td></tr>
+    </tbody>
+  </table></div>
+  <p class="aviso">O sistema localiza e organiza os documentos; a escrituração, a apuração e as declarações continuam sendo feitas e conferidas pela equipe no sistema contábil. As obrigações citadas dependem do regime e da atividade de cada cliente.</p>
+</section>
+
+<!-- ============ ARQUITETURA ============ -->
+<section id="arquitetura">
+  <h2>Arquitetura</h2>
+  <div class="prosa">
+    <p>O portal e o robô nunca conversam diretamente. O portal grava o pedido no banco; o robô, num laço contínuo, chama funções do banco que reservam o próximo lote de trabalho (com <code>for update skip locked</code>), executa e grava o resultado. Por isso o robô pode estar num PC ou na VPS, pode cair e voltar, e mais de um robô pode rodar sem pegar a mesma tarefa.</p>
+  </div>
+  <div class="diagrama">
+<pre class="mermaid">
+flowchart LR
+  subgraph U["Escritório contábil"]
+    N["Navegador<br/>(gestor / usuário)"]
+    GD["Google Drive<br/>pasta do escritório"]
+    EM["Caixa de e-mail"]
+  end
+  subgraph V["Vercel"]
+    P["Portal Next.js<br/>xml.lotivisse.com.br"]
+    CR["Cron diário<br/>/api/cron/alertas-mei"]
+  end
+  subgraph S["Supabase"]
+    DB[("PostgreSQL<br/>tabelas + RLS + filas RPC")]
+    AU["Auth"]
+  end
+  subgraph VPS["VPS Hostinger · Ubuntu"]
+    R["robo_xml.py<br/>laço principal"]
+    CH["Chrome :11 / CDP 9223"]
+    TN["Threads NFS-e e Monitor<br/>(4 em paralelo cada)"]
+    MW["mei_cadastros.py<br/>worker a cada 15 s"]
+    AR[/"arquivos/&lt;Escritório&gt;/..."/]
+    RC["drive.sh · rclone<br/>a cada 10 min"]
+  end
+  subgraph EXT["Serviços externos"]
+    ATF["ATF SEFAZ-PB"]
+    ADN["ADN NFS-e<br/>adn.nfse.gov.br"]
+    AN["Ambiente Nacional NF-e<br/>NFeDistribuicaoDFe"]
+    CNPJA["CNPJá pública"]
+    BR["Brevo (e-mail)"]
+  end
+  N --> P
+  P <--> AU
+  P <--> DB
+  R <-->|"RPC REST<br/>service_role"| DB
+  R --> CH --> ATF
+  R --> TN
+  TN -->|"mTLS A1"| ADN
+  TN -->|"SOAP mTLS A1"| AN
+  R --> AR
+  TN --> AR
+  AR --> RC --> GD
+  MW -->|"HMAC"| P
+  P --> CNPJA
+  CR --> P
+  P --> BR --> EM
+  R -->|"avisa MEI"| P
+</pre>
+  </div>
+  <p class="legenda">Fluxo de controle. O robô fala com o banco pela API REST do Supabase (<code>/rest/v1/rpc/...</code>) usando a chave <code>service_role</code> guardada só na VPS.</p>
+
+  <div class="tabela"><table>
+    <thead><tr><th>Peça</th><th>Roda em</th><th>Acionada por</th><th>Entrega</th></tr></thead>
+    <tbody>
+      <tr><td>Portal (<code>web/</code>)</td><td>Vercel</td><td>Pessoa no navegador</td><td>Linhas em <code>xml_agendamentos</code>, <code>xml_tarefas</code>, <code>xml_nfe_monitor</code> etc.</td></tr>
+      <tr><td>Robô, fila SEFAZ</td><td>VPS, laço principal + Chrome</td><td><code>xml_pegar_lote</code> a cada intervalo</td><td>ZIP/PDF nas pastas, status por tarefa</td></tr>
+      <tr><td>Robô, fila NFS-e</td><td>VPS, thread própria</td><td><code>xml_nfse_reservar_lote</code></td><td>XML, DANFSe, retenções, lote ABRASF</td></tr>
+      <tr><td>Robô, Monitor Fiscal</td><td>VPS, thread própria</td><td><code>xml_nfe_pegar_monitor</code> no horário do escritório</td><td>XML + DANFE das NF-e destinadas</td></tr>
+      <tr><td>Worker de cadastros MEI</td><td>VPS, <code>lotivisse-mei-cadastros.service</code></td><td>Timer de 15 s</td><td>Chama <code>/api/robo/mei-cadastros</code> (CNPJá)</td></tr>
+      <tr><td>Alertas MEI</td><td>Vercel</td><td>Cron <code>0 11 * * *</code> (8h de Brasília) e o robô após gravar o Dossiê</td><td>E-mail pela Brevo</td></tr>
+      <tr><td>Envio ao Drive</td><td>VPS, timer systemd</td><td>A cada 10 min</td><td>Cópia dos últimos 35 dias para o Google Drive</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- ============ TAREFA ============ -->
+<section id="tarefa">
+  <h2>Vida de uma tarefa</h2>
+  <div class="prosa">
+    <p>Cada agendamento gera <strong>uma tarefa por empresa</strong> em <code>xml_tarefas</code>, com a lista de serviços marcados (<code>tipos</code>). Os estados possíveis estão no <code>check</code> da tabela; o detalhe por serviço vai em <code>detalhes</code> (jsonb), que é o que a grade da execução mostra.</p>
+  </div>
+  <div class="diagrama">
+<pre class="mermaid">
+stateDiagram-v2
+  [*] --> pendente: portal agenda
+  pendente --> processando: robô reserva o lote
+  processando --> pendente: 90 min sem resposta / Chrome caiu / ATF fora
+  processando --> concluido
+  processando --> sem_notas
+  processando --> erro
+  processando --> senha_invalida: ATF recusou o login
+  processando --> certificado: A1 vencido ou recusado
+  processando --> fora_do_ar: Portal Nacional indisponível
+  pendente --> cancelado: usuário cancela
+  erro --> pendente: reprocessar erros (novo agendamento)
+  concluido --> [*]
+  sem_notas --> [*]
+</pre>
+  </div>
+  <div class="grid3">
+    <div class="peca"><h4>Retomada automática</h4><p>Tarefa SEFAZ presa em <code>processando</code> por mais de 90 minutos volta para <code>pendente</code> na próxima chamada de <code>xml_pegar_lote</code>.</p></div>
+    <div class="peca"><h4>Reprocessamento de erros</h4><p>Botão na tela da execução, ou automático: quando um agendamento termina com 15 ou mais empresas com erro, um gatilho cria um novo agendamento só com os serviços que falharam, marcado para as 22h.</p></div>
+    <div class="peca"><h4>Sinal de vida</h4><p>O robô grava em <code>xml_robos</code> a cada 30 s (versão, Chrome ok, tarefas em curso). O portal mostra "Robô ligado".</p></div>
+  </div>
+</section>
+
+<!-- ============ FERRAMENTAS ============ -->
+<section id="ferramentas">
+  <h2>As ferramentas, do acionamento ao recebimento</h2>
+  <p class="lead">Cada bloco abaixo segue o mesmo caminho: quem aciona, o que acontece em sequência, onde o resultado chega, a tela correspondente e os pontos que valem uma segunda opinião.</p>
+</section>
+
+<!-- 1. SEFAZ XML -->
+<article id="sefaz" class="ferramenta">
+  <header>
+    <span class="tag">robo/atf_pb.py · robo/robo_xml.py (Executor) · xml_pegar_lote</span>
+    <h3>1. SEFAZ-PB: XML de NF-e, NFC-e e CT-e pelo ATF</h3>
+    <p>O ATF não entrega XML na hora. A consulta com <em>Tipo de Exibição = XML</em> gera, minutos depois, uma mensagem com o anexo em <strong>Minhas Mensagens</strong>. O robô trabalha em rodadas de um login de contador (até 15 empresas), envia todas as consultas e depois recolhe as respostas.</p>
+  </header>
+  <p class="rotina"><strong>Na rotina fiscal:</strong> Os XML de entrada, saída, NFC-e e CT-e são a matéria-prima da escrituração dos livros fiscais e da apuração do ICMS. Sem o robô, alguém da equipe entra no ATF, faz a consulta de cada empresa, espera a mensagem e baixa o anexo, um a um.</p>
+  <div class="etapas">
+    <div class="etapa"><h4>Acionamento</h4><ul>
+      <li>Gestor em <strong>Agendar → SEFAZ do estado</strong>: envia a planilha modelo ou escolhe empresas cadastradas, o período e "assim que possível" ou data e hora.</li>
+      <li><code>prepararAgendamento</code> lê a planilha no navegador e cifra a senha do ATF com a chave pública do robô; <code>confirmarAgendamento</code> grava logins, empresas e chama <code>xml_agendar_periodo</code>.</li>
+      <li>A planilha nunca é guardada.</li>
+    </ul></div>
+    <div class="etapa"><h4>Execução</h4><ul>
+      <li><code>xml_pegar_lote</code> escolhe um login (de preferência o já aberto no Chrome) e uma competência, e reserva até 15 tarefas.</li>
+      <li>Login único no ATF; consulta primeiro em HTML (sem notas, nem pede o XML).</li>
+      <li>NF-e: FIS_1322 (bloco Emitente = saída, Destinatário = entrada). NFC-e: FIS_1484. CT-e: FIS_1192 (Remetente e Destinatário).</li>
+      <li>Recolha em SEG_064: uma leitura a cada 65 s, até 3 por rodada; pendentes ganham uma última leitura no fim da fila.</li>
+    </ul></div>
+    <div class="etapa"><h4>Recebimento</h4><ul>
+      <li>Cada ZIP é atribuído à empresa pela IE/CNPJ <strong>de dentro do XML</strong>, não pela ordem da mensagem.</li>
+      <li>ZIP fica como veio; o total (vNF das autorizadas) vai no nome da pasta; DANFE/DACTE em <code>PDF/</code>.</li>
+      <li>Status por serviço em <code>detalhes</code>; tarefa termina como <span class="estado e-ok">concluido</span>, <span class="estado e-n">sem_notas</span> ou <span class="estado e-bad">erro</span>.</li>
+    </ul></div>
+  </div>
+  <div class="diagrama">
+<pre class="mermaid">
+sequenceDiagram
+  autonumber
+  actor G as Gestor
+  participant P as Portal
+  participant DB as Supabase
+  participant R as Robô
+  participant C as Chrome
+  participant A as ATF SEFAZ-PB
+  G->>P: planilha + competência + horário
+  P->>P: cifra senha (RSA-OAEP)
+  P->>DB: xml_agendar_periodo → tarefas pendentes
+  loop a cada intervalo
+    R->>DB: xml_pegar_lote(robô, login aberto, 15)
+  end
+  DB-->>R: lote de 1 login, senha cifrada
+  R->>R: decifra senha (chave privada)
+  R->>C: login (SEGf_Login.jsp)
+  loop cada empresa × serviço
+    C->>A: consulta HTML (há notas?)
+    C->>A: consulta XML → "resultado na caixa de mensagens"
+  end
+  loop até 3 leituras, 65 s entre elas
+    C->>A: Minhas Mensagens (SEG_064)
+    A-->>C: anexo "Dados referentes ao ano de ..."
+  end
+  R->>R: lê IE/CNPJ do XML e distribui
+  R->>DB: status + detalhes por serviço
+  P-->>G: grade da execução atualiza
+</pre>
+  </div>
+  <figure><img src="fotos/agendar-sefaz.png" alt="Tela Agendar uma competência, com SEFAZ do estado selecionado, planilha modelo e período de competências" loading="lazy"><figcaption>Agendar → SEFAZ do estado. A planilha modelo vem com X em todos os serviços; o cliente apaga o que não quer.</figcaption></figure>
+  <figure><img src="fotos/execucao.png" alt="Tela de uma competência em execução com barra de progresso e grade de empresas por serviço" loading="lazy"><figcaption>Agendamentos → competência. Progresso geral, contagem por estado e a grade empresa × serviço, com "Aguardando o ATF" para as respostas que ainda não chegaram.</figcaption></figure>
+  <div class="rev"><h4>Para revisar</h4><ul>
+    <li>O ATF limita a leitura de mensagens a uma por minuto: a rodada de 15 empresas leva vários minutos e não há como paralelizar no mesmo login.</li>
+    <li>Senha recusada não é tentada de novo nas outras empresas do mesmo login (risco de bloqueio do contador).</li>
+    <li>Telas não reconhecidas geram pacote em <code>_diagnostico/</code> e entram em modo assistido. Vale olhar se o seletor depende de texto que a SEFAZ pode mudar.</li>
+    <li>O botão Consultar do ATF tem reCAPTCHA; a regra combinada é não automatizar captcha sem discutir antes.</li>
+  </ul></div>
+</article>
+
+<!-- 2. PDFs + MEI -->
+<article id="pdfs" class="ferramenta">
+  <header>
+    <span class="tag">robo/atf_pb.py · robo/pdf_fiscal.py · xml_mei_registrar</span>
+    <h3>2. SEFAZ-PB: guias, certidões e Dossiê MEI</h3>
+    <p>Feitos na mesma sessão do login do contador, enquanto o ATF prepara os XML. Cada tela é aberta pelo campo <em>Função</em> do topo; a IE vai no Número e o <em>Pesquisar</em> confirma a empresa.</p>
+  </header>
+  <p class="rotina"><strong>Na rotina fiscal:</strong> Fecham o mês do cliente na SEFAZ: guias a pagar, o que já foi pago, o que o fisco aponta como omisso e a certidão de regularidade. A conferência do cartão e o Dossiê MEI servem para achar receita sem nota e controlar o limite do MEI.</p>
+  <div class="tabela"><table>
+    <thead><tr><th>Serviço</th><th>Função ATF</th><th>O que o robô faz</th><th>Chega em</th></tr></thead>
+    <tbody>
+      <tr><td>Faturas</td><td><code>ARR_278</code></td><td>Marca todos os lançamentos espontâneos, menos "DIFERIDO - VALOR MINIMO", e emite (PIX)</td><td><code>Faturas/Faturas AAAA-MM.pdf</code></td></tr>
+      <tr><td>Extrato de Pagamentos</td><td><code>ARR_087</code></td><td>Do 1º ao último dia da competência, todos os impostos</td><td><code>Extrato de Pagamentos/</code></td></tr>
+      <tr><td>Omissão e Inadimplência</td><td><code>COB_187</code></td><td>Relatório completo</td><td><code>Omissão e Inadimplência/</code></td></tr>
+      <tr><td>Certidão de Débitos</td><td><code>DIA_061</code></td><td>Submeter</td><td><code>Certidão de Débitos/</code></td></tr>
+      <tr><td>Conferência Cartão</td><td><code>DEC_381</code></td><td>Aba Docs fiscais, link "- Cartão:" e salva a janela em PDF</td><td><code>Conferência Cartão de Crédito/</code></td></tr>
+      <tr><td>Dossiê MEI</td><td><code>DEC_381</code> / <code>DEC_382</code></td><td>Lê Optante SIMEI e início de atividade; guarda a tabela de totais de documentos fiscais por mês</td><td><code>Dossiê MEI/Faturamento MEI AAAA.xlsx</code> e o painel MEI</td></tr>
+    </tbody>
+  </table></div>
+  <div class="etapas">
+    <div class="etapa"><h4>Acionamento</h4><ul><li>Mesma tarefa da ferramenta 1: os PDFs e o Dossiê são colunas da planilha (X = emitir).</li></ul></div>
+    <div class="etapa"><h4>Execução</h4><ul><li>O PDF é capturado antes de ir para o visualizador do Chrome; janelas extras são fechadas.</li><li>MEI novo: busca também os meses do ano ainda ausentes (de janeiro ou do início da atividade até a competência).</li></ul></div>
+    <div class="etapa"><h4>Recebimento</h4><ul><li>Arquivo repetido não duplica; um novo fica ao lado com "(2)".</li><li>Dossiê vai para o banco por <code>xml_mei_registrar</code> e o robô chama <code>/api/robo/alertas-mei</code> para avisar a equipe na hora.</li></ul></div>
+  </div>
+  <div class="rev"><h4>Para revisar</h4><ul>
+    <li>O README ainda marca como pendente a <strong>primeira rodada no ATF real</strong> dos 4 serviços de PDF. Confirmar se já ocorreu.</li>
+    <li>Limite MEI usado: R$ 81.000,00 no ano, ou R$ 6.750,00 por mês de atividade no ano de abertura (LC 123/2006, art. 18-A, §§ 1º e 2º). Notas e cartão são acompanhados em separado.</li>
+  </ul></div>
+</article>
+
+<!-- 3. NFS-e -->
+<article id="nfse" class="ferramenta">
+  <header>
+    <span class="tag">robo/nfse.py · executar_nfse · xml_nfse_reservar_lote · robo/NFSE.md</span>
+    <h3>3. NFS-e pelo Portal Nacional (API ADN)</h3>
+    <p>Sem navegador: uma chamada HTTPS com o certificado A1 (mTLS) a <code>adn.nfse.gov.br/contribuintes/DFe/&lt;NSU&gt;?lote=true</code> devolve os documentos a partir do último NSU. Roda numa thread própria, com até 4 empresas ao mesmo tempo, em paralelo com o ATF.</p>
+  </header>
+  <p class="rotina"><strong>Na rotina fiscal:</strong> As NFS-e emitidas compõem a receita de serviços e a base do ISS; as recebidas são custos e despesas. O relatório de retenções reúne o que o tomador reteve e precisa ser declarado e compensado.</p>
+  <div class="etapas">
+    <div class="etapa"><h4>Acionamento</h4><ul>
+      <li><strong>Certificados</strong>: o .pfx e a senha são cifrados no servidor do portal (<code>v2:</code> AES-256-GCM com a chave embrulhada em RSA) antes de ir ao banco.</li>
+      <li><strong>Agendar → Portal Nacional</strong>: planilha de NFS-e ou empresas cadastradas; serviços emitidas, recebidas, PDF e retenções.</li>
+    </ul></div>
+    <div class="etapa"><h4>Execução</h4><ul>
+      <li>Ordem do certificado: o da empresa, o da matriz (mesma raiz) e, por fim, o do escritório como procurador (procuração eletrônica, desde 01/11/2026).</li>
+      <li>Sempre envia <code>cnpjConsulta</code>. 429/5xx esperam e repetem; certificado vencido encerra com <span class="estado e-warn">certificado</span>.</li>
+      <li>Reserva por tentativa (<code>tentativa_id</code>): só a tentativa dona pode gravar o resultado.</li>
+      <li>MEI sem histórico: busca os meses anteriores do ano que ainda não estão no banco.</li>
+    </ul></div>
+    <div class="etapa"><h4>Recebimento</h4><ul>
+      <li><code>NFS-e Emitidas/</code> e <code>NFS-e Recebidas/</code> com XML e DANFSe (do portal ou gerado do XML).</li>
+      <li><code>Retenções NFS-e AAAA-MM.xlsx</code>: ISS, IRRF, PIS, COFINS, CSLL e INSS.</li>
+      <li>XML único do mês no envelope ABRASF, para a Domínio.</li>
+      <li>Cache por escritório e CNPJ (<code>robo/armazenamento.py</code>); canceladas ficam fora.</li>
+    </ul></div>
+  </div>
+  <div class="diagrama">
+<pre class="mermaid">
+sequenceDiagram
+  autonumber
+  actor G as Gestor
+  participant P as Portal
+  participant DB as Supabase
+  participant T as Thread NFS-e
+  participant ADN as ADN Portal Nacional
+  G->>P: envia .pfx + senha
+  P->>DB: certificado cifrado (v2)
+  G->>P: agenda competência NFS-e
+  P->>DB: tarefas pendentes
+  T->>DB: xml_nfse_reservar_lote(robô, 4)
+  DB-->>T: tarefa + tentativa_id + pfx cifrado
+  T->>T: decifra A1 só na memória
+  loop enquanto houver NSU novo
+    T->>ADN: GET /contribuintes/DFe/NSU?lote=true (mTLS)
+    ADN-->>T: lote JSON, XML em gzip+base64
+  end
+  T->>T: separa emitidas/recebidas, gera DANFSe e retenções
+  T->>DB: xml_atualizar_tarefa_reservada(tarefa, tentativa, resultado)
+</pre>
+  </div>
+  <figure><img src="fotos/agendar-nfse.png" alt="Tela de agendamento do Portal Nacional NFS-e" loading="lazy"><figcaption>Agendar → Portal Nacional (NFS-e).</figcaption></figure>
+  <figure><img src="fotos/certificados.png" alt="Tela de certificados A1 cadastrados" loading="lazy"><figcaption>Certificados: A1 por empresa ou do escritório (procurador), com validade.</figcaption></figure>
+  <div class="rev"><h4>Para revisar</h4><ul>
+    <li>Ritmo do ADN: começa em ~0,7 s entre chamadas e aumenta em 429. Medir com volume real.</li>
+    <li>A migração <code>20261124190000_filas_nfse_compativeis_com_reservas.sql</code> é pré-requisito da reserva por tentativa: sem ela o robô para com "Reserva da fila NFS-e indisponível".</li>
+  </ul></div>
+</article>
+
+<!-- 4. Monitor -->
+<article id="monitor" class="ferramenta">
+  <header>
+    <span class="tag">robo/nfe.py · executar_monitor · xml_nfe_pegar_monitor / xml_nfe_concluir · robo/NFE.md</span>
+    <h3>4. Monitor Fiscal: NF-e destinadas</h3>
+    <p>Todo dia, no horário escolhido pelo escritório (padrão 11h de Brasília), o robô consulta o Ambiente Nacional da NF-e com o A1 de cada empresa monitorada e traz as notas em que ela é destinatária, de qualquer estado.</p>
+  </header>
+  <p class="rotina"><strong>Na rotina fiscal:</strong> Mostra as compras emitidas contra o CNPJ do cliente, inclusive de outros estados, mesmo quando ele não envia a nota ao escritório. Reduz nota de entrada fora da escrituração e permite conferir a operação antes do fechamento.</p>
+  <div class="etapas">
+    <div class="etapa"><h4>Acionamento</h4><ul>
+      <li><strong>Monitor Fiscal → Adicionar ao monitoramento</strong> cria a linha em <code>xml_nfe_monitor</code>.</li>
+      <li>"Consultar agora" antecipa, respeitando a espera mínima de 1 hora.</li>
+      <li>A ciência automática liga e desliga por empresa.</li>
+    </ul></div>
+    <div class="etapa"><h4>Execução</h4><ul>
+      <li><code>distNSU</code> desde o último NSU. Nada novo ou rejeição 656: próxima consulta só em 1 h.</li>
+      <li>Nota chega como resumo (<code>resNFe</code>); o robô registra a Ciência da Operação (evento 210210, assinada em XMLDSig) e busca o XML pela chave (<code>consChNFe</code>), até 20 por rodada.</li>
+      <li>Cadeia ICP-Brasil baixada do ITI e renovada a cada 30 dias.</li>
+    </ul></div>
+    <div class="etapa"><h4>Recebimento</h4><ul>
+      <li><code>&lt;MMAAAA&gt;/NF-e Recebidas/&lt;chave&gt;.xml</code> e <code>.pdf</code> (DANFE), no mês da emissão.</li>
+      <li>Cancelamento (110111) marca a nota e fica em <code>Eventos/</code>.</li>
+      <li><code>xml_nfe_concluir</code> grava notas, NSU e quando consultar de novo.</li>
+    </ul></div>
+  </div>
+  <div class="diagrama">
+<pre class="mermaid">
+sequenceDiagram
+  autonumber
+  participant DB as Supabase
+  participant T as Thread Monitor
+  participant AN as Ambiente Nacional
+  T->>DB: xml_nfe_pegar_monitor (horário vencido)
+  DB-->>T: empresa + último NSU + A1 cifrado
+  T->>AN: distNSU(último NSU)
+  AN-->>T: resNFe (resumo) / procNFe / eventos
+  alt só resumo e ciência ligada
+    T->>AN: Recepção de Evento 210210 (Ciência)
+    T->>AN: consChNFe(chave)
+    AN-->>T: XML completo (ou ainda não liberado)
+  end
+  T->>T: salva XML + DANFE
+  T->>DB: xml_nfe_concluir(NSU, notas, espera)
+</pre>
+  </div>
+  <figure><img src="fotos/monitor.png" alt="Tela do Monitor Fiscal com indicadores e tabela de empresas monitoradas" loading="lazy"><figcaption>Monitor Fiscal: horário da consulta, totais do mês e situação de cada empresa.</figcaption></figure>
+  <div class="rev"><h4>Para revisar</h4><ul>
+    <li>Conexão com a SEFAZ real não tinha sido validada por log até o HANDOFF de 14/11 (só SEFAZ simulada).</li>
+    <li>Notas presas em "Só resumo": a ciência não foi registrada ou o XML ainda não foi liberado.</li>
+    <li>NF-e emitidas e NFC-e ficaram de fora: dependem de serviço da SEFAZ de cada estado, e a da PB não oferece.</li>
+  </ul></div>
+</article>
+
+<!-- 5. MEI -->
+<article id="mei" class="ferramenta">
+  <header>
+    <span class="tag">web/lib/mei-*.ts · servidor/mei_cadastros.py · /api/robo/mei-cadastros · /api/cron/alertas-mei</span>
+    <h3>5. Monitoramento MEI: carteira, faturamento e alertas</h3>
+    <p>Junta três fontes num painel por ano: o Dossiê MEI do ATF (ferramenta 2), as NFS-e emitidas (ferramenta 3) e os ajustes manuais. Mostra quem está dentro, perto ou acima do limite.</p>
+  </header>
+  <p class="rotina"><strong>Na rotina fiscal:</strong> O MEI tem limite anual de faturamento. Acompanhar mês a mês permite orientar o cliente antes do excesso e preparar a declaração anual com os valores já reunidos.</p>
+  <div class="etapas">
+    <div class="etapa"><h4>Descoberta da carteira</h4><ul>
+      <li>"Trazer MEIs cadastrados" enfileira os CNPJs da SEFAZ e da NFS-e do escritório.</li>
+      <li>O worker na VPS chama a rota a cada 15 s com um token HMAC derivado da chave; a rota consulta a CNPJá pública (cache 7 dias, 13 s entre consultas).</li>
+      <li>Só entra com confirmação explícita; "Ignorar este CNPJ" é persistente.</li>
+    </ul></div>
+    <div class="etapa"><h4>Faturamento</h4><ul>
+      <li>Mês = maior valor entre notas de saída + NFS-e emitidas e vendas no cartão, mais receitas manuais.</li>
+      <li>Compras = notas de entrada + compras manuais.</li>
+      <li>"Sem consulta" é diferente de zero.</li>
+    </ul></div>
+    <div class="etapa"><h4>Alertas</h4><ul>
+      <li>Cron da Vercel todo dia às 8h de Brasília e logo após o robô gravar um Dossiê.</li>
+      <li>E-mail transacional pela Brevo à equipe do escritório; também aparece no sino.</li>
+    </ul></div>
+  </div>
+  <div class="diagrama">
+<pre class="mermaid">
+flowchart LR
+  A["Dossiê MEI<br/>(ATF)"] --> M[("xml_mei_meses")]
+  B["NFS-e emitidas<br/>(ADN)"] --> N[("xml_mei_nfse_meses")]
+  C["Ajustes manuais"] --> J[("xml_mei_ajustes")]
+  M & N & J --> PN["Painel MEI<br/>% do limite"]
+  PN --> AL{"80% ou<br/>ritmo de passar?"}
+  AL -->|sim| BR["Brevo · e-mail"]
+  AL -->|sim| SI["Sino de notificações"]
+  W["mei_cadastros.py<br/>15 s"] -->|HMAC| RT["/api/robo/mei-cadastros"] --> CJ["CNPJá"] --> AC[("xml_mei_acompanhamento")]
+</pre>
+  </div>
+  <figure><img src="fotos/mei.png" alt="Painel de Monitoramento de Faturamento MEI com indicadores e gráfico de faturamento acumulado" loading="lazy"><figcaption>Monitoramento MEI: limites do ano, faixas de 80%, limite e +20%.</figcaption></figure>
+  <figure><img src="fotos/mei-gerenciar.png" alt="Tela de gerenciamento do acompanhamento MEI" loading="lazy"><figcaption>Gerenciar acompanhamento: lote de verificação, confirmação e exclusões.</figcaption></figure>
+  <div class="rev"><h4>Para revisar</h4><ul>
+    <li>A rota <code>/api/robo/alertas-mei</code> aceita a chave do robô no cabeçalho; o HANDOFF sugere um segredo próprio (item A6).</li>
+    <li>Limite da CNPJá é por IP e a Vercel compartilha IP: 429 gera espera global de até 1 h.</li>
+  </ul></div>
+</article>
+
+<!-- 6. Drive -->
+<article id="drive" class="ferramenta">
+  <header>
+    <span class="tag">servidor/drive.sh · lotivisse-xml-drive.service</span>
+    <h3>6. Entrega: pastas e Google Drive</h3>
+    <p>Todo serviço grava na mesma árvore, uma pasta por escritório. Na VPS a raiz é <code>/home/lotivisse/xml/arquivos</code>; o rclone copia para o Drive a cada 10 minutos.</p>
+  </header>
+  <p class="rotina"><strong>Na rotina fiscal:</strong> É o ponto de recebimento da equipe: cada documento chega na pasta da empresa e da competência, no caminho que o sistema contábil importa. Daí em diante começa a escrituração.</p>
+<pre class="arvore">&lt;Escritório&gt;/
+  Arquivos baixados/
+    5-joao/                              ID-NOME FANTASIA
+      102026/                            MMAAAA, o caminho que a Domínio lê
+        NF-e Saida - R$ 12.345,67/       ZIP do ATF + PDF/&lt;chave&gt;.pdf
+        NF-e Entrada - R$ 8.900,00/
+        NFC-e - R$ 1.230,50/
+        CT-e Remetente - R$ 400,00/
+        CT-e Destinatario - R$ 950,00/
+        Faturas/ · Extrato de Pagamentos/ · Omissão e Inadimplência/
+        Certidão de Débitos/ · Conferência Cartão de Crédito/
+        NFS-e Emitidas/ · NFS-e Recebidas/ · Retenções NFS-e 2026-10.xlsx
+        NF-e Recebidas/                  Monitor Fiscal (+ Eventos/)
+      Dossiê MEI/                        Faturamento MEI 2026.xlsx e .json
+    _sem_empresa/  _nao_identificados/
+  _relatorios/  _diagnostico/</pre>
+  <div class="etapas">
+    <div class="etapa"><h4>Regras do envio</h4><ul>
+      <li>Só copia: apagar no Drive não apaga na VPS.</li>
+      <li>Só arquivos dos últimos 35 dias; arquivos ainda em gravação ficam para a próxima rodada.</li>
+      <li>Escopo <code>drive.file</code>: o robô só enxerga a pasta que ele criou.</li>
+    </ul></div>
+    <div class="etapa"><h4>No escritório</h4><ul>
+      <li>A pasta de cada escritório é compartilhada como Leitor.</li>
+      <li>Google Drive para computador em modo espelho, para a Domínio importar da pasta.</li>
+    </ul></div>
+  </div>
+  <div class="rev"><h4>Para revisar</h4><ul><li>Não há limpeza de disco na VPS (item B1 do HANDOFF). Com 48 GB, definir retenção.</li></ul></div>
+</article>
+
+<!-- ============ SEGURANÇA ============ -->
+<section id="seguranca">
+  <h2>Segurança e cifragem</h2>
+  <div class="diagrama">
+<pre class="mermaid">
+flowchart LR
+  PL["Senha ATF<br/>na planilha"] -->|"RSA-OAEP-SHA256<br/>prefixo v1:"| DB[("Supabase<br/>só texto cifrado")]
+  PFX[".pfx + senha A1"] -->|"AES-256-GCM, chave em RSA<br/>prefixo v2:"| DB
+  PUB["XML_CHAVE_PUBLICA<br/>(Vercel)"] -.-> PL
+  PUB -.-> PFX
+  DB --> R["Robô"]
+  PRIV["robo_privada.pem<br/>só na VPS"] -.-> R
+  R -->|"decifra só na memória"| USO["ATF / ADN / SEFAZ"]
+</pre>
+  </div>
+  <div class="grid3">
+    <div class="peca"><h4>Portal</h4><p>Só tem a chave pública. Não consegue ler senha nem certificado depois de gravados. RLS separa os escritórios.</p></div>
+    <div class="peca"><h4>Robô</h4><p>Única peça com a chave privada (RSA 3072). Senha não vai para log nem para o diagnóstico. Ao trocar de login, sai do ATF e apaga os cookies.</p></div>
+    <div class="peca"><h4>Segredos</h4><p><code>service_role</code>, <code>BREVO_API_KEY</code>, <code>CRON_SECRET</code>, A1 e a chave privada nunca vão para o Git nem para o chat.</p></div>
+  </div>
+</section>
+
+<!-- ============ BANCO ============ -->
+<section id="banco">
+  <h2>Banco de dados</h2>
+  <p class="prosa">Tudo está em <code>web/supabase/schema.sql</code>, reaplicável sem perder dados. As migrações em <code>web/supabase/migrations/</code> precisam ser rodadas no SQL Editor; a Vercel não aplica SQL.</p>
+  <div class="tabela"><table>
+    <thead><tr><th>Grupo</th><th>Tabelas</th><th>Funções (RPC)</th></tr></thead>
+    <tbody>
+      <tr><td>Acesso</td><td><code>organizacoes</code>, <code>perfis</code></td><td><code>minha_org</code>, <code>meu_papel</code>, <code>sou_admin</code></td></tr>
+      <tr><td>SEFAZ</td><td><code>xml_acessos</code>, <code>xml_empresas</code>, <code>xml_agendamentos</code>, <code>xml_tarefas</code>, <code>xml_tentativas</code></td><td><code>xml_agendar_periodo</code>, <code>xml_pegar_lote</code>, <code>xml_cancelar_agendamento</code>, <code>xml_reprocessar_erros_sefaz</code></td></tr>
+      <tr><td>NFS-e</td><td><code>xml_nfse_certificados</code>, <code>xml_nfse_empresas</code></td><td><code>xml_nfse_reservar_lote</code>, <code>xml_atualizar_tarefa_reservada</code>, <code>xml_devolver_tarefa_reservada</code></td></tr>
+      <tr><td>Monitor</td><td><code>xml_nfe_monitor</code>, <code>xml_nfe_notas</code></td><td><code>xml_nfe_pegar_monitor</code>, <code>xml_nfe_concluir</code>, <code>xml_nfe_consultar_agora</code>, <code>xml_nfe_resumo_monitor</code></td></tr>
+      <tr><td>MEI</td><td><code>xml_mei_meses</code>, <code>xml_mei_ajustes</code>, <code>xml_mei_alertas</code>, <code>xml_mei_nfse_meses</code>, <code>xml_mei_acompanhamento</code>, <code>xml_mei_sincronizacoes</code>, <code>xml_mei_worker</code></td><td><code>xml_mei_registrar</code>, <code>xml_mei_enfileirar</code>, <code>xml_mei_pegar_verificacao</code>, <code>xml_mei_faturamento_lote</code></td></tr>
+      <tr><td>CNPJá</td><td><code>xml_cnpja_cache</code>, <code>xml_cnpja_controle</code></td><td><code>xml_cnpja_reservar</code>, <code>xml_cnpja_finalizar</code></td></tr>
+      <tr><td>Robôs</td><td><code>xml_robos</code></td><td>Sinal de vida por upsert</td></tr>
+    </tbody>
+  </table></div>
+  <p class="aviso"><code>xml_pegar_lote</code> e <code>xml_nfse_pegar_lote</code> aparecem redefinidas várias vezes no <code>schema.sql</code> (as versões posteriores substituem as anteriores). Vale consolidar.</p>
+</section>
+
+<!-- ============ GALERIA ============ -->
+<section id="telas">
+  <h2>Galeria de telas</h2>
+  <p class="legenda">Capturas a 1440 × 900 com dados fictícios. O botão "N" no canto é o indicador do Next.js em modo de desenvolvimento e não aparece em produção.</p>
+  <div class="galeria">
+    <figure><img src="fotos/login.png" alt="Tela de login" loading="lazy"><figcaption>Login</figcaption></figure>
+    <figure><img src="fotos/painel.png" alt="Tela inicial com primeiros passos e indicadores" loading="lazy"><figcaption>Início: primeiros passos e números do escritório</figcaption></figure>
+    <figure><img src="fotos/agendamentos.png" alt="Lista de agendamentos" loading="lazy"><figcaption>Agendamentos</figcaption></figure>
+    <figure><img src="fotos/empresas.png" alt="Lista de empresas" loading="lazy"><figcaption>Empresas</figcaption></figure>
+    <figure><img src="fotos/empresa-nova.png" alt="Cadastro individual de empresa" loading="lazy"><figcaption>Cadastrar empresa (sem planilha)</figcaption></figure>
+    <figure><img src="fotos/equipe.png" alt="Gestão da equipe" loading="lazy"><figcaption>Equipe</figcaption></figure>
+  </div>
+</section>
+
+<!-- ============ MAPA ============ -->
+<section id="mapa">
+  <h2>Mapa do código</h2>
+  <div class="tabela"><table>
+    <thead><tr><th>Arquivo</th><th>Linhas</th><th>Responsável por</th></tr></thead>
+    <tbody>
+      <tr><td><code>robo/robo_xml.py</code></td><td class="mono">1558</td><td>Laço principal, classe <code>Portal</code> (chamadas ao banco), <code>Executor</code> do ATF, <code>executar_nfse</code>, <code>executar_monitor</code>, filas paralelas, modo <code>--local</code></td></tr>
+      <tr><td><code>robo/atf_pb.py</code></td><td class="mono">1658</td><td>Automação das telas do ATF, recolha em Minhas Mensagens, Dossiê MEI</td></tr>
+      <tr><td><code>robo/nfse.py</code></td><td class="mono">784</td><td>Cliente ADN (mTLS, NSU, repetição), leitura do XML, DANFSe, retenções, ABRASF</td></tr>
+      <tr><td><code>robo/nfe.py</code></td><td class="mono">579</td><td>NFeDistribuicaoDFe, Ciência da Operação, DANFE, ICP-Brasil</td></tr>
+      <tr><td><code>robo/arquivos.py</code></td><td class="mono">738</td><td>Distribuição pelo conteúdo, nomes das pastas, totais</td></tr>
+      <tr><td><code>robo/armazenamento.py</code></td><td class="mono">336</td><td>Cache e travas por escritório/CNPJ</td></tr>
+      <tr><td><code>robo/navegador.py</code>, <code>gravador.py</code></td><td class="mono">279 / 308</td><td>Chrome via CDP; gravador de passos para calibrar telas</td></tr>
+      <tr><td><code>robo/cripto.py</code> · <code>web/lib/cripto.ts</code></td><td class="mono">91</td><td>Cifragem v1 e v2 dos dois lados</td></tr>
+      <tr><td><code>web/app/painel/actions.ts</code>, <code>actions-nfse.ts</code></td><td></td><td>Server actions de agendamento e certificados</td></tr>
+      <tr><td><code>web/lib/planilha*.ts</code></td><td></td><td>Leitura da planilha modelo (SEFAZ e NFS-e)</td></tr>
+      <tr><td><code>web/supabase/schema.sql</code></td><td class="mono">~2400</td><td>Tabelas, RLS, filas</td></tr>
+      <tr><td><code>servidor/instalar.sh</code>, <code>drive.sh</code>, <code>instalar_mei.sh</code></td><td></td><td>Instalação e serviços da VPS</td></tr>
+    </tbody>
+  </table></div>
+  <details>
+    <summary>Como rodar os testes</summary>
+    <div class="prosa">
+      <ul>
+        <li>Robô: <code>cd robo &amp;&amp; python -m pytest -q tests</code>. Os rápidos levam ~10 s; o ATF simulado (<code>test_atf_simulado.py</code>) leva ~18 min e usa Chromium.</li>
+        <li>Portal: <code>cd web &amp;&amp; npm ci &amp;&amp; npm run typecheck &amp;&amp; node --test tests/*.test.cjs</code>.</li>
+        <li>Interface: <code>npm run test:interface</code> (cópia temporária, sessão fictícia, axe).</li>
+        <li>Banco: testes com PGlite em <code>tests/*-db.test.cjs</code>.</li>
+        <li>Sem portal: <code>robo_xml.py --local empresas.xlsx --competencia 09/2026</code>.</li>
+      </ul>
+    </div>
+  </details>
+  <details>
+    <summary>Comandos da VPS</summary>
+    <div class="prosa"><ul>
+      <li><code>sudo lotivisse status|log|atualizar|configurar|ver-tela xml</code></li>
+      <li><code>systemctl status lotivisse-xml-drive.service</code></li>
+      <li><code>sudo systemctl status lotivisse-mei-cadastros</code></li>
+      <li>Chrome do robô de XML: tela <code>:11</code>, CDP <code>9223</code>, VNC <code>5901</code> (certidões usa :10 / 9222 / 5900).</li>
+    </ul></div>
+  </details>
+</section>
+
+<!-- ============ REVISÃO ============ -->
+<section id="revisao">
+  <h2>Pauta de revisão</h2>
+  <p class="prosa">Itens da auditoria registrada no <code>HANDOFF.md</code> (14/11/2026) e pontos observados na leitura do código. Alguns podem ter sido resolvidos nos PRs seguintes; vale conferir cada um antes de priorizar.</p>
+  <div class="tabela"><table>
+    <thead><tr><th>Área</th><th>Ponto</th><th>Prioridade sugerida</th></tr></thead>
+    <tbody>
+      <tr><td>Segurança</td><td>Robô usa a chave <code>service_role</code>: criar um papel restrito só com as RPCs que ele chama (A1)</td><td><span class="estado e-bad">Alta</span></td></tr>
+      <tr><td>Segurança</td><td>Cadeia ICP-Brasil baixada por HTTP sem verificação de integridade (A2)</td><td><span class="estado e-bad">Alta</span></td></tr>
+      <tr><td>Segurança</td><td>MFA, CI com proteção do <code>main</code>, versões Python fixas (A3–A5)</td><td><span class="estado e-warn">Média</span></td></tr>
+      <tr><td>Segurança</td><td>Segredo próprio para <code>/api/robo/alertas-mei</code>; <code>/sair</code> por GET; CSP com nonce (A6, A8, A9)</td><td><span class="estado e-warn">Média</span></td></tr>
+      <tr><td>Operação</td><td>Alerta de robô parado e limpeza de disco na VPS (B1, B2)</td><td><span class="estado e-bad">Alta</span></td></tr>
+      <tr><td>Operação</td><td>Monitor Fiscal validado só contra SEFAZ simulada; pedir log real (B8)</td><td><span class="estado e-bad">Alta</span></td></tr>
+      <tr><td>Operação</td><td>Primeira rodada real dos 4 serviços de PDF do ATF</td><td><span class="estado e-warn">Média</span></td></tr>
+      <tr><td>Código</td><td><code>robo_xml.py</code> e <code>atf_pb.py</code> passam de 1.500 linhas cada; separar filas, executor e cliente do portal</td><td><span class="estado e-n">Melhoria</span></td></tr>
+      <tr><td>Código</td><td>Funções de fila redefinidas várias vezes no <code>schema.sql</code></td><td><span class="estado e-n">Melhoria</span></td></tr>
+      <tr><td>LGPD</td><td>Política de Privacidade e Termos, trilha de auditoria, retenção dos arquivos (C1–C3)</td><td><span class="estado e-warn">Média</span></td></tr>
+      <tr><td>Infra</td><td>Vercel Hobby para uso comercial; backups do Supabase; portas VNC/CDP fechadas (D)</td><td><span class="estado e-warn">Média</span></td></tr>
+    </tbody>
+  </table></div>
+  <div class="rev"><h4>Regras combinadas com a dona do projeto</h4><ul>
+    <li>Sem force-push; merge só com aprovação explícita; nada de merge automático.</li>
+    <li>Captcha não é automatizado sem discussão prévia.</li>
+    <li>A planilha enviada nunca é guardada (contém senhas).</li>
+    <li>Explicações em português simples, com os passos exatos: a usuária é da área contábil e tributária.</li>
+  </ul></div>
+</section>
+</main>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<script>mermaid.initialize({startOnLoad:true,theme:matchMedia("(prefers-color-scheme: dark)").matches?"dark":"neutral"});</script>
+</body>
+</html>
